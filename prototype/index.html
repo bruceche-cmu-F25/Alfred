@@ -1,0 +1,772 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Delete or absorb once the question is answered.
+
+  Question: what should Alfred's entity look like, and how does it behave
+  across idle / listening / thinking / speaking / quiet-notification?
+
+  Two entity forms on one page, switchable with ?variant=C|D (or ← →):
+    C  Swarm      — particles that re-form per state
+    D  Construct  — a core, one heavy ring and fine instruments round it
+  (A, a dithered sphere, and B, a pair of eyes, were tried and dropped.)
+  Both draw into the same cell grid with the portfolio's four heat bands
+  and ordered dither. Everything around them (brief, inbox, calendar,
+  deck) is stubbed sample data — nothing here talks to a real service.
+
+  Run: open this file, or serve the folder.
+-->
+<html lang="en" data-hour="dusk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred — entity prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #08060e; --panel: #100b19; --panel-up: #181024;
+    --ink: #f3ecf8; --body: #cbc0d8; --mute: #9d90b3; --faint: #7a6f92;
+    --rule: rgba(205, 180, 232, 0.17); --rule-soft: rgba(205, 180, 232, 0.08);
+    --accent: 255 61 127;
+    --heat-1: #4c25a6; --heat-2: #9c48ff; --heat-3: #ff4f93; --heat-4: #ffd56e;
+  }
+  :root[data-hour='night'] {
+    --bg: #04060e; --panel: #090e1b; --panel-up: #10182a;
+    --ink: #e8edff; --body: #c0c9e1; --mute: #919fbe; --faint: #7283a3;
+    --rule: rgba(168, 189, 231, 0.17); --rule-soft: rgba(168, 189, 231, 0.08);
+    --accent: 122 142 255;
+    --heat-1: #2c43a6; --heat-2: #4f7dff; --heat-3: #97b6ff; --heat-4: #fff4c0;
+  }
+  :root[data-hour='dawn'] {
+    --bg: #0b080d; --panel: #140e17; --panel-up: #1d1420;
+    --ink: #f6e9df; --body: #d3c1c5; --mute: #aa929c; --faint: #927b87;
+    --rule: rgba(221, 186, 183, 0.17); --rule-soft: rgba(221, 186, 183, 0.08);
+    --accent: 247 157 116;
+    --heat-1: #6c2a60; --heat-2: #e4527f; --heat-3: #ffa77b; --heat-4: #ffecb2;
+  }
+  :root[data-hour='day'] {
+    --bg: #0a1016; --panel: #111922; --panel-up: #18222d;
+    --ink: #eef4f8; --body: #c5d0da; --mute: #97a6b4; --faint: #7a8a9b;
+    --rule: rgba(176, 200, 220, 0.17); --rule-soft: rgba(176, 200, 220, 0.08);
+    --accent: 84 170 214;
+    --heat-1: #17647e; --heat-2: #3aa8e8; --heat-3: #62d696; --heat-4: #ffe074;
+  }
+
+  :root[data-hour='gold'] {
+    --bg: #0a0705; --panel: #14100a; --panel-up: #1e170d;
+    --ink: #fbf1dc; --body: #d9c9a8; --mute: #a8946e; --faint: #8a7858;
+    --rule: rgba(230, 200, 140, 0.17); --rule-soft: rgba(230, 200, 140, 0.08);
+    --accent: 255 176 46;
+    --heat-1: #6b3408; --heat-2: #c4700f; --heat-3: #ffac2e; --heat-4: #ffe59a;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 400 14px/1.5 var(--sans);
+    overflow: hidden; transition: background 1.1s;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  #grid { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  .top {
+    position: fixed; inset: 0 0 auto 0; z-index: 2;
+    display: flex; justify-content: space-between; padding: 15px 18px;
+    font: 400 10.5px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint);
+  }
+  .top b { color: var(--ink); font-weight: 500; margin-right: 12px; }
+  .st::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; background: rgb(var(--accent)); }
+
+  /* what was said: yours above, his below, both under the entity */
+  .say {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(620px, 100% - 32px); text-align: center; pointer-events: none;
+    transition: top 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .you { font: 400 11.5px/1.6 var(--mono); color: var(--mute); min-height: 18px; }
+  .alf { font: 400 15px/1.6 var(--mono); color: var(--ink); min-height: 24px; text-wrap: balance; }
+  .alf[data-live]::after { content: '▍'; color: rgb(var(--accent)); animation: caret 0.9s steps(2) infinite; }
+  @keyframes caret { 50% { opacity: 0; } }
+
+  /* the quiet note: fades in slowly beside the blip, says nothing until answered */
+  .nudge {
+    position: fixed; z-index: 3; display: flex; align-items: center; gap: 10px;
+    padding: 6px 7px 6px 11px; border: 1px dashed var(--rule); background: var(--panel);
+    font: 400 11px/1 var(--mono); color: var(--body); white-space: nowrap;
+    opacity: 0; visibility: hidden; transition: opacity 1.1s, visibility 0s 1.1s;
+  }
+  .nudge[data-on] { opacity: 1; visibility: visible; transition: opacity 1.1s; }
+
+  .yn { display: flex; gap: 6px; flex: none; }
+  .yn button {
+    width: 26px; height: 26px; display: grid; place-items: center;
+    border: 1px solid var(--rule); color: var(--mute); transition: 0.15s;
+  }
+  .yn button:hover { color: var(--ink); background: var(--panel-up); }
+  .yn button[data-y]:hover { border-color: rgb(var(--accent) / 0.8); color: rgb(var(--accent)); }
+  .yn svg, .tile svg { display: block; }
+
+  /* brief: three panels that wipe in under the entity when he has things to show */
+  .brief {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(1060px, 100% - 32px);
+    display: grid; grid-template-columns: 0.9fr 1.15fr 1.1fr;
+    border: 1px dashed var(--rule); overflow: auto;
+    opacity: 0; visibility: hidden; clip-path: inset(0 0 100% 0);
+    transition: clip-path 0.45s steps(9), opacity 0.2s, visibility 0s 0.45s;
+  }
+  body[data-scene='brief'] .brief { opacity: 1; visibility: visible; clip-path: inset(0); transition: clip-path 0.6s steps(12), opacity 0.2s; }
+  .panel { padding: 13px 16px 14px; border-right: 1px dashed var(--rule); transition: opacity 0.4s, background 0.4s; min-width: 0; }
+  .panel:last-child { border-right: 0; }
+  .brief[data-reading] .panel { opacity: 0.42; }
+  .brief[data-reading] .panel[data-reading] { opacity: 1; background: rgb(var(--accent) / 0.045); }
+  .panel h2 {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font: 500 10.5px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute);
+    padding-bottom: 10px;
+  }
+  .panel[data-reading] h2 { color: rgb(var(--accent)); }
+  .panel h2 i { font-style: normal; color: var(--faint); letter-spacing: 0.04em; }
+  .row { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 9px 0; border-top: 1px dashed var(--rule-soft); }
+  .row > div:first-child { min-width: 0; }
+  .who { font: 500 12px/1.4 var(--mono); color: var(--ink); }
+  .what { font-size: 12.5px; line-height: 1.5; color: var(--body); }
+  .draft { font: 400 11px/1.5 var(--mono); color: var(--mute); margin-top: 3px; }
+  .draft::before { content: '↳ '; color: rgb(var(--accent)); }
+  .row[data-done] { opacity: 0.5; }
+  .row[data-done] .yn { display: none; }
+  .row .res { display: none; font: 400 10.5px/26px var(--mono); color: var(--mute); white-space: nowrap; }
+  .row[data-done] .res { display: block; }
+  .line-item { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px dashed var(--rule-soft); font-size: 12.5px; color: var(--body); }
+  .line-item span:last-child { font: 400 11.5px/1.6 var(--mono); color: var(--mute); white-space: nowrap; }
+  .line-item[data-new] { color: var(--ink); }
+  .line-item[data-new] span:last-child { color: rgb(var(--accent)); }
+  .fyi { font: 400 11px/1.5 var(--mono); color: var(--faint); padding-top: 9px; border-top: 1px dashed var(--rule-soft); }
+
+  .cal { position: relative; height: 170px; margin-left: 34px; border-left: 1px dashed var(--rule); }
+  .cal time { position: absolute; left: -34px; font: 400 9.5px/1 var(--mono); color: var(--faint); transform: translateY(-4px); }
+  .cal .tick { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--rule-soft); }
+  .blk {
+    position: absolute; left: 6px; right: 0; padding: 0 7px; overflow: hidden;
+    display: flex; align-items: center; gap: 8px;
+    font: 400 11px/1 var(--mono); color: var(--ink); white-space: nowrap;
+    background: rgb(var(--accent) / 0.16); box-shadow: inset 2px 0 0 rgb(var(--accent));
+    transition: top 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), background 0.3s, opacity 0.3s;
+  }
+  .blk i { font-style: normal; color: var(--mute); font-size: 10px; }
+  .blk[data-proposed] { background: transparent; box-shadow: none; outline: 1px dashed rgb(var(--accent) / 0.6); outline-offset: -1px; color: var(--body); }
+  .blk[hidden] { display: none; }
+  .todo { list-style: none; padding: 0; margin-top: 4px; }
+  .todo li { display: flex; gap: 9px; align-items: center; padding: 5px 0; font-size: 12.5px; color: var(--body); }
+  .todo li::before { content: ''; width: 9px; height: 9px; border: 1px solid var(--mute); flex: none; }
+  .todo li[data-done] { color: var(--faint); text-decoration: line-through; }
+  .todo li[data-done]::before { background: rgb(var(--accent)); border-color: rgb(var(--accent)); }
+  .todo em { font: 400 10.5px/1 var(--mono); font-style: normal; color: rgb(var(--accent)); margin-left: auto; }
+
+  /* bottom stack: the deck (idle only), then the line you talk on */
+  #stack {
+    position: fixed; inset: auto 0 0 0; z-index: 2; padding: 0 16px 56px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  .deck { display: none; gap: 0; border: 1px dashed var(--rule); background: var(--panel); max-width: 100%; overflow-x: auto; }
+  body[data-scene='idle'] .deck { display: flex; animation: rise 0.5s steps(8) both; }
+  @keyframes rise { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0); } }
+  .tile {
+    width: 148px; flex: none; padding: 13px 14px 12px; text-align: left;
+    border-right: 1px dashed var(--rule); transition: background 0.2s, transform 0.2s;
+  }
+  .tile:last-child { border-right: 0; }
+  .tile:hover, .tile[aria-current='true'] { background: var(--panel-up); transform: translateY(-4px); box-shadow: 0 4px 0 rgb(var(--accent) / 0.7); }
+  .tile svg { color: rgb(var(--accent)); margin-bottom: 10px; }
+  .tile b { display: block; font: 500 12.5px/1.3 var(--sans); color: var(--ink); }
+  .tile span { display: block; font: 400 10.5px/1.5 var(--mono); color: var(--mute); margin-top: 3px; }
+  .tile kbd { float: right; font: 400 9.5px/1 var(--mono); color: var(--faint); }
+
+  .line { width: min(620px, 100%); }
+  .line form { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px dashed var(--rule); }
+  .line form:focus-within { border-bottom-color: rgb(var(--accent) / 0.7); }
+  .line form::before { content: '›'; font: 400 14px/1 var(--mono); color: rgb(var(--accent)); }
+  .line input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--ink); font: 400 13px/1.4 var(--mono); }
+  .line input::placeholder { color: var(--faint); }
+  .line kbd { font: 400 10px/1 var(--mono); color: var(--faint); border: 1px solid var(--rule); padding: 4px 6px; white-space: nowrap; }
+  body[data-held] .line kbd { color: var(--bg); background: rgb(var(--accent)); border-color: transparent; }
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+  .chips button { font: 400 10.5px/1 var(--mono); color: var(--faint); border: 1px dashed var(--rule); padding: 5px 7px; }
+  .chips button:hover { color: var(--ink); border-color: rgb(var(--accent) / 0.6); }
+
+  /* prototype switcher — deliberately not in the design's language */
+  .proto {
+    position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 9;
+    display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px;
+    max-width: calc(100% - 16px); overflow-x: auto; white-space: nowrap;
+    background: #f4f1ea; color: #15131a; font: 500 10.5px/1 ui-monospace, Menlo, monospace;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  }
+  .proto button { padding: 6px 7px; border-radius: 999px; }
+  .proto button:hover { background: #dedad0; }
+  .proto button[aria-pressed='true'] { background: #15131a; color: #f4f1ea; }
+  .proto .lab { padding: 0 4px 0 8px; color: #86808f; }
+  .proto .name { padding: 0 6px; min-width: 76px; text-align: center; }
+  .proto .sep { width: 1px; height: 14px; background: #cfcabd; margin: 0 4px; flex: none; }
+
+  @media (max-width: 860px) {
+    .brief { grid-template-columns: 1fr; }
+    .panel { border-right: 0; border-bottom: 1px dashed var(--rule); }
+    .chips { display: none; }
+    .tile { width: 128px; }
+  }
+</style>
+</head>
+<body data-scene="arrive">
+<canvas id="grid"></canvas>
+
+<header class="top">
+  <span><b>Alfred</b><span class="st" id="st">waking</span></span>
+  <span id="clock"></span>
+</header>
+
+<div class="say" id="say"><p class="you" id="you"></p><p class="alf" id="alf"></p></div>
+
+<aside class="nudge" id="nudge">
+  <span id="nudge-t">Research · finished</span>
+  <span class="yn"><button data-y aria-label="Hear it"></button><button data-n aria-label="Later"></button></span>
+</aside>
+
+<section class="brief" id="brief">
+  <div class="panel" id="p-brief">
+    <h2>Brief <i id="day"></i></h2>
+    <div class="line-item"><span>Clear, 16° — rain after six</span><span>weather</span></div>
+    <div class="line-item"><span>Markets closed flat</span><span>S&amp;P +0.1%</span></div>
+    <div class="line-item"><span>Chip export rules revised</span><span>news</span></div>
+    <div class="line-item"><span>Watchlist</span><span>AAPL −0.4%</span></div>
+    <div id="tomorrow"></div>
+    <p class="fyi">Written at 06:30 · sample data</p>
+  </div>
+
+  <div class="panel" id="p-inbox">
+    <h2>Inbox <i>5 new · 2 need you</i></h2>
+    <div class="row" data-ask data-yes="Sent. Thursday at ten is on your calendar." data-no="Left it. I'll ask again tomorrow.">
+      <div><p class="who">Northwind Labs · recruiting</p><p class="what">Onsite slots: Thu 10:00 or Fri 14:00.</p><p class="draft">Reply accepting Thu 10:00</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <div class="row" data-ask data-yes="Confirmed." data-no="Skipped. It closes tonight.">
+      <div><p class="who">Course staff · 17-6xx</p><p class="what">Team form needs your confirmation by tonight.</p><p class="draft">Confirm with the current team</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <p class="fyi">3 others — a receipt, a newsletter, a calendar accept. Nothing needed.</p>
+  </div>
+
+  <div class="panel" id="p-today">
+    <h2>Today <i>3 blocks</i></h2>
+    <div class="cal" id="cal"></div>
+    <div class="row" id="r-hold" data-ask data-effect="hold" data-yes="Held. Two to three is yours." data-no="Fine. It's still due Friday.">
+      <div><p class="what">Paper review is due in 2 days.</p><p class="draft">Hold 14:00–15:00 for it</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <ul class="todo" id="todo">
+      <li>Send résumé to Northwind</li>
+      <li>Paper review <em>due Fri</em></li>
+      <li>Gym</li>
+    </ul>
+  </div>
+</section>
+
+<div id="stack">
+  <nav class="deck" id="deck" aria-label="Workspaces"></nav>
+  <div class="line">
+    <form id="line"><input id="in" autocomplete="off" placeholder="Say something, or type it"><kbd>hold space</kbd></form>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
+<div class="proto" id="proto"></div>
+
+<script>
+/* ── helpers ─────────────────────────────────────────────────────────── */
+const $ = s => document.querySelector(s)
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16 - 0.5)
+
+// 7×7 glyphs as text rows, emitted as rects — same trick as the portfolio's sprites
+const GLYPHS = {
+  yes: ['.......', '......#', '.....##', '#...##.', '##.##..', '.###...', '..#....'],
+  no: ['#.....#', '##...##', '.##.##.', '..###..', '.##.##.', '##...##', '#.....#'],
+  job: ['..###..', '.#...#.', '#######', '#.....#', '###.###', '#.....#', '#######'],
+  research: ['.###...', '#...#..', '#...#..', '#...#..', '.####..', '....##.', '.....##'],
+  product: ['...#...', '.##.##.', '#..#..#', '#..#..#', '#..#..#', '.##.##.', '...#...'],
+  chat: ['######.', '#.....#', '#.#.#.#', '#.....#', '######.', '.##....', '.#.....'],
+  auto: ['....#..', '...##..', '..##...', '.#####.', '...##..', '..##...', '..#....'],
+}
+const glyph = (name, px = 2) => `<svg width="${7 * px}" height="${7 * px}" viewBox="0 0 7 7" shape-rendering="crispEdges" fill="currentColor">${
+  GLYPHS[name].map((r, y) => [...r].map((c, x) => c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '').join('')).join('')}</svg>`
+
+/* ── variants, hours ─────────────────────────────────────────────────── */
+const FORMS = [{ key: 'C', name: 'Swarm' }, { key: 'D', name: 'Construct' }]
+const params = new URLSearchParams(location.search)
+let form = (params.get('variant') || 'D').toUpperCase()
+if (!FORMS.some(f => f.key === form)) form = 'D'
+
+const HOURS = ['dusk', 'night', 'dawn', 'day', 'gold']
+let ramp = []
+function setHour(h) {
+  document.documentElement.dataset.hour = h
+  const css = getComputedStyle(document.documentElement)
+  const hex = n => css.getPropertyValue(`--heat-${n}`).trim()
+  const top = hex(4), mix = i => Math.round(parseInt(top.slice(i, i + 2), 16) * 0.45 + 255 * 0.55)
+  ramp = [hex(1), hex(2), hex(3), top, `rgb(${mix(1)},${mix(3)},${mix(5)})`]
+}
+const clockHour = () => { const h = new Date().getHours(); return h >= 5 && h < 8 ? 'dawn' : h < 17 && h >= 8 ? 'day' : h >= 17 && h < 20 ? 'dusk' : 'night' }
+
+/* ── the grid ────────────────────────────────────────────────────────── */
+const cv = $('#grid'), cx = cv.getContext('2d')
+let W = 0, H = 0, CELL = form === 'D' ? 6 : 8, cols = 0, rows = 0, field = new Float32Array(0)
+const E = { x: 0, y: 0, r: 100, tx: 0, ty: 0, tr: 100 }   // where the entity is, and where it is heading
+const w = { idle: 1, listen: 0, think: 0, speak: 0 }       // eased weight of each state
+const look = { x: 0, y: 0, tx: 0, ty: 0 }
+let state = 'idle', forced = null, amp = 0, presence = 0
+let notify = false, deferred = false, notifyV = 0
+
+function resize() {
+  W = innerWidth; H = innerHeight
+  const dpr = Math.min(2, devicePixelRatio || 1)
+  cv.width = W * dpr; cv.height = H * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  cols = Math.ceil(W / CELL); rows = Math.ceil(H / CELL); field = new Float32Array(cols * rows)
+  layout(true)
+}
+
+function layout(snap) {
+  const scene = document.body.dataset.scene
+  const stack = $('#stack').offsetHeight, big = form === 'D' ? 1.15 : 1
+  if (scene === 'brief') {
+    E.tr = clamp(Math.min(W, H) * 0.085, 44, 76) * big; E.tx = W / 2; E.ty = 48 + E.tr * 1.25
+  } else {
+    const free = H - stack - 44
+    E.tr = clamp(Math.min(W * 0.2, free * 0.27), 48, 150) * big; E.tx = W / 2; E.ty = 44 + free * 0.42
+  }
+  const sayTop = E.ty + E.tr * 1.5 + 8
+  $('#say').style.top = sayTop + 'px'
+  const top = sayTop + 58
+  $('#brief').style.top = top + 'px'
+  $('#brief').style.maxHeight = Math.max(160, H - top - stack - 10) + 'px'
+  if (snap) { E.x = E.tx; E.y = E.ty; E.r = E.tr }
+}
+
+/* C — Swarm: one set of particles, four formations, heat left behind in the grid. */
+const N = 560, P = new Float32Array(N * 2), S = Float32Array.from({ length: N }, Math.random)
+const scatter = () => { for (let i = 0; i < N; i++) { P[i * 2] = Math.random() * W; P[i * 2 + 1] = Math.random() * H } }
+function swarm(t, dt) {
+  const decay = Math.pow(0.78, dt * 60)
+  for (let i = 0; i < field.length; i++) field[i] *= decay
+  const R = E.r, pull = (1 - Math.pow(0.84, dt * 60)) * (0.12 + 0.88 * presence)
+  const dep = clamp(0.2 * (R / 130) ** 2, 0.045, 0.26) * (1 - 0.45 * w.idle)
+  const sum = w.idle + w.listen + w.think + w.speak || 1
+  const wi = w.idle / sum, wl = w.listen / sum, wt = w.think / sum, ws = w.speak / sum
+  const tilt = 0.35 + look.y * 0.35, ca = Math.cos(tilt), sa = Math.sin(tilt)
+  for (let i = 0; i < N; i++) {
+    const p = i / N, rnd = S[i]
+    let tx = 0, ty = 0, front = 0
+    if (wi > 0.01) {                                         // a slowly turning globe
+      const yy = 1 - 2 * (i + 0.5) / N, rr = Math.sqrt(1 - yy * yy), ph = i * 2.399963 + t * 0.35 + look.x * 0.7
+      const x3 = rr * Math.cos(ph), z3 = rr * Math.sin(ph), br = 0.95 * (1 + 0.035 * Math.sin(t * 1.3))
+      tx += wi * x3 * br; ty += wi * (yy * ca - z3 * sa) * br; front += wi * (0.5 + 0.5 * (yy * sa + z3 * ca))
+    }
+    if (wl > 0.01) {                                         // a ring that takes the shape of your voice
+      const th = p * 6.2832, rr = 0.95 + (0.04 + 0.34 * amp) * Math.sin(th * 7 + t * 6) * Math.sin(th * 3 - t * 2.2) + (rnd - 0.5) * 0.05
+      tx += wl * rr * Math.cos(th); ty += wl * rr * Math.sin(th); front += wl * 0.8
+    }
+    if (wt > 0.01) {                                         // a knot it keeps running round
+      const th = p * 6.2832 + t * 0.8, r2 = 0.68 + 0.28 * Math.cos(3 * th), a = 2 * th + t * 0.25
+      tx += wt * r2 * Math.cos(a) * 1.08; ty += wt * r2 * Math.sin(a) * 1.08; front += wt * (0.6 + 0.4 * Math.sin(3 * th))
+    }
+    if (ws > 0.01) {                                         // a waveform, flat when it pauses
+      const sx = (p * 2 - 1) * 1.4, env = (0.02 + 0.62 * amp) * Math.pow(Math.cos(sx / 1.4 * 1.5708), 0.6)
+      tx += ws * sx; ty += ws * env * Math.sin(p * 46 + t * 11) * (0.55 + 0.45 * Math.sin(p * 9 - t * 3.1)) * Math.sqrt(rnd); front += ws * 0.85
+    }
+    const X = E.x + (tx + Math.sin(t * 2.3 + rnd * 40) * 0.012) * R, Y = E.y + (ty + Math.cos(t * 2.1 + rnd * 31) * 0.012) * R
+    const px = P[i * 2] += (X - P[i * 2]) * pull, py = P[i * 2 + 1] += (Y - P[i * 2 + 1]) * pull
+    const gx = px / CELL - 0.5, gy = py / CELL - 0.5, c = Math.floor(gx), r = Math.floor(gy)
+    if (c < 0 || r < 0 || c >= cols - 1 || r >= rows - 1) continue
+    const fx = gx - c, fy = gy - r, a = dep * (0.3 + 0.7 * front), k = r * cols + c
+    field[k] += a * (1 - fx) * (1 - fy); field[k + 1] += a * fx * (1 - fy)
+    field[k + cols] += a * (1 - fx) * fy; field[k + cols + 1] += a * fx * fy
+  }
+}
+
+/* D — Construct: one heavy stroke, fine instruments round it, and room to breathe.
+   Five planes share a centre, each tilted its own way:
+     two hairline orbits close to the core, each carrying a bead;
+     the heavy ring, broken into unequal arcs, with a thin companion turning against it;
+     a wide hairline ring with three beads and a dozen ticks;
+     and two dotted brackets that always face you and frame the whole thing.
+   Idle lets the planes drift apart like a gyroscope. Listening lays them flat and the heavy
+   ring swells with your voice. Thinking whirls the orbits, sends the beads round and runs a
+   sweep. Speaking swells the core and sends hairline ripples out through the rings. */
+const TAU = Math.PI * 2, frac = x => ((x % 1) + 1) % 1
+const PLANES = [
+  { tilt: 1.12, az: 0.3, pre: 0.7, spin: 1.6, quick: 2.5, at: 0.1, bands: [{ r: 0.34, heat: 0.62, beads: [0] }] },
+  { tilt: 1.12, az: 2.5, pre: 0.7, spin: -1.3, quick: 2.5, at: 0.18, bands: [{ r: 0.43, heat: 0.56, beads: [0.5] }] },
+  { tilt: 0.6, az: 2.6, pre: -0.25, spin: 0.18, quick: 1.3, at: 0.3, sweep: true, bands: [
+    { r: 0.68, th: 0.06, heat: 0.7, arcs: [[0.02, 0.5], [0.56, 0.74], [0.8, 0.97]], run: 0.13 },
+    { r: 0.84, heat: 0.54, arcs: [[0.08, 0.4], [0.46, 0.9]], turn: -2.2, hush: true }] },
+  { tilt: 0.32, az: 4.6, pre: 0.15, spin: 0.1, quick: 5, at: 0.45, bands: [{ r: 1, heat: 0.54, beads: [0.08, 0.41, 0.77], ticks: 12 }] },
+  { tilt: 0, az: 0, pre: 0, spin: 0.05, quick: 1, at: 0.6, bands: [{ r: 1.2, heat: 0.42, arcs: [[0.03, 0.2], [0.53, 0.7]], dotted: true }] },
+].map(g => ({ ...g, a: 0, p: 0, n: [0, 0, 1], e1: [1, 0, 0], e2: [0, 1, 0], spread: 0.01 }))
+const BEADS = []
+function rig(t, dt) {                                        // once a frame: where each plane lies, where each bead is
+  BEADS.length = 0
+  PLANES.forEach((g, i) => {
+    const fast = 1 + (g.quick - 1) * w.think - 0.7 * w.listen
+    g.az += dt * g.pre * fast; g.a += dt * g.spin * fast
+    const tilt = (g.tilt + (g.tilt ? w.think * 0.2 * Math.sin(t * 1.4 + i * 2) : 0)) * (1 - 0.96 * w.listen) * (1 - 0.35 * w.speak)
+    let nx = Math.sin(tilt) * Math.cos(g.az) + look.x * 0.2, ny = Math.sin(tilt) * Math.sin(g.az) + look.y * 0.2, nz = Math.cos(tilt)
+    const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l
+    const m = Math.hypot(nz, nx), e1 = [nz / m, 0, -nx / m]
+    const e2 = [ny * e1[2] - nz * e1[1], nz * e1[0] - nx * e1[2], nx * e1[1] - ny * e1[0]]
+    g.n = [nx, ny, nz]; g.e1 = e1; g.e2 = e2
+    g.spread = Math.sqrt(Math.max(1e-4, 1 - nz * nz))
+    g.p = clamp((presence - g.at) / 0.4, 0, 1)               // the planes arrive one after another, core outward
+    for (const b of g.bands) for (const f of b.beads || []) {
+      if (f > g.p) continue
+      const phi = f * TAU - g.a * (b.turn || 1), c = Math.cos(phi) * b.r, q = Math.sin(phi) * b.r
+      BEADS.push({ x: c * e1[0] + q * e2[0], y: c * e1[1] + q * e2[1], z: c * e1[2] + q * e2[2] })
+    }
+  })
+}
+function construct(x, y, t) {
+  const px = (x - E.x) / E.r, py = (y - E.y) / E.r, d = Math.hypot(px, py)
+  if (d > 1.45) return 0
+  const cell = CELL / E.r, born = Math.min(1, presence * 3)
+  const cr = 0.16 * (1 + 0.04 * Math.sin(t * 1.6) + amp * (0.4 * w.speak + 0.12 * w.listen)), inCore = d < cr
+  let v
+  if (inCore) {                                              // the core: a small lit ball
+    const z = Math.sqrt(1 - (d / cr) ** 2)
+    v = (0.52 + 0.6 * Math.pow(Math.max(0, (-0.35 * px - 0.5 * py) / cr + 0.8 * z), 1.1)) * born
+  } else v = 0.2 * Math.exp(-(d - cr) * 8) * born            // and its glow, which the dither thins out
+  for (const g of PLANES) {
+    if (g.p <= 0) continue
+    const n = g.n, pz = -(n[0] * px + n[1] * py) / n[2]      // lift the cell onto this plane
+    if (inCore && pz < 0) continue                           // the far side passes behind the core
+    const rho = Math.hypot(px, py, pz)
+    const ang = Math.atan2(px * g.e2[0] + py * g.e2[1] + pz * g.e2[2], px * g.e1[0] + py * g.e1[1] + pz * g.e1[2])
+    const squash = Math.max(0.3, Math.sqrt(1 - (pz / rho) ** 2))   // widen edge-on so a line never thins to nothing
+    const zf = g.tilt ? pz / (rho * g.spread) : 0            // -1 far … +1 near
+    for (const b of g.bands) {
+      let r = b.r, th
+      if (b.th) th = Math.max(b.th, cell) * (1 + w.listen * (0.15 + amp) * 0.6)
+      else { th = cell * 0.56; r *= 1 + w.listen * amp * 0.035 * Math.sin(t * 8 - b.r * 7) }
+      if (b.dotted) r -= 0.07 * w.listen
+      th /= squash
+      const off = rho - r, a = frac((ang + g.a * (b.turn || 1)) / TAU)
+      if (a > g.p) continue                                  // drawn round on arrival
+      if (b.ticks && off > th + cell * 0.6 && off < th + cell * 1.6 + 0.04) {
+        const k = a * b.ticks
+        if (Math.abs(k - Math.round(k)) * TAU / b.ticks * rho < cell * 0.55) v = Math.max(v, 0.5 * (0.75 + 0.25 * zf))
+      }
+      if (off < -th || off > th) continue
+      if (b.arcs && !b.arcs.some(s => a >= s[0] && a <= s[1])) continue
+      if (b.dotted && Math.floor(a * TAU * r / cell) % 2) continue
+      let h = b.heat * (0.8 + 0.3 * zf)                    // nearer is hotter; the far side breaks into dither
+      if (b.hush) h *= 1 - w.speak
+      if (b.run) h += 0.4 * Math.exp(-frac(a - t * b.run) * 8)
+      v = Math.max(v, h)
+    }
+    if (g.sweep && w.think > 0.02 && !inCore && rho > 0.24 && rho < 0.6) {
+      let da = (t * 2.4 - ang) % TAU; if (da < 0) da += TAU
+      if (da < 0.8) v = Math.max(v, w.think * (0.1 + 0.36 * (1 - da / 0.8)))
+    }
+  }
+  if (w.speak > 0.02 && !inCore) for (let k = 0; k < 3; k++) {  // his voice: hairline ripples leaving the core
+    const rr = cr + frac(t * 0.55 + k / 3) * (1.12 - cr)
+    if (Math.abs(d - rr) < cell * 0.56) v = Math.max(v, w.speak * (0.12 + amp) * 0.75 * (1 - (rr - cr) / (1.12 - cr)))
+  }
+  for (const q of BEADS) {                                   // beads: the only white-hot things besides the core
+    if ((inCore && q.z < 0) || Math.abs(px - q.x) > cell * 1.05 || Math.abs(py - q.y) > cell * 1.05) continue
+    v = Math.max(v, q.z >= 0 ? 1.05 : 0.5)
+  }
+  return v
+}
+
+const buckets = [[], [], [], [], []]
+function draw(t) {
+  cx.clearRect(0, 0, W, H)
+  for (const b of buckets) b.length = 0
+  const reach = E.r * (form === 'D' ? 1.7 : 2.3), whole = form === 'C'
+  const c0 = whole ? 0 : Math.max(0, Math.floor((E.x - reach) / CELL)), c1 = whole ? cols - 1 : Math.min(cols - 1, Math.ceil((E.x + reach) / CELL))
+  const r0 = whole ? 0 : Math.max(0, Math.floor((E.y - reach) / CELL)), r1 = whole ? rows - 1 : Math.min(rows - 1, Math.ceil((E.y + reach) / CELL))
+  // the blip: a few cells off his shoulder, pulsing slowly — the whole notification
+  const ba = -0.62 + 0.05 * Math.sin(t * 0.8), bx = E.x + E.r * 1.5 * Math.cos(ba), by = E.y + E.r * 1.5 * Math.sin(ba)
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const x = (c + 0.5) * CELL, y = (r + 0.5) * CELL
+    let v = form === 'D' ? construct(x, y, t) : Math.min(1, field[r * cols + c])
+    if (notifyV > 0.01) { const d2 = ((x - bx) ** 2 + (y - by) ** 2) / (CELL * 1.25) ** 2; if (d2 < 9) v = Math.max(v, notifyV * Math.exp(-d2) * (0.78 + 0.22 * Math.sin(t * 2.2))) }
+    if (v < 0.03) continue
+    const band = (v * 5 + BAYER[(r & 3) * 4 + (c & 3)] * 0.9) | 0
+    if (band >= 1) buckets[Math.min(5, band) - 1].push(c, r)
+  }
+  buckets.forEach((b, i) => {
+    cx.fillStyle = ramp[i]
+    for (let k = 0; k < b.length; k += 2) cx.fillRect(b[k] * CELL + 1, b[k + 1] * CELL + 1, CELL - 2, CELL - 2)
+  })
+  const n = $('#nudge')
+  if (n.dataset.on !== undefined) { n.style.left = Math.min(bx + 18, W - n.offsetWidth - 10) + 'px'; n.style.top = by - 19 + 'px' }
+}
+
+/* ── speech, hearing ─────────────────────────────────────────────────── */
+const you = $('#you'), alf = $('#alf'), st = $('#st')
+let run = 0, job = null, voice = false, held = false, lastKey = 0, mic = null, rec = null, recText = ''
+const LABEL = { idle: 'idle', listen: 'listening', think: 'thinking', speak: 'speaking' }
+function setState(s) { state = s; st.textContent = LABEL[forced || s] }
+function cancel() { run++; job = null; delete alf.dataset.live; try { speechSynthesis.cancel() } catch {} }
+function mark(sel) {
+  document.querySelectorAll('.panel[data-reading]').forEach(p => delete p.dataset.reading)
+  if (sel) { $(sel).dataset.reading = ''; $('#brief').dataset.reading = '' } else delete $('#brief').dataset.reading
+}
+// He types his line as he says it; the entity's amplitude follows the letters.
+function say(text, opts = {}) {
+  const my = run
+  return new Promise(done => {
+    if ('read' in opts) mark(opts.read)
+    setState('speak'); alf.textContent = ''; alf.dataset.live = ''
+    job = { text, start: performance.now(), my, done, spoken: !voice }
+    if (voice) try {
+      const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.onend = u.onerror = () => { if (job && job.my === my) job.spoken = true }
+      speechSynthesis.speak(u); setTimeout(() => { if (job && job.my === my) job.spoken = true }, 9000)
+    } catch { job.spoken = true }
+  })
+}
+function tickSpeech(now, t) {
+  if (!job) return 0
+  const i = Math.floor((now - job.start) / 1000 * 34)
+  if (i <= job.text.length + 12) alf.textContent = job.text.slice(0, i)
+  if (i > job.text.length + 12 && job.spoken) { const d = job.done; job = null; delete alf.dataset.live; setState('idle'); d(); return 0 }
+  if (i >= job.text.length) return 0
+  return /[a-z0-9]/i.test(job.text[i]) ? 0.3 + 0.65 * Math.abs(Math.sin(t * 12.3) * Math.sin(t * 4.1 + i)) : 0.06
+}
+
+const SAMPLES = ['Move standup to 3pm', 'I finished the résumé', 'How are my auto tasks?', 'Is my pi session done?', 'Look into vector DBs for me', 'Plan my afternoon', "Add NVDA to tomorrow's brief"]
+let sampleAt = 0
+async function hear(text) {
+  cancel(); const my = run
+  you.textContent = '› ' + text; alf.textContent = ''
+  setState('think'); await sleep(750 + Math.random() * 500)
+  if (my !== run) return
+  const q = text.toLowerCase()
+  if (/move|resched|push|改/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    place('b-standup', 15, 0.5, '15:00'); await say('Moved. Standup is at three.', { read: '#p-today' })
+  } else if (/finish|done with|complete|完成/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    const li = $('#todo li:not([data-done])'); if (li) li.dataset.done = ''
+    const left = document.querySelectorAll('#todo li:not([data-done])').length
+    await say(`Marked. ${['Nothing', 'One', 'Two', 'Three'][left]} left today.`, { read: '#p-today' })
+  } else if (/auto|task|cron|自动/.test(q)) {
+    await say('Three ran overnight. Two clean. The job scraper failed at 2:14 — a retry is queued.')
+  } else if (/\bpi\b|session/.test(q)) {
+    await say("Still running. Step six of nine, about four minutes left. I'll leave a note when it lands.")
+    later(9000, 'pi session · finished', 'Pi session finished. All nine steps passed. One warning: the migration ran twice, harmlessly. The diff is in Product.')
+  } else if (/look into|research|investigat|find out|调查|查/.test(q)) {
+    await say("On it. I'll leave a note.")
+    later(7000, 'Research · finished', "Vector DBs. Took six minutes. Good: pgvector covers your scale with no new infra. Bad: recall drops past five million rows. I'd stay on Postgres. Notes are in Research.")
+  } else if (/plan|计划/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    for (const id of ['b-resume', 'b-gym']) $('#' + id).hidden = false
+    const r = $('#r-plan') || addPlanRow(); r.hidden = false
+    await say('Two open hours. Draft: résumé at one, gym at five-thirty. Keep it?', { read: '#p-today' })
+  } else if (/brief|tomorrow|stock|早报|明天/.test(q)) {
+    const tick = (text.match(/\b[A-Z]{2,5}\b/) || ['NVDA'])[0]
+    scene('brief'); await sleep(500); if (my !== run) return
+    $('#tomorrow').insertAdjacentHTML('beforeend', `<div class="line-item" data-new><span>${tick} prior-day close</span><span>+ tomorrow</span></div>`)
+    await say(`Noted. ${tick} is in tomorrow's brief.`, { read: '#p-brief' })
+  } else await say("That one isn't wired in this prototype. Try a line below.")
+  if (my === run) mark(null)
+}
+
+// Work finishing in the background never interrupts: a blip and a tag, nothing spoken.
+let report = ''
+function later(ms, label, text) { setTimeout(() => { report = text; $('#nudge-t').textContent = label; notify = true; deferred = false; $('#nudge').dataset.on = '' }, ms) }
+
+/* ── scenes ──────────────────────────────────────────────────────────── */
+function scene(name) { if (document.body.dataset.scene === name) return; document.body.dataset.scene = name; layout(); syncProto() }
+const pending = () => document.querySelectorAll('.brief .row[data-ask]:not([data-done]):not([hidden])').length
+
+async function arrive() {
+  cancel(); const my = run
+  scene('arrive'); you.textContent = ''; alf.textContent = ''; mark(null)
+  presence = 0; scatter(); setState('idle'); st.textContent = 'waking'
+  await sleep(1700); if (my !== run) return
+  await say(new Date().getHours() < 12 ? 'Good morning, Bruce.' : 'Welcome back, Bruce.'); if (my !== run) return
+  await sleep(350); await say('Your brief is ready. Two things need you.'); if (my !== run) return
+  await sleep(450); if (my === run) brief()
+}
+async function brief() {
+  cancel(); const my = run
+  scene('brief'); await sleep(800); if (my !== run) return
+  await say('Quiet night. Markets flat, rain after six.', { read: '#p-brief' }); if (my !== run) return
+  await sleep(250); await say('Five new emails. Two need a yes or no.', { read: '#p-inbox' }); if (my !== run) return
+  await sleep(250); await say("Three blocks today. Paper review is due Friday — I'd hold two o'clock for it.", { read: '#p-today' })
+  if (my === run) mark(null)
+}
+function idle() { cancel(); mark(null); scene('idle'); setState('idle'); alf.textContent = ''; you.textContent = '' }
+
+async function decide(row, yes) {
+  cancel(); const my = run
+  row.dataset.done = ''; row.querySelector('.res').textContent = yes ? 'approved' : 'declined'
+  if (row.dataset.effect === 'hold') { if (yes) delete $('#b-review').dataset.proposed; else $('#b-review').hidden = true }
+  if (row.dataset.effect === 'plan') for (const id of ['b-resume', 'b-gym']) { if (yes) delete $('#' + id).dataset.proposed; else $('#' + id).hidden = true }
+  await say(yes ? row.dataset.yes : row.dataset.no, { read: null }); if (my !== run) return
+  if (pending() === 0) { await sleep(300); await say("That's everything."); if (my !== run) return; await sleep(1300); if (my === run) idle() }
+}
+function addPlanRow() {
+  $('#r-hold').insertAdjacentHTML('afterend', `<div class="row" id="r-plan" data-ask data-effect="plan" data-yes="Booked. Both are on the calendar." data-no="Dropped. The afternoon stays open."><div><p class="what">Afternoon draft</p><p class="draft">13:00 résumé · 17:30 gym</p></div><span class="yn"><button data-y aria-label="Approve">${glyph('yes')}</button><button data-n aria-label="Decline">${glyph('no')}</button></span><span class="res"></span></div>`)
+  return $('#r-plan')
+}
+
+/* ── calendar, deck, chips, switcher ─────────────────────────────────── */
+const DAY0 = 9, PXH = 17
+function place(id, start, dur, label) { const b = $('#' + id); b.style.top = (start - DAY0) * PXH + 'px'; b.style.height = Math.max(13, dur * PXH - 2) + 'px'; if (label) b.querySelector('i').textContent = label }
+$('#cal').innerHTML = [9, 11, 13, 15, 17, 19].map(h => `<time style="top:${(h - DAY0) * PXH}px">${h}:00</time><span class="tick" style="top:${(h - DAY0) * PXH}px"></span>`).join('') + [
+  ['b-standup', 9.5, 0.5, '09:30', 'Standup'], ['b-deep', 10.5, 2, '10:30', 'Deep work · Alfred'],
+  ['b-resume', 13, 1, '13:00', 'Résumé → Northwind', 1, 1], ['b-review', 14, 1, '14:00', 'Paper review', 1],
+  ['b-prep', 16, 1, '16:00', 'Interview prep'], ['b-gym', 17.5, 1, '17:30', 'Gym', 1, 1],
+].map(([id, , , at, name, prop, hid]) => `<div class="blk" id="${id}"${prop ? ' data-proposed' : ''}${hid ? ' hidden' : ''}><i>${at}</i>${name}</div>`).join('')
+;[['b-standup', 9.5, 0.5], ['b-deep', 10.5, 2], ['b-resume', 13, 1], ['b-review', 14, 1], ['b-prep', 16, 1], ['b-gym', 17.5, 1]].forEach(a => place(...a))
+
+const DECK = [
+  ['job', 'Job hunt', '2 replies · onsite Thu', 'Job hunt. Two replies since yesterday. Northwind wants Thursday.'],
+  ['research', 'Research', '1 run finished', 'Research. One run finished, nothing in flight.'],
+  ['product', 'Product', 'Alfred · 3 open', 'Product. Three open on Alfred. The entity is the one you are looking at.'],
+  ['chat', 'Chat', 'pi · 1 session live', 'Chat. One pi session is live, step six of nine.'],
+  ['auto', 'Automations', '3 ran · 1 failed', 'Automations. Three ran, one failed. The retry is queued.'],
+]
+$('#deck').innerHTML = DECK.map(([g, name, sub], i) => `<button class="tile" data-i="${i}"><kbd>${i + 1}</kbd>${glyph(g)}<b>${name}</b><span>${sub}</span></button>`).join('')
+function openTile(i) {
+  if (document.body.dataset.scene !== 'idle') return
+  document.querySelectorAll('.tile').forEach((t, k) => t.setAttribute('aria-current', k === i))
+  cancel(); you.textContent = ''; say(DECK[i][3])
+}
+$('#deck').addEventListener('click', e => { const t = e.target.closest('.tile'); if (t) openTile(+t.dataset.i) })
+
+$('#chips').innerHTML = SAMPLES.map(s => `<button type="button">${s}</button>`).join('')
+$('#chips').addEventListener('click', e => { if (e.target.tagName === 'BUTTON') hear(e.target.textContent) })
+document.querySelectorAll('.yn [data-y]').forEach(b => b.innerHTML = glyph('yes'))
+document.querySelectorAll('.yn [data-n]').forEach(b => b.innerHTML = glyph('no'))
+
+$('#brief').addEventListener('click', e => { const b = e.target.closest('.yn button'); if (b) decide(b.closest('.row'), 'y' in b.dataset) })
+$('#nudge').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return
+  delete $('#nudge').dataset.on
+  if ('y' in b.dataset) { notify = false; cancel(); you.textContent = ''; say(report) } else deferred = true   // later: the blip stays, dimmer
+})
+// Giving him your attention is a click on him. If something is waiting, that is when it comes back.
+addEventListener('click', e => {
+  if (e.target !== document.body && e.target !== cv && e.target !== document.documentElement) return
+  if (Math.hypot(e.clientX - E.x, e.clientY - E.y) > E.r * 1.7) return
+  if (notify && deferred) { deferred = false; $('#nudge').dataset.on = '' } else if (!job) { cancel(); say('Yes?') }
+})
+
+const input = $('#in')
+input.addEventListener('input', () => { lastKey = performance.now(); if (state !== 'listen') { cancel(); setState('listen') } })
+input.addEventListener('blur', () => { if (state === 'listen' && !input.value) setState('idle') })
+$('#line').addEventListener('submit', e => { e.preventDefault(); const v = input.value.trim(); input.value = ''; input.blur(); if (v) hear(v); else setState('idle') })
+
+function cycle(d) { const i = FORMS.findIndex(f => f.key === form); pick(FORMS[(i + d + FORMS.length) % FORMS.length].key) }
+function pick(k) { form = k; presence = k === 'D' ? 0 : 0.25; CELL = k === 'D' ? 6 : 8; resize(); params.set('variant', k); history.replaceState(null, '', '?' + params); syncProto() }
+const typing = e => e.target.matches('input, textarea, [contenteditable]')
+addEventListener('keydown', e => {
+  if (typing(e)) { if (e.key === 'Escape') input.blur(); return }
+  if (e.key === 'ArrowLeft') cycle(-1)
+  else if (e.key === 'ArrowRight') cycle(1)
+  else if (e.key === 'Escape') idle()
+  else if (/^[1-5]$/.test(e.key)) openTile(+e.key - 1)
+  else if (e.code === 'Space') {
+    e.preventDefault(); if (held) return
+    held = true; document.body.dataset.held = ''; cancel(); setState('listen'); you.textContent = '› …'; alf.textContent = ''
+    recText = ''; if (rec) try { rec.start() } catch {}
+  }
+})
+addEventListener('keyup', async e => {
+  if (e.code !== 'Space' || !held) return
+  held = false; delete document.body.dataset.held
+  if (rec) { try { rec.stop() } catch {} await sleep(450) }
+  hear(recText.trim() || SAMPLES[sampleAt++ % SAMPLES.length])   // no microphone: play the next sample line
+})
+addEventListener('pointermove', e => { look.tx = clamp((e.clientX - E.x) / (W * 0.4), -1, 1); look.ty = clamp((e.clientY - E.y) / (H * 0.4), -1, 1) })
+
+async function toggleMic() {
+  if (mic) { mic.stream.getTracks().forEach(t => t.stop()); mic.ac.close(); mic = rec = null; return syncProto() }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 512; ac.createMediaStreamSource(stream).connect(an)
+    mic = { stream, ac, an, buf: new Uint8Array(512) }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (SR) { rec = new SR(); rec.interimResults = true; rec.onresult = ev => { recText = [...ev.results].map(r => r[0].transcript).join(''); if (held) you.textContent = '› ' + recText } }
+  } catch { mic = null }
+  syncProto()
+}
+const micLevel = () => { mic.an.getByteTimeDomainData(mic.buf); let s = 0; for (const b of mic.buf) s += ((b - 128) / 128) ** 2; return Math.min(1, Math.sqrt(s / 512) * 6) }
+
+const proto = $('#proto')
+function syncProto() {
+  const f = FORMS.find(x => x.key === form), sc = document.body.dataset.scene, hr = document.documentElement.dataset.hour
+  const btn = (act, label, on) => `<button data-act="${act}" aria-pressed="${!!on}">${label}</button>`
+  proto.innerHTML = btn('prev', '←') + `<span class="name">${f.key} — ${f.name}</span>` + btn('next', '→') + '<span class="sep"></span>'
+    + '<span class="lab">state</span>' + btn('s:', 'auto', !forced) + ['idle', 'listen', 'think', 'speak'].map(s => btn('s:' + s, s, forced === s)).join('')
+    + btn('notify', '+ note', notify) + '<span class="sep"></span>'
+    + '<span class="lab">scene</span>' + ['arrive', 'brief', 'idle'].map(s => btn('g:' + s, s, sc === s)).join('') + '<span class="sep"></span>'
+    + btn('hour', hr) + btn('cell', CELL + 'px') + btn('voice', 'voice ' + (voice ? 'on' : 'off'), voice) + btn('mic', 'mic ' + (mic ? 'on' : 'off'), !!mic)
+}
+proto.addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.act; if (!a) return
+  if (a === 'prev') cycle(-1)
+  else if (a === 'next') cycle(1)
+  else if (a.startsWith('s:')) { forced = a.slice(2) || null; st.textContent = LABEL[forced || state] }
+  else if (a === 'notify') { if (notify) { notify = false; delete $('#nudge').dataset.on } else later(0, 'Research · finished', "Vector DBs. Took six minutes. Good: pgvector covers your scale with no new infra. Bad: recall drops past five million rows. I'd stay on Postgres. Notes are in Research.") }
+  else if (a === 'g:arrive') arrive()
+  else if (a === 'g:brief') brief()
+  else if (a === 'g:idle') idle()
+  else if (a === 'hour') setHour(HOURS[(HOURS.indexOf(document.documentElement.dataset.hour) + 1) % HOURS.length])
+  else if (a === 'cell') { CELL = { 4: 6, 6: 8, 8: 10, 10: 4 }[CELL]; resize() }
+  else if (a === 'voice') voice = !voice
+  else if (a === 'mic') return toggleMic()
+  setTimeout(syncProto)
+})
+
+/* ── frame ───────────────────────────────────────────────────────────── */
+let last = performance.now()
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000; last = now
+  const ease = r => 1 - Math.exp(-dt * r)
+  const cur = forced || state
+  for (const s in w) w[s] += ((cur === s ? 1 : 0) - w[s]) * ease(7)
+  let target = tickSpeech(now, t)
+  if (cur === 'listen') target = mic ? micLevel() : (held || now - lastKey < 240 || forced === 'listen') ? 0.2 + 0.7 * Math.abs(Math.sin(t * 9.3) * Math.sin(t * 2.7 + 1)) : 0.05
+  else if (cur === 'speak' && !job) target = 0.25 + 0.7 * Math.abs(Math.sin(t * 10) * Math.sin(t * 3.3))
+  else if (cur !== 'speak') target = 0
+  amp += (target - amp) * ease(16)
+  E.x += (E.tx - E.x) * ease(5); E.y += (E.ty - E.y) * ease(5); E.r += (E.tr - E.r) * ease(5)
+  look.x += (look.tx - look.x) * ease(4); look.y += (look.ty - look.y) * ease(4)
+  notifyV += ((notify ? (deferred ? 0.5 : 1) : 0) - notifyV) * ease(1.4)
+  presence = Math.min(1, presence + dt / (form === 'D' ? 2.2 : 1.3))
+  if (form === 'C') swarm(t, dt); else if (form === 'D') rig(t, dt)
+  draw(t)
+  requestAnimationFrame(frame)
+}
+
+const now = new Date()
+$('#day').textContent = now.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })
+const tickClock = () => $('#clock').textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + ' · sample data'
+tickClock(); setInterval(tickClock, 20000)
+setHour(HOURS.includes(params.get('hour')) ? params.get('hour') : clockHour())
+addEventListener('resize', resize)
+resize(); syncProto(); scatter()
+requestAnimationFrame(frame)
+if (params.get('scene') === 'idle') { presence = 1; idle() } else if (params.get('scene') === 'brief') { presence = 1; brief() } else arrive()
+</script>
+</body>
+</html>
