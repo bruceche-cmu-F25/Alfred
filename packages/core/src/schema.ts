@@ -89,4 +89,11 @@ INSERT INTO core_conversations (id, title, created_at, updated_at)
   FROM core_runs r GROUP BY r.conversation_id;
 ALTER TABLE core_runs ADD COLUMN request TEXT CHECK (request IS NULL OR (json_valid(request) AND json_type(request) = 'object'));
 `,
+}, {
+  // A conversation may choose its model and how hard it thinks; unset means the engine's default.
+  id: "core:3",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN model TEXT CHECK (model IS NULL OR (length(model) BETWEEN 3 AND 200 AND instr(model, '/') > 1));
+ALTER TABLE core_conversations ADD COLUMN thinking TEXT CHECK (thinking IS NULL OR thinking IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'));
+`,
 }];

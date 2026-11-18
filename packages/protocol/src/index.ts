@@ -16,6 +16,8 @@
  *   POST /api/runs/:id/cancel               -> Run
  *   POST /api/runs/:id/resume               -> Run
  *   POST /api/runs/:id/respond              RespondRequest -> Run (answers the question the run waits on)
+ *   POST /api/runs/:id/steer                SteerRequest -> { delivered } (words into the turn now running; 409 if none)
+ *   GET  /api/models                        ModelsResponse (models the engine can run)
  *   POST /api/ops/:op                       OpRequest -> OpResponse
  *   POST /api/notices/:id/(claim|present|acknowledge)   NoticeRequest -> Notice
  *   POST /api/presence                      PresenceRequest -> PresenceResponse
@@ -82,6 +84,9 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  /** `provider/model` chosen for this conversation; null for the engine's default. */
+  model: string | null;
+  thinking: ThinkingLevel | null;
   /** Runs queued or in progress. */
   busy: number;
   /** Runs that need the user: a question waiting, or interrupted. */
@@ -95,11 +100,18 @@ export interface ConversationDetail {
   runs: Run[];
   /** Per run: its receipts (the events it wrote). */
   receipts: Record<string, CoreEvent[]>;
-  /** Per run: how it went (`run.step`, `run.view`, `run.waiting`, `run.answered`), oldest first. */
+  /** Per run: how it went (`run.step`, `run.view`, `run.waiting`, `run.answered`, `run.steered`, `run.usage`), oldest first. */
   activity: Record<string, CoreEvent[]>;
 }
 
-export interface UpdateConversationRequest { title?: string; archived?: boolean }
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface UpdateConversationRequest { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null }
+
+export interface SteerRequest { text: string }
+
+export interface EngineModel { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }
+export interface ModelsResponse { models: EngineModel[] }
 
 /** A run's reply as it is being written. Not recorded; the run's outcome is the record. */
 export interface LiveUpdate { runId: string; conversationId: string; text: string }

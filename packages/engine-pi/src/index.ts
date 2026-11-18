@@ -7,13 +7,16 @@ import { fileURLToPath } from "node:url";
 import { createWorkerEngine, type WorkerEngine } from "./pool.ts";
 
 export { createWorkerEngine, EngineCrashedError, type WorkerEngine, type WorkerEngineOptions } from "./pool.ts";
-export { composeHistory, composePrompt, type RunJob, type ToolSpec, type ToParent, type ToWorker } from "./protocol.ts";
+export { composeHistory, composePrompt, type ExternalStep, type RunJob, type ToolSpec, type ToParent, type ToWorker } from "./protocol.ts";
+export { loadAlfredMcpConfig, type LoadedMcpConfig } from "./mcp-config.ts";
 
 export interface PiEngineOptions {
   /** Working directory for sessions. Nothing is read from it. */
   cwd: string;
   /** Where conversations' sessions live; defaults to `<cwd>/sessions`. */
   sessions?: string;
+  /** Where Alfred's `mcp.json` and `skills/` live (the data directory); defaults to `cwd`. */
+  config?: string;
   /** Pi's agent directory; defaults to Pi's own (~/.pi/agent). */
   agentDir?: string;
   idleMs?: number;
@@ -21,7 +24,7 @@ export interface PiEngineOptions {
 }
 
 export function createPiEngine(options: PiEngineOptions): WorkerEngine {
-  const args = ["--cwd", options.cwd, "--sessions", options.sessions ?? join(options.cwd, "sessions")];
+  const args = ["--cwd", options.cwd, "--sessions", options.sessions ?? join(options.cwd, "sessions"), "--config", options.config ?? options.cwd];
   if (options.agentDir) args.push("--agent-dir", options.agentDir);
   return createWorkerEngine({ worker: fileURLToPath(new URL("./worker.ts", import.meta.url)), args, idleMs: options.idleMs, log: options.log });
 }

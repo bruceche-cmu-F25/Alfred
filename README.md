@@ -2,7 +2,7 @@
 
 An open-source personal agent. One home node on your computer holds your world: what you asked for, what got done, and the proof that it got done. Every device you use is a window onto that same home node. The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-**Status: step 2 of 5.** Alfred has a home node, a todo module, a text conversation and a Mac app. Multi-device access, voice and more modules are the next steps.
+**Status: step 2 of 5, plus conversations and general tools.** Alfred has a home node, a todo module, conversations (each with its own warm agent session, model choice, and the ability to add to a run while it works), MCP servers and skills behind a permission gate, and a Mac app. Memory and scheduling, multi-device access, voice and more modules come next.
 
 ## The Mac app
 
@@ -28,6 +28,28 @@ launchctl bootout gui/$(id -u)/alfred.home-node; rm ~/Library/LaunchAgents/alfre
 ```
 
 `npm run e2e --workspace @alfred/desktop` drives the real app against a throwaway world on port 7481 and checks all of the above. It installs its own temporary launchd agent and removes it at the end.
+
+## Tools beyond todos: MCP servers and skills
+
+Alfred uses its own configuration, separate from your personal Pi setup, in its data directory (`~/Library/Application Support/Alfred/` on macOS):
+
+- **MCP servers** go in `mcp.json`. It uses the same format as Pi and Claude Desktop, so you can copy entries across. `${VAR}` placeholders are filled in from the environment when Alfred connects.
+
+  ```json
+  { "mcpServers": { "github": { "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } } } }
+  ```
+
+- **Skills** go in `skills/<name>/SKILL.md`, using the [Agent Skills](https://agentskills.io/specification) format.
+
+Each server marks its tools with hints, and those hints decide what runs freely:
+
+- **Runs without asking:** tools a server marks as read-only, and reading Alfred's own skill files.
+- **Asks you first, for that one call:** every other tool, including tools a server doesn't mark at all, and reading any other file. If you say no, Alfred is told not to try another way.
+- **Not available at all:** a shell, writing files, and editing files.
+
+A call you allowed that may have changed something outside Alfred is kept as a receipt of that run.
+
+A conversation's session stays open between turns, as in Pi Web, so its MCP connections stay up; it closes after 10 minutes idle.
 
 ## Run the home node alone
 

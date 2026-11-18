@@ -16,8 +16,8 @@ import {
 } from "@alfred/core";
 import { invokeOp } from "@alfred/module-kit";
 import type {
-  ConversationDetail, CoreEvent, ErrorResponse, NoticeRequest, OpRequest, PresenceRequest, RespondRequest, StateResponse, SubmitRunRequest,
-  UpdateConversationRequest,
+  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PresenceRequest, RespondRequest, StateResponse,
+  SteerRequest, SubmitRunRequest, UpdateConversationRequest,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
 import { ASSISTANT_PROFILE, type Home } from "./home.ts";
@@ -181,11 +181,23 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     const body = await readJson<UpdateConversationRequest>(req);
     if (body.title !== undefined && typeof body.title !== "string") throw new HttpError(400, "title must be text");
     if (body.archived !== undefined && typeof body.archived !== "boolean") throw new HttpError(400, "archived must be true or false");
-    return send(res, 200, updateConversation(home.world, conversation[1], { title: body.title, archived: body.archived }));
+    if (body.model !== undefined && body.model !== null && typeof body.model !== "string") throw new HttpError(400, "model is provider/model or null");
+    if (body.thinking !== undefined && body.thinking !== null && typeof body.thinking !== "string") throw new HttpError(400, "thinking is a level or null");
+    return send(res, 200, updateConversation(home.world, conversation[1], { title: body.title, archived: body.archived, model: body.model, thinking: body.thinking }));
   }
 
-  const run = /^\/api\/runs\/([A-Za-z0-9_-]+)(?:\/(cancel|resume|respond))?$/.exec(path);
+  if (method === "GET" && path === "/api/models") {
+    return send(res, 200, { models: await home.models() } satisfies ModelsResponse);
+  }
+
+  const run = /^\/api\/runs\/([A-Za-z0-9_-]+)(?:\/(cancel|resume|respond|steer))?$/.exec(path);
   if (run && method === "GET" && !run[2]) return send(res, 200, getRun(home.world, run[1]));
+  if (run && method === "POST" && run[2] === "steer") {
+    const body = await readJson<SteerRequest>(req);
+    if (typeof body.text !== "string" || !body.text.trim()) throw new HttpError(400, "text is required");
+    if (!(await home.steer(run[1], body.text))) throw new HttpError(409, "That run is not working right now; send it as a new message", "not_running");
+    return send(res, 200, { delivered: true });
+  }
   if (run && method === "POST" && run[2] === "respond") {
     const body = await readJson<RespondRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.answer !== "string") throw new HttpError(400, "requestId and answer are required");

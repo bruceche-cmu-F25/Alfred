@@ -7,7 +7,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } f
 import { join } from "node:path";
 import {
   CORE_MIGRATIONS, createRunDrain, interruptOrphanedRuns, openWorld,
-  type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type World,
+  type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type World,
 } from "@alfred/core";
 import { assistantTools, moduleMigrations, runTools, type AlfredModule } from "@alfred/module-kit";
 
@@ -41,6 +41,10 @@ export interface Home {
   live: EventEmitter<{ update: [LiveUpdate] }>;
   /** Starts executing queued runs if it is not already. */
   kick(): void;
+  /** Delivers the user's words into a running run; false if it is not running or cannot take them. */
+  steer(runId: string, text: string): Promise<boolean>;
+  /** The models the engine can run, for choosing one per conversation. */
+  models(): Promise<EngineModel[]>;
   /** Waits for the current drain (tests). */
   idle(): Promise<void>;
   close(): void;
@@ -123,6 +127,8 @@ export function openHome(options: HomeOptions): Home {
     owner,
     live,
     kick,
+    steer: (runId, text) => drain.steer(runId, text),
+    models: () => options.engine.models?.() ?? Promise.resolve([]),
     idle: () => current,
     close() {
       world.close();

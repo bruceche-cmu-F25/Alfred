@@ -16,8 +16,8 @@ export {
   type Run, type RunOutcome, type RunRequest, type RunState, type SubmitRunInput,
 } from "./runs.ts";
 export {
-  getConversation, listConversations, updateConversation, titleFrom, ConversationError, CONVERSATION_ID,
-  type Conversation,
+  getConversation, listConversations, updateConversation, titleFrom, ConversationError, CONVERSATION_ID, THINKING_LEVELS,
+  type Conversation, type ThinkingLevel,
 } from "./conversations.ts";
 export {
   listNotices, claimNotice, presentNotice, acknowledgeNotice, createNotice, NoticeStateError,
@@ -30,5 +30,5 @@ export {
 } from "./presence.ts";
 export {
   executeNextRun, createRunDrain, localDate,
-  type EnginePort, type EngineRequest, type ExecuteOptions, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext,
+  type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext,
 } from "./executor.ts";

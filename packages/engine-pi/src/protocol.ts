@@ -23,11 +23,26 @@ export interface RunJob {
   /** Earlier turns, for a session that starts empty (a conversation older than its session). */
   history: string | null;
   tools: ToolSpec[];
+  /** `provider/model` and thinking level for this conversation; absent for Pi's defaults. */
+  model?: string;
+  thinking?: string;
 }
+
+export interface ModelInfo { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }
+export interface UsageInfo { model?: string; thinking?: string; tokens?: number; contextWindow?: number; percent?: number }
+
+export type ExternalStep = { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined" };
 
 export type ToParent =
   | { type: "tool"; run: string; call: string; name: string; params: Record<string, unknown> }
+  /** The engine's own tools (MCP, read): ask the user, show a step, keep a receipt. */
+  | { type: "allow"; run: string; call: string; question: string }
+  | { type: "step"; run: string; step: ExternalStep }
+  | { type: "receipt"; run: string; tool: string; label: string; about?: string }
   | { type: "text"; run: string; text: string }
+  | { type: "usage"; run: string; usage: UsageInfo }
+  | { type: "steered"; run: string; ok: boolean }
+  | { type: "models_result"; id: string; models: ModelInfo[]; error?: string }
   | { type: "done"; run: string; reply: string }
   | { type: "error"; run: string; message: string; code?: string };
 
@@ -35,7 +50,15 @@ export type ToWorker =
   | { type: "run"; run: string; job: RunJob }
   | { type: "tool_result"; run: string; call: string; ok: true; text: string }
   | { type: "tool_result"; run: string; call: string; ok: false; error: string }
-  | { type: "abort"; run: string };
+  | { type: "allow_result"; run: string; call: string; allowed: boolean }
+  | { type: "abort"; run: string }
+  /** The user's words, into the turn now running. */
+  | { type: "steer"; run: string; text: string }
+  /** Close this conversation's warm session: another worker takes it over. */
+  | { type: "release"; thread: string }
+  | { type: "models"; id: string }
+  /** Close every session (and its MCP servers), then exit. */
+  | { type: "shutdown" };
 
 function weekday(date: string): string {
   const [year, month, day] = date.split("-").map(Number);

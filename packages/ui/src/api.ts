@@ -2,7 +2,8 @@
  * retry after a dropped connection can never do the same thing twice.
  */
 import type {
-  Conversation, ConversationDetail, CoreEvent, LiveUpdate, Notice, OpResponse, Run, StateResponse, SubmitRunResponse,
+  Conversation, ConversationDetail, CoreEvent, LiveUpdate, ModelsResponse, Notice, OpResponse, Run, StateResponse, SubmitRunResponse,
+  ThinkingLevel,
 } from "@alfred/protocol";
 import "./desktop.ts";
 
@@ -61,7 +62,11 @@ export const api = {
   submit: (goal: string, conversationId?: string) =>
     post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}) }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
-  updateConversation: (id: string, change: { title?: string; archived?: boolean }) => post<Conversation>(`/api/conversations/${id}`, change),
+  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null }) =>
+    post<Conversation>(`/api/conversations/${id}`, change),
+  /** Words into the run now working; rejects with 409 when it is not. */
+  steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),
+  models: () => call<ModelsResponse>("/api/models"),
   respond: (runId: string, requestId: string, answer: string) => post<Run>(`/api/runs/${runId}/respond`, { requestId, answer }),
   run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
   cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, {}),

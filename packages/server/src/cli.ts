@@ -31,7 +31,8 @@ const command = positionals[0] ?? "serve";
 if (command === "serve") {
   const port = Number(values.port ?? process.env.ALFRED_PORT ?? DEFAULT_PORT);
   // The model runs in worker processes; each conversation keeps its session under <data>/engine/sessions.
-  const engine = createPiEngine({ cwd: join(dataDir, "engine"), log });
+  // MCP servers come from <data>/mcp.json, skills from <data>/skills/.
+  const engine = createPiEngine({ cwd: join(dataDir, "engine"), config: dataDir, log });
   // How long a locked screen counts as "away" before coming back is a return (default 10 minutes).
   const awayMinutes = Number(process.env.ALFRED_AWAY_MINUTES);
   const presence = Number.isFinite(awayMinutes) && awayMinutes > 0 ? { awayReturnMs: awayMinutes * 60_000 } : {};
@@ -45,7 +46,7 @@ if (command === "serve") {
   }
   const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log });
   server.on("error", (error: NodeJS.ErrnoException) => {
-    engine.close();
+    void engine.close();
     home.close();
     if (error.code === "EADDRINUSE") {
       console.error(`[alfred] Port ${port} is already in use (another Alfred, or something else). Stop it, or pick another port: npm start -- --port <n>`);
@@ -57,15 +58,16 @@ if (command === "serve") {
     log(`home node on http://127.0.0.1:${port}  (data: ${dataDir})`);
     home.kick();
   });
-  const stop = () => {
+  const stop = async () => {
     server.close();
     server.closeAllConnections();
-    engine.close();
+    // Workers close their sessions (and MCP servers) before the world closes.
+    await engine.close();
     home.close();
     process.exit(0);
   };
-  process.on("SIGINT", stop);
-  process.on("SIGTERM", stop);
+  process.on("SIGINT", () => void stop());
+  process.on("SIGTERM", () => void stop());
 } else if (command === "import-robin") {
   const { todos, from } = readRobinTodos(values["robin-dir"] ?? robinDataDir());
   log(`read ${todos.length} todo(s) from ${from} (read-only)`);

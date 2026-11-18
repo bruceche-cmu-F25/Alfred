@@ -121,11 +121,13 @@ export function listRunReceipts(world: World, runIds: readonly string[]): Record
   return receipts;
 }
 
-/** How each run went: its steps, views it opened, questions and answers, by run id. */
+/** How each run went: its steps, views it opened, questions and answers, what the user added
+ * while it worked, and what it ran on, by run id.
+ */
 export function listRunActivity(world: World, runIds: readonly string[]): Record<string, CoreEvent[]> {
   const activity: Record<string, CoreEvent[]> = {};
   const rows = world.db.prepare(`SELECT * FROM core_events WHERE run_id IN (SELECT value FROM json_each(?))
-    AND kind IN ('run.step', 'run.view', 'run.waiting', 'run.answered') ORDER BY seq`).all(JSON.stringify(runIds));
+    AND kind IN ('run.step', 'run.view', 'run.waiting', 'run.answered', 'run.steered', 'run.usage') ORDER BY seq`).all(JSON.stringify(runIds));
   for (const event of rows.map(toEvent)) (activity[event.runId!] ??= []).push(event);
   return activity;
 }

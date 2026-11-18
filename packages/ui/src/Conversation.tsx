@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationDetail, CoreEvent, Run, RunRequest } from "@alfred/protocol";
-import { api } from "./api.ts";
+import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, ThinkingLevel } from "@alfred/protocol";
+import { ApiError, api } from "./api.ts";
 import { describeReceipt, ERRORS } from "./receipts.ts";
 
 const WORKING: Partial<Record<Run["state"], string>> = {
@@ -66,9 +66,12 @@ function Turn({ run, receipts, activity, live, highlighted }: { run: Run; receip
   const outcome = run.outcome;
   const runSteps = steps(activity);
   const answers = activity.filter((event) => event.kind === "run.answered");
+  const added = activity.filter((event) => event.kind === "run.steered");
+  const usage = activity.filter((event) => event.kind === "run.usage").at(-1);
   return (
     <li className="turn" data-highlighted={highlighted || undefined} id={`run-${run.id}`}>
       <p className="said">{run.goal}</p>
+      {added.map((event) => <p className="said added" key={event.id}>{String(event.payload.text)}</p>)}
       <div className="reply" data-state={run.state}>
         {runSteps.length > 0 && (
           <ol className="steps" aria-label="办事过程">
@@ -98,9 +101,45 @@ function Turn({ run, receipts, activity, live, highlighted }: { run: Run; receip
             <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.cancel(run.id))}>取消</button>
           </div>
         )}
+        {usage?.payload.model ? <p className="run-meta">{String(usage.payload.model)}</p> : null}
         {error && <p className="problem small" role="alert">{error}</p>}
       </div>
     </li>
+  );
+}
+
+const THINKING: Array<[ThinkingLevel | "", string]> = [["", "默认思考"], ["off", "不思考"], ["low", "少想"], ["medium", "适中"], ["high", "多想"]];
+let modelList: Promise<EngineModel[]> | null = null;
+
+/** The conversation's model and thinking level, and how full its context is. Unset means Pi's defaults. */
+function Settings({ detail }: { detail: ConversationDetail }) {
+  const [models, setModels] = useState<EngineModel[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    modelList ??= api.models().then((response) => response.models).catch(() => { modelList = null; return []; });
+    void modelList.then(setModels);
+  }, []);
+  const { conversation } = detail;
+  const change = (patch: { model?: string | null; thinking?: ThinkingLevel | null }) => {
+    setError(null);
+    api.updateConversation(conversation.id, patch).catch((reason: Error) => setError(reason.message));
+  };
+  const usage = Object.values(detail.activity).flat().filter((event) => event.kind === "run.usage").sort((a, b) => a.seq - b.seq).at(-1);
+  const percent = typeof usage?.payload.percent === "number" ? Math.round(usage.payload.percent) : null;
+  const known = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  return (
+    <div className="conversation-settings">
+      <select aria-label="模型" value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
+        <option value="">默认模型</option>
+        {conversation.model && !known.has(conversation.model) && <option value={conversation.model}>{conversation.model}</option>}
+        {models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name} · {model.provider}</option>)}
+      </select>
+      <select aria-label="思考强度" value={conversation.thinking ?? ""} onChange={(event) => change({ thinking: (event.target.value || null) as ThinkingLevel | null })}>
+        {THINKING.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      {percent !== null && <span className="context-usage" title={`${String(usage?.payload.tokens ?? "")} tokens`}>上下文 {percent}%</span>}
+      {error && <span className="problem small">{error}</span>}
+    </div>
   );
 }
 
@@ -147,14 +186,24 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
     list.current?.lastElementChild?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [last?.id, last?.state, last && live[last.id]?.length]);
 
+  // While a run works, what you say joins it, as in Claude; otherwise it is the next request.
+  const working = last?.state === "running" ? last : null;
   const send = (event?: FormEvent) => {
     event?.preventDefault();
     const goal = draft.trim();
     if (!goal || sending) return;
     setSending(true);
     setError(null);
-    api.submit(goal, id ?? undefined)
-      .then(({ run }) => { setDraft(""); if (!id) onStarted(run.conversationId); })
+    const submit = () => api.submit(goal, id ?? undefined).then(({ run }) => { if (!id) onStarted(run.conversationId); });
+    const attempt = working
+      // It may have just finished: then it goes as a new message.
+      ? api.steer(working.id, goal).then(() => undefined, (reason: unknown) => {
+        if (reason instanceof ApiError && reason.status === 409) return submit();
+        throw reason;
+      })
+      : submit();
+    attempt
+      .then(() => setDraft(""))
       .catch((reason: Error) => setError(reason.message))
       .finally(() => setSending(false));
   };
@@ -167,6 +216,7 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
     <section className="conversation" aria-label={detail?.conversation.title ?? "新对话"}>
       <header className="conversation-head">
         <h1>{id ? detail?.conversation.title ?? "…" : "新对话"}</h1>
+        {detail && <Settings detail={detail} />}
       </header>
       {!id || runs.length === 0 ? (
         <div className="empty">
@@ -187,7 +237,7 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKey}
           rows={Math.min(6, Math.max(1, draft.split("\n").length))}
-          placeholder={id ? "接着说…" : "跟 Alfred 说…"}
+          placeholder={working ? "它正在办，你说的会直接加进去…" : id ? "接着说…" : "跟 Alfred 说…"}
           aria-label="跟 Alfred 说"
           maxLength={8000}
         />

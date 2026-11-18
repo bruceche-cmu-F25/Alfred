@@ -7,7 +7,8 @@
  * first, once, for exactly that call.
  */
 import { withCoreContext } from "./context.ts";
-import { appendEvent } from "./events.ts";
+import { getConversation, type ThinkingLevel } from "./conversations.ts";
+import { appendEvent, recordDomainEvent } from "./events.ts";
 import { newId } from "./ids.ts";
 import {
   claimNextRun, conversationBefore, finishRun, heartbeatRun, openRequest, RUN_LEASE_MS, runAnswers, sweepRuns,
@@ -53,10 +54,40 @@ export interface EngineRequest {
   timezone: string;
   /** The reply so far, whole, as it is written. Optional for engines. */
   onText?(text: string): void;
+  /** For tools the engine brings itself (MCP servers, reading a file): the core gates and records them. */
+  external: ExternalHooks;
+  /** The conversation's chosen model (`provider/model`) and thinking level; absent for the engine's default. */
+  model?: string;
+  thinking?: ThinkingLevel;
+  /** What the turn ran on and how full its context is, once it ends. Optional for engines. */
+  onUsage?(usage: TurnUsage): void;
+}
+export interface TurnUsage {
+  model?: string;
+  thinking?: string;
+  /** Tokens in the conversation's context, its window, and the share used (0–100). */
+  tokens?: number;
+  contextWindow?: number;
+  percent?: number;
+}
+/** A model an engine can run, for choosing one per conversation. */
+export interface EngineModel { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }
+/** How an engine reports calls to its own tools, which Alfred did not define. */
+export interface ExternalHooks {
+  /** Asks the user to allow this one call; resolves true only on an explicit yes. */
+  allow(question: string): Promise<boolean>;
+  /** A step, shown like Alfred's own tool calls. */
+  step(step: { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined" }): void;
+  /** A call that may have changed something outside Alfred's world succeeded: kept as a receipt. */
+  receipt(call: { tool: string; label: string; about?: string }): void;
 }
 export interface EnginePort {
   /** Resolves with the engine's own account of what it did, or rejects. */
   submit(request: EngineRequest, signal: AbortSignal): Promise<{ reply: string }>;
+  /** Delivers the user's words into the turn running in this conversation. False if none is running. */
+  steer?(thread: string, text: string): Promise<boolean>;
+  /** The models the user can run. */
+  models?(): Promise<EngineModel[]>;
 }
 /** Not recorded: what a device may show while a run works. */
 export interface LiveUpdate { runId: string; conversationId: string; text: string }
@@ -121,6 +152,16 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     });
   };
   const toolContext: RunToolContext = { ask, note };
+  const external: ExternalHooks = {
+    allow: async (question) => (await ask({ kind: "permission", question })) === "allow",
+    step: (step) => note("step", { step: step.id, tool: step.tool, label: step.label, about: step.about?.slice(0, 200), status: step.status }),
+    receipt: (call) => {
+      // Under the run's lease, like any change: a lapsed executor records nothing.
+      withCoreContext(context, () => world.tx(() => recordDomainEvent(world, {
+        kind: "external.called", subject: `tool:${call.tool}`.slice(0, 160), payload: { tool: call.tool, label: call.label, about: call.about?.slice(0, 200) },
+      })));
+    },
+  };
 
   // Bind every tool to this run explicitly, so its writes are fenced by the
   // run's lease even if an engine loses the async context, and record each call.
@@ -147,7 +188,11 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
       }
     },
   }));
+  const conversation = getConversation(world, run.conversationId);
   const request: EngineRequest = {
+    ...(conversation.model ? { model: conversation.model } : {}),
+    ...(conversation.thinking ? { thinking: conversation.thinking } : {}),
+    onUsage: (usage) => note("usage", { ...usage }),
     thread: run.conversationId,
     goal: run.goal,
     instructions: profile.instructions,
@@ -156,6 +201,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     today: localDate(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     onText: options.onLive ? (text) => options.onLive!({ runId: run.id, conversationId: run.conversationId, text }) : undefined,
+    external,
   };
   try {
     // An engine that finished despite a cancel request reports what it actually did.
@@ -186,7 +232,13 @@ export async function executeNextRun(world: World, engine: EnginePort, options: 
  * A run waiting for the user does not hold an engine slot. The queue lives in
  * the world, so a restart loses nothing.
  */
-export function createRunDrain(world: World, engine: EnginePort, options: ExecuteOptions & { concurrency?: number }): { kick(): Promise<void> } {
+export interface RunDrain {
+  kick(): Promise<void>;
+  /** Delivers the user's words into a running run. False when it is not running here or the engine cannot. */
+  steer(runId: string, text: string): Promise<boolean>;
+}
+
+export function createRunDrain(world: World, engine: EnginePort, options: ExecuteOptions & { concurrency?: number }): RunDrain {
   const concurrency = options.concurrency ?? 3;
   const active = new Map<string, Promise<unknown>>();
   const working = () => (world.db.prepare(`SELECT count(*) AS n FROM core_runs WHERE lease_owner = ? AND state IN ('running', 'cancelling')`)
@@ -211,6 +263,16 @@ export function createRunDrain(world: World, engine: EnginePort, options: Execut
     async kick() {
       pump();
       while (active.size) await Promise.race(active.values());
+    },
+    async steer(runId, text) {
+      const words = text.trim().slice(0, 8000);
+      if (!words || !active.has(runId) || !engine.steer) return false;
+      const run = world.db.prepare("SELECT state, conversation_id FROM core_runs WHERE id = ?").get(runId);
+      // A run waiting on a question takes an answer, not more words.
+      if (!run || run.state !== "running") return false;
+      if (!(await engine.steer(String(run.conversation_id), words))) return false;
+      world.tx((db) => appendEvent(db, { kind: "run.steered", subject: `run:${runId}`, runId, actor: "user", payload: { text: words.slice(0, 2000) } }));
+      return true;
     },
   };
 }

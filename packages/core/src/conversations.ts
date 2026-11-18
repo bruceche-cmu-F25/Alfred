@@ -14,6 +14,10 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  /** `provider/model` this conversation uses; null for the engine's default. */
+  model: string | null;
+  /** How hard the model thinks; null for the default. */
+  thinking: ThinkingLevel | null;
   /** Runs queued or in progress. */
   busy: number;
   /** Runs that need the user: a question waiting, or interrupted. */
@@ -32,6 +36,9 @@ export class ConversationError extends Error {
 }
 
 export const CONVERSATION_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+const MODEL = /^[A-Za-z0-9._-]{1,60}\/[A-Za-z0-9._:@\/-]{1,139}$/;
 
 /** A title from what the user first asked: the start of it, on one line. */
 export function titleFrom(goal: string): string {
@@ -48,7 +55,8 @@ const SELECT = `SELECT c.*,
 function toConversation(row: Record<string, unknown>): Conversation {
   return {
     id: row.id as string, title: row.title as string, createdAt: row.created_at as string, updatedAt: row.updated_at as string,
-    archivedAt: row.archived_at as string | null, busy: row.busy as number, attention: row.attention as number,
+    archivedAt: row.archived_at as string | null, model: row.model as string | null, thinking: row.thinking as ThinkingLevel | null,
+    busy: row.busy as number, attention: row.attention as number,
     lastGoal: row.last_goal ? String(row.last_goal).slice(0, 120) : null,
   };
 }
@@ -81,11 +89,23 @@ export function listConversations(world: World, options: { includeArchived?: boo
     .all(options.includeArchived ? 1 : 0, limit).map(toConversation);
 }
 
-export function updateConversation(world: World, id: string, change: { title?: string; archived?: boolean; now?: number }): Conversation {
+export function updateConversation(
+  world: World,
+  id: string,
+  change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; now?: number },
+): Conversation {
   const now = change.now ?? Date.now();
+  if (change.model !== undefined && change.model !== null && !MODEL.test(change.model)) throw new ConversationError("invalid", "A model is written provider/model");
+  if (change.thinking !== undefined && change.thinking !== null && !THINKING_LEVELS.includes(change.thinking)) throw new ConversationError("invalid", "Unknown thinking level");
   world.tx((db) => {
-    const row = db.prepare("SELECT title, archived_at FROM core_conversations WHERE id = ?").get(id);
+    const row = db.prepare("SELECT title, archived_at, model, thinking FROM core_conversations WHERE id = ?").get(id);
     if (!row) throw new ConversationError("missing");
+    for (const field of ["model", "thinking"] as const) {
+      const value = change[field];
+      if (value === undefined || value === row[field]) continue;
+      db.prepare(`UPDATE core_conversations SET ${field} = ? WHERE id = ?`).run(value, id);
+      appendEvent(db, { kind: `conversation.${field}_set`, subject: `conversation:${id}`, payload: { from: row[field] ?? null, to: value }, runId: null, now });
+    }
     if (change.title !== undefined) {
       const title = change.title.replace(/\s+/g, " ").trim();
       if (!title || title.length > 200) throw new ConversationError("invalid", "A title is 1–200 characters");
