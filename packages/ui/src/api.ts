@@ -1,0 +1,90 @@
+/** The client side of @alfred/protocol. Every write carries a request id, so a
+ * retry after a dropped connection can never do the same thing twice.
+ */
+import type {
+  Conversation, ConversationDetail, CoreEvent, LiveUpdate, Notice, OpResponse, Run, StateResponse, SubmitRunResponse,
+} from "@alfred/protocol";
+import "./desktop.ts";
+
+const DEVICE_KEY = "alfred.device";
+
+function random(): string {
+  return crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+}
+
+/** This window's id for claiming notices: the Mac app's when inside it,
+ * otherwise this browser's, kept in localStorage when it can be.
+ */
+export const deviceId: string = (() => {
+  if (window.alfredDesktop?.deviceId) return window.alfredDesktop.deviceId;
+  try {
+    const stored = localStorage.getItem(DEVICE_KEY);
+    if (stored && /^[A-Za-z0-9._:-]{1,40}$/.test(stored)) return stored;
+    const id = `web-${random()}`;
+    localStorage.setItem(DEVICE_KEY, id);
+    return id;
+  } catch {
+    return `web-${random()}`;
+  }
+})();
+
+export const newRequestId = () => `${deviceId}.${random()}`;
+
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  // Network failures are retried with the same body (and so the same request id).
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(path, init);
+    } catch (error) {
+      if (attempt >= 2) throw new ApiError(0, "连不上 Alfred 主节点");
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      continue;
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ApiError(response.status, (body as { error?: string }).error ?? `请求失败（${response.status}）`);
+    return body as T;
+  }
+}
+
+const post = <T>(path: string, body: unknown) =>
+  call<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+export const api = {
+  state: () => call<StateResponse>("/api/state"),
+  /** Without a conversation id, the run starts a new conversation. */
+  submit: (goal: string, conversationId?: string) =>
+    post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}) }),
+  conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
+  updateConversation: (id: string, change: { title?: string; archived?: boolean }) => post<Conversation>(`/api/conversations/${id}`, change),
+  respond: (runId: string, requestId: string, answer: string) => post<Run>(`/api/runs/${runId}/respond`, { requestId, answer }),
+  run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
+  cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, {}),
+  resume: (runId: string) => post<Run>(`/api/runs/${runId}/resume`, {}),
+  op: (op: string, input: unknown) => post<OpResponse>(`/api/ops/${op}`, { requestId: newRequestId(), input }),
+  claim: (id: string) => post<Notice>(`/api/notices/${id}/claim`, { client: deviceId }),
+  present: (id: string) => post<Notice>(`/api/notices/${id}/present`, { client: deviceId }),
+  acknowledge: (id: string) => post<Notice>(`/api/notices/${id}/acknowledge`, {}),
+};
+
+export type Connection = "connecting" | "live" | "reconnecting";
+
+/** Follows the event stream from `after`. EventSource resumes from the last
+ * id it saw on its own after a drop.
+ */
+export function subscribe(
+  after: number,
+  handlers: { event(event: CoreEvent): void; live(update: LiveUpdate): void; connection(state: Connection): void },
+): () => void {
+  const source = new EventSource(`/api/events?after=${after}`);
+  source.addEventListener("open", () => handlers.connection("live"));
+  source.addEventListener("error", () => handlers.connection("reconnecting"));
+  source.addEventListener("core", (message) => handlers.event(JSON.parse((message as MessageEvent<string>).data) as CoreEvent));
+  source.addEventListener("live", (message) => handlers.live(JSON.parse((message as MessageEvent<string>).data) as LiveUpdate));
+  return () => source.close();
+}

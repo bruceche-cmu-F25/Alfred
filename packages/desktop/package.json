@@ -1,0 +1,21 @@
+{
+  "name": "@alfred/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Mac app: starts the home node under launchd and is one device on it.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "start": "electron .",
+    "e2e": "node test/desktop.e2e.ts"
+  },
+  "devDependencies": {
+    "electron": "45.3.4",
+    "playwright-core": "1.65.1"
+  },
+  "dependencies": {
+    "@alfred/protocol": "*",
+    "@alfred/ui": "*"
+  }
+}

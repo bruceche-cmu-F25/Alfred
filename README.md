@@ -1,2 +1,81 @@
 # Alfred
-An upgrade version for my robin agent, its a more intuitive interactive agent that lives at you local computer, settling up everything for you
+
+An open-source personal agent. One home node on your computer holds your world: what you asked for, what got done, and the proof that it got done. Every device you use is a window onto that same home node. The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**Status: step 2 of 5.** Alfred has a home node, a todo module, a text conversation and a Mac app. Multi-device access, voice and more modules are the next steps.
+
+## The Mac app
+
+```bash
+npm install
+npm run desktop
+```
+
+On first open, the app installs the home node as a launchd user agent (`~/Library/LaunchAgents/alfred.home-node.plist`) and starts it with the app's own runtime, so you don't need a separate Node to run it. From then on:
+
+- **The home node is independent of the app.** Closing the window or quitting the app does not stop a run. The node also starts again at login. Its log is at `~/Library/Logs/Alfred/alfred.home-node.log`.
+- **Alfred's figure stays on screen.** It sits in the bottom-right corner, always on top, and never takes focus. It shows when Alfred is working or has something waiting. Click it to open the main window.
+- **Returning from away gets one greeting.** When you lock the screen and come back after 10 minutes or more, the figure greets you once with what actually happened while you were away. Change the 10 minutes with `ALFRED_AWAY_MINUTES`.
+- **Results reach you when the window is not in front.** They arrive as system notifications. Clicking one opens the conversation at that run.
+- **⌥Space opens Alfred from anywhere.** The menu bar item shows whether the home node is online, can hide the figure, and can restart or stop the node.
+
+Running the app from source, macOS shows it as "Electron" and asks once for permission to show notifications. A packaged `Alfred.app` is not built yet.
+
+To remove the background service completely:
+
+```bash
+launchctl bootout gui/$(id -u)/alfred.home-node; rm ~/Library/LaunchAgents/alfred.home-node.plist
+```
+
+`npm run e2e --workspace @alfred/desktop` drives the real app against a throwaway world on port 7481 and checks all of the above. It installs its own temporary launchd agent and removes it at the end.
+
+## Run the home node alone
+
+You need Node 24 or newer. To talk to Alfred in sentences, you also need a model signed in through [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) (`~/.pi/agent`). Without a model, the todo list still works by hand.
+
+```bash
+npm install
+npm start          # builds the interface, then serves it on http://127.0.0.1:7480
+```
+
+The world is stored in `~/Library/Application Support/Alfred/` on macOS. Use `--data-dir` or `ALFRED_DATA_DIR` to put it somewhere else. Only one home node can run on a data directory at a time.
+
+If you used Robin, you can copy its todos across. Robin's data is opened read-only:
+
+```bash
+npm run alfred -- import-robin --dry-run   # count Robin's todos without writing anything
+npm run alfred -- import-robin             # import them; already-imported ids are skipped
+npm run alfred -- import-robin --check     # compare Alfred's copy with Robin, record by record
+```
+
+## What is guaranteed so far
+
+- A sentence becomes a **run**. Submitting a run returns immediately, and the conversation never blocks while a run works.
+- A run's result is backed by **receipts**: the events it actually wrote, recorded in the same transaction as each change. If the model says "done" but called no tool, the run has no receipts.
+- **Retries are safe.** Every command and run carries a request id. Sending the same request again returns the original result instead of running it a second time.
+- **A crash never repeats work.** If the home node stops in the middle of a run, the run comes back marked *interrupted*. It runs again only after you choose to continue it.
+- **Coming back is a real event.** Devices report when you are active or away. Exactly one welcome is recorded per return, and it holds only what actually happened, never a guess.
+- **Runs cannot delete.** A run gets read and reversible tools only. Permanent deletion stays with you.
+- **The server only listens locally.** It binds to loopback and refuses any other Host header and any cross-site browser origin. Paired devices come with the multi-device step.
+
+## Layout
+
+```text
+packages/core        world (events, state), runs, notices, commands; the engine port
+packages/module-kit  the module contract: operations, agent tools, permission levels
+packages/engine-pi   runs one core run as a tool-scoped, in-memory Pi session
+packages/server      the home node: client protocol (HTTP + SSE), single-instance lock, CLI
+packages/protocol    the public client protocol types
+packages/ui          the interface every device opens (React + Vite), and the figure's page
+packages/desktop     the Mac app (Electron): launchd home node, figure, menu bar, hotkey, notifications, presence
+modules/todo         todos, moved from Robin's todo domain, with a read-only Robin importer
+prototype/           interaction and entity prototypes, kept for reference
+```
+
+```bash
+npm test             # core, todo module and home node, including a kill-mid-run test
+npm run typecheck
+npm run dev:ui       # Vite on :5173, proxied to a running home node
+```
+
+MIT licensed.

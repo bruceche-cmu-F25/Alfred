@@ -1,0 +1,21 @@
+{
+  "name": "@alfred/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The home node: holds the world, executes runs, serves the client protocol and the UI.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "alfred": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@alfred/core": "*",
+    "@alfred/engine-pi": "*",
+    "@alfred/module-kit": "*",
+    "@alfred/module-todo": "*",
+    "@alfred/protocol": "*"
+  }
+}

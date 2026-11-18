@@ -1,0 +1,16 @@
+{
+  "name": "@alfred/module-todo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Todo module: a personal task list. Moved from Robin's todo domain.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts"
+  },
+  "dependencies": {
+    "@alfred/core": "*",
+    "@alfred/module-kit": "*"
+  }
+}

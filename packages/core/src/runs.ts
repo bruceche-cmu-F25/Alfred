@@ -1,0 +1,365 @@
+/** A run: one recoverable unit of work handed to an engine. Its id, ownership
+ * and lifecycle stay here; the engine only sees the goal. What a run DID is
+ * read from the events recorded under it, never from the model's words.
+ *
+ * A run may stop to ask the user (a choice, or permission for one action):
+ * it waits in `waiting_input` / `waiting_permission`, still leased to its
+ * executor, until the user answers or cancels.
+ */
+import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
+import type { DatabaseSync } from "node:sqlite";
+import { CONVERSATION_ID, ConversationError, createConversation, titleFrom, touchConversation } from "./conversations.ts";
+import { appendEvent, readRunEvents, type CoreEvent } from "./events.ts";
+import { iso, newId } from "./ids.ts";
+import { createNotice } from "./notices.ts";
+import { RUN_STATES } from "./schema.ts";
+import type { World } from "./world.ts";
+
+export type RunState = (typeof RUN_STATES)[number];
+export const RUN_LEASE_MS = 60_000;
+
+export interface RunOutcome {
+  status: "completed" | "failed" | "cancelled";
+  /** The engine's own account. An interpretation, not proof of what happened. */
+  reply?: string;
+  /** A short code, never a raw provider error. */
+  error?: string;
+  /** Ids of the domain events recorded under this run: what it actually did. */
+  receipts: string[];
+}
+/** What a waiting run asks the user. */
+export interface RunRequest {
+  id: string;
+  /** `permission`: may it do this one action (answers `allow` / `deny`). `input`: a choice or a short answer. */
+  kind: "input" | "permission";
+  question: string;
+  /** Suggested answers; for `permission` always `allow` and `deny`. */
+  options: string[];
+  createdAt: string;
+}
+export interface Run {
+  id: string;
+  requestId: string;
+  conversationId: string;
+  goal: string;
+  profile: string;
+  state: RunState;
+  createdAt: string;
+  updatedAt: string;
+  attempt: number;
+  leaseOwner: string | null;
+  leaseUntil: string | null;
+  cancelRequested: boolean;
+  outcome: RunOutcome | null;
+  request: RunRequest | null;
+}
+
+export class RunError extends Error {
+  override name = "RunError";
+  readonly code: "missing" | "conflict" | "state" | "lease";
+  constructor(code: "missing" | "conflict" | "state" | "lease", message?: string) {
+    super(message ?? {
+      missing: "No such run",
+      conflict: "This request id was already used for a different request",
+      state: "The run is not in a state that allows this",
+      lease: "Run lease expired or was replaced",
+    }[code]);
+    this.code = code;
+  }
+}
+
+const TERMINAL: readonly RunState[] = ["completed", "failed", "cancelled"];
+const WAITING: readonly RunState[] = ["waiting_input", "waiting_permission"];
+/** Held by an executor: working, waiting on the user, or stopping. */
+const LEASED: readonly RunState[] = ["running", "cancelling", ...WAITING];
+const LEASED_SQL = LEASED.map((state) => `'${state}'`).join(", ");
+export const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const OWNER = /^[A-Za-z0-9._:-]{1,80}$/;
+const PROFILE = /^[a-z][a-z0-9_-]{0,63}$/;
+
+function toRun(row: Record<string, unknown>): Run {
+  return {
+    id: row.id as string, requestId: row.request_id as string, conversationId: row.conversation_id as string,
+    goal: row.goal as string, profile: row.profile as string, state: row.state as RunState,
+    createdAt: row.created_at as string, updatedAt: row.updated_at as string, attempt: row.attempt as number,
+    leaseOwner: row.lease_owner as string | null, leaseUntil: row.lease_until as string | null,
+    cancelRequested: row.cancel_requested === 1, outcome: row.outcome ? JSON.parse(row.outcome as string) : null,
+    request: row.request ? JSON.parse(row.request as string) : null,
+  };
+}
+
+function load(db: DatabaseSync, id: string): Run {
+  const row = db.prepare("SELECT * FROM core_runs WHERE id = ?").get(id);
+  if (!row) throw new RunError("missing");
+  return toRun(row);
+}
+
+function setState(db: DatabaseSync, run: Run, state: RunState, now: number, extra: Record<string, string | number | null> = {}): void {
+  const columns = Object.keys(extra);
+  db.prepare(`UPDATE core_runs SET state = ?, updated_at = ?${columns.map((column) => `, ${column} = ?`).join("")} WHERE id = ?`)
+    .run(state, iso(now), ...Object.values(extra), run.id);
+}
+
+function runEvent(db: DatabaseSync, run: Run, kind: string, now: number, payload: Record<string, unknown> = {}): CoreEvent {
+  // Lifecycle events belong to the run but are not receipts of its work.
+  return appendEvent(db, { kind: `run.${kind}`, subject: `run:${run.id}`, runId: run.id, payload: { goal: run.goal.slice(0, 200), ...payload }, now });
+}
+
+function receiptsOf(db: DatabaseSync, runId: string): string[] {
+  return readRunEvents(db, runId).filter((event) => !event.kind.startsWith("run.")).map((event) => event.id);
+}
+
+/** A question nobody can answer any more stops being shown. */
+function closeRequestNotices(db: DatabaseSync, runId: string, now: number): void {
+  db.prepare(`UPDATE core_notices SET state = 'acknowledged', claimed_by = NULL, claim_until = NULL, updated_at = ?
+    WHERE kind = 'run_request' AND state IN ('pending', 'claimed', 'presented') AND json_extract(payload, '$.runId') = ?`).run(iso(now), runId);
+}
+
+function interrupt(db: DatabaseSync, run: Run, now: number): void {
+  setState(db, run, "interrupted", now, { lease_owner: null, lease_until: null, request: null });
+  closeRequestNotices(db, run.id, now);
+  const event = runEvent(db, run, "interrupted", now, { attempt: run.attempt });
+  createNotice(db, { eventSeq: event.seq, kind: "run_interrupted", payload: { runId: run.id, conversationId: run.conversationId, goal: run.goal.slice(0, 200) }, now });
+}
+
+export interface SubmitRunInput {
+  requestId: string;
+  goal: string;
+  profile: string;
+  /** Continue this conversation; omitted, the run starts a new one. */
+  conversationId?: string;
+  now?: number;
+}
+
+/** Returns at once; a run never blocks the conversation. The same request id
+ * returns the original run; reusing it for different content is refused.
+ */
+export function submitRun(world: World, input: SubmitRunInput): { run: Run; replayed: boolean } {
+  if (!REQUEST_ID.test(input.requestId)) throw new Error("Invalid request id");
+  if (!PROFILE.test(input.profile)) throw new Error("Invalid run profile");
+  if (input.conversationId !== undefined && !CONVERSATION_ID.test(input.conversationId)) throw new ConversationError("invalid");
+  const goal = input.goal.trim();
+  if (!goal || goal.length > 8000) throw new Error("Goal must be 1–8000 characters");
+  const hash = createHash("sha256").update(JSON.stringify({ goal, profile: input.profile, conversationId: input.conversationId ?? null })).digest("hex");
+  const now = input.now ?? Date.now();
+  return world.tx((db) => {
+    const existing = db.prepare("SELECT * FROM core_runs WHERE request_id = ?").get(input.requestId);
+    if (existing) {
+      if (existing.request_hash !== hash) throw new RunError("conflict");
+      return { run: toRun(existing), replayed: true };
+    }
+    let conversationId = input.conversationId;
+    if (conversationId) touchConversation(db, conversationId, now);
+    else conversationId = createConversation(db, { title: titleFrom(goal), now });
+    const id = newId();
+    db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(id, input.requestId, hash, conversationId, goal, input.profile, iso(now), iso(now));
+    const run = load(db, id);
+    runEvent(db, run, "queued", now, { conversationId });
+    return { run, replayed: false };
+  });
+}
+
+/** A run whose executor stopped heartbeating (crash, sleep) becomes
+ * interrupted. It is never re-run automatically: that could repeat its actions.
+ */
+export function sweepRuns(world: World, options: { now?: number } = {}): void {
+  const now = options.now ?? Date.now();
+  world.tx((db) => {
+    for (const row of db.prepare(`SELECT * FROM core_runs WHERE state IN (${LEASED_SQL}) AND lease_until <= ?`).all(iso(now))) {
+      interrupt(db, toRun(row), now);
+    }
+  });
+}
+
+/** For a home node that has just started and holds the single-instance lock:
+ * no other executor can be alive, so every leased run belongs to a dead one.
+ */
+export function interruptOrphanedRuns(world: World, owner: string, options: { now?: number } = {}): number {
+  const now = options.now ?? Date.now();
+  return world.tx((db) => {
+    const rows = db.prepare(`SELECT * FROM core_runs WHERE state IN (${LEASED_SQL}) AND (lease_owner IS NULL OR lease_owner != ?)`).all(owner);
+    for (const row of rows) interrupt(db, toRun(row), now);
+    return rows.length;
+  });
+}
+
+/** The oldest queued run whose conversation has nothing else in progress,
+ * leased to owner. Null when there is nothing to start.
+ */
+export function claimNextRun(world: World, owner: string, options: { leaseMs?: number; now?: number } = {}): Run | null {
+  if (!OWNER.test(owner)) throw new Error("Invalid run owner");
+  const now = options.now ?? Date.now();
+  sweepRuns(world, { now });
+  return world.tx((db) => {
+    const row = db.prepare(`SELECT * FROM core_runs q WHERE q.state = 'queued' AND NOT EXISTS (
+      SELECT 1 FROM core_runs a WHERE a.conversation_id = q.conversation_id AND a.state IN (${LEASED_SQL}))
+      ORDER BY q.created_at, q.rowid LIMIT 1`).get();
+    if (!row) return null;
+    const run = toRun(row);
+    setState(db, run, "running", now, { attempt: run.attempt + 1, lease_owner: owner, lease_until: iso(now + (options.leaseMs ?? RUN_LEASE_MS)) });
+    runEvent(db, run, "started", now, { attempt: run.attempt + 1 });
+    return load(db, run.id);
+  });
+}
+
+function owned(db: DatabaseSync, id: string, owner: string, now: number): Run {
+  const run = load(db, id);
+  if (run.leaseOwner !== owner || !LEASED.includes(run.state) || Date.parse(run.leaseUntil!) <= now) throw new RunError("lease");
+  return run;
+}
+
+/** Extends the lease. Tells the executor whether cancellation was requested. */
+export function heartbeatRun(world: World, id: string, owner: string, options: { leaseMs?: number; now?: number } = {}): { cancelRequested: boolean } {
+  const now = options.now ?? Date.now();
+  return world.tx((db) => {
+    const run = owned(db, id, owner, now);
+    db.prepare("UPDATE core_runs SET lease_until = ? WHERE id = ?").run(iso(now + (options.leaseMs ?? RUN_LEASE_MS)), id);
+    return { cancelRequested: run.cancelRequested };
+  });
+}
+
+/** Records the engine's actual result. Only the current lease holder may;
+ * a replaced or lapsed executor cannot overwrite a newer attempt.
+ */
+export function finishRun(world: World, id: string, owner: string, result: Omit<RunOutcome, "receipts">, options: { now?: number } = {}): Run {
+  if (!TERMINAL.includes(result.status)) throw new Error("Unknown run outcome");
+  const now = options.now ?? Date.now();
+  return world.tx((db) => {
+    const run = owned(db, id, owner, now);
+    const receipts = receiptsOf(db, id);
+    const outcome: RunOutcome = {
+      status: result.status,
+      ...(result.reply ? { reply: result.reply.slice(0, 4000) } : {}),
+      ...(result.error ? { error: result.error.slice(0, 80) } : {}),
+      receipts,
+    };
+    setState(db, run, result.status, now, { lease_owner: null, lease_until: null, outcome: JSON.stringify(outcome), request: null });
+    closeRequestNotices(db, id, now);
+    touchConversation(db, run.conversationId, now);
+    const event = runEvent(db, run, result.status, now, { receipts: receipts.length });
+    createNotice(db, {
+      eventSeq: event.seq, kind: "run_result", now,
+      payload: {
+        runId: id, conversationId: run.conversationId, status: result.status, goal: run.goal.slice(0, 200), receipts: receipts.length,
+        ...(outcome.reply ? { reply: outcome.reply.slice(0, 280) } : {}),
+      },
+    });
+    return load(db, id);
+  });
+}
+
+/** Cancelling is not cancelled: a running or waiting run stops when its
+ * engine actually stops. Already-finished runs are returned unchanged.
+ */
+export function requestCancel(world: World, id: string, options: { now?: number } = {}): Run {
+  const now = options.now ?? Date.now();
+  return world.tx((db) => {
+    const run = load(db, id);
+    if (TERMINAL.includes(run.state) || run.state === "cancelling") return run;
+    if (run.state === "queued" || run.state === "interrupted") {
+      setState(db, run, "cancelled", now, { outcome: JSON.stringify({ status: "cancelled", receipts: receiptsOf(db, id) }) });
+      runEvent(db, run, "cancelled", now);
+    } else {
+      setState(db, run, "cancelling", now, { cancel_requested: 1, request: null });
+      closeRequestNotices(db, id, now);
+      runEvent(db, run, "cancel_requested", now);
+    }
+    return load(db, id);
+  });
+}
+
+/** The user's decision to continue an interrupted run. A new attempt, not a replay. */
+export function resumeRun(world: World, id: string, options: { now?: number } = {}): Run {
+  const now = options.now ?? Date.now();
+  return world.tx((db) => {
+    const run = load(db, id);
+    if (run.state !== "interrupted") throw new RunError("state");
+    setState(db, run, "queued", now, { cancel_requested: 0 });
+    touchConversation(db, run.conversationId, now);
+    runEvent(db, run, "resumed", now);
+    return load(db, id);
+  });
+}
+
+// ---- asking the user -----------------------------------------------------
+
+/** Answers reach the waiting executor through this, after they commit. */
+export const runAnswers = new EventEmitter<{ answer: [runId: string, requestId: string, answer: string] }>();
+// One listener per waiting run and per drain; there is no leak to warn about.
+runAnswers.setMaxListeners(0);
+
+const MAX_QUESTION = 1000;
+const MAX_OPTION = 120;
+const MAX_ANSWER = 2000;
+export const PERMISSION_ANSWERS = ["allow", "deny"] as const;
+
+/** The executor stops the run to ask. Only the lease holder of a running run may. */
+export function openRequest(world: World, id: string, owner: string, input: { kind: RunRequest["kind"]; question: string; options?: string[]; now?: number }): RunRequest {
+  const now = input.now ?? Date.now();
+  const question = input.question.trim().slice(0, MAX_QUESTION);
+  if (!question) throw new Error("A request needs a question");
+  const options = input.kind === "permission"
+    ? [...PERMISSION_ANSWERS]
+    : [...new Set((input.options ?? []).map((option) => String(option).trim().slice(0, MAX_OPTION)).filter(Boolean))].slice(0, 6);
+  return world.tx((db) => {
+    const run = owned(db, id, owner, now);
+    if (run.state !== "running") throw new RunError("state");
+    const request: RunRequest = { id: newId(), kind: input.kind, question, options, createdAt: iso(now) };
+    setState(db, run, input.kind === "permission" ? "waiting_permission" : "waiting_input", now, { request: JSON.stringify(request) });
+    const event = runEvent(db, run, "waiting", now, { request });
+    createNotice(db, {
+      eventSeq: event.seq, kind: "run_request", now,
+      payload: { runId: id, conversationId: run.conversationId, goal: run.goal.slice(0, 200), requestId: request.id, kind: request.kind, question, options },
+    });
+    return request;
+  });
+}
+
+/** The user answered. Accepted only for the question currently asked. */
+export function answerRequest(world: World, id: string, input: { requestId: string; answer: string; now?: number }): Run {
+  const now = input.now ?? Date.now();
+  const answer = String(input.answer ?? "").trim().slice(0, MAX_ANSWER);
+  const run = world.tx((db) => {
+    const run = load(db, id);
+    if (!WAITING.includes(run.state) || !run.request) throw new RunError("state", "This run is not waiting for an answer");
+    if (run.request.id !== input.requestId) throw new RunError("conflict", "That question was already answered or replaced");
+    if (run.request.kind === "permission" && !(PERMISSION_ANSWERS as readonly string[]).includes(answer)) throw new RunError("state", "Answer allow or deny");
+    if (!answer) throw new RunError("state", "An answer is needed");
+    setState(db, run, "running", now, { request: null });
+    closeRequestNotices(db, id, now);
+    appendEvent(db, {
+      kind: "run.answered", subject: `run:${id}`, runId: id, actor: "user", now,
+      payload: { requestId: run.request.id, kind: run.request.kind, question: run.request.question.slice(0, 200), answer: answer.slice(0, 200) },
+    });
+    return load(db, id);
+  });
+  runAnswers.emit("answer", id, input.requestId, answer);
+  return run;
+}
+
+export function getRun(world: World, id: string): { run: Run; events: CoreEvent[] } {
+  return { run: load(world.db, id), events: readRunEvents(world.db, id) };
+}
+
+/** Newest first. */
+export function listRuns(world: World, options: { conversationId?: string; limit?: number } = {}): Run[] {
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 200);
+  return world.db.prepare(`SELECT * FROM core_runs WHERE (? IS NULL OR conversation_id = ?)
+    ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(options.conversationId ?? null, options.conversationId ?? null, limit).map(toRun);
+}
+
+/** The bounded recent exchange before `run` in its conversation, oldest first.
+ * Given to the engine as context; never as instructions it must follow.
+ */
+export function conversationBefore(world: World, run: Run, options: { turns?: number; chars?: number } = {}): Array<{ role: "user" | "assistant"; text: string }> {
+  const chars = options.chars ?? 1000;
+  const rows = world.db.prepare(`SELECT * FROM core_runs WHERE conversation_id = ? AND id != ?
+    AND state IN ('completed', 'failed', 'cancelled') AND created_at <= ?
+    ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(run.conversationId, run.id, run.createdAt, options.turns ?? 6).map(toRun).reverse();
+  return rows.flatMap((past) => [
+    { role: "user" as const, text: past.goal.slice(0, chars) },
+    { role: "assistant" as const, text: (past.outcome?.reply ?? `(${past.state}${past.outcome?.error ? `: ${past.outcome.error}` : ""})`).slice(0, chars) },
+  ]);
+}
