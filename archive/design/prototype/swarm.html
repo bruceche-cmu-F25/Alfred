@@ -1,0 +1,999 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Delete or absorb once the question is answered.
+
+  Question: Swarm (variant C in index.html) is the right body. What makes it feel
+  like it is WITH you, instead of a status light you watch?
+
+  What this tries: nothing he does is independent of you. Same grid, same particles,
+  same four formations as Swarm; what is new is that you are an input to all of it.
+
+    regard     At rest the swarm gathers and warms on the side facing you. Your pointer
+               is your hand: he glances at it when it moves, then comes back to you.
+               He looks at the panel he is reading, at a note when it lands, at the
+               line while you type.
+    touch      Move through him and the particles part and swirl in your wake. Rest
+               your pointer inside him and they settle round it. Hold him (or space)
+               and he opens into the listening ring around your hand; let go to send.
+    exchange   Words are matter. What you type flies into him and stays lit while he
+               thinks; what he says streams out of him to the line it is written on.
+               A yes or a no travels from the button back to him, and he nods.
+    presence   Leave (switch tab, go quiet, or "Good night") and he comes apart into
+               dust in a dim room. Come back and the room lights and he gathers.
+               He only speaks on return if it has been long, or something landed.
+    memory     He keeps what you settled (localStorage): reload and the world is as
+               you left it, and he says so. "kept · …" marks what he took; you can
+               make him forget.
+
+  The two of you are different colours: he is heat, you are white.
+  Everything around him is stubbed sample data — nothing here talks to a real service.
+
+  Run: serve the folder and open /swarm.html  (?scene=idle|brief skips the arrival,
+  ?hour=dusk|night|dawn|day|gold picks the palette)
+-->
+<html lang="en" data-hour="dusk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred — Swarm, with you</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #08060e; --panel: #100b19; --panel-up: #181024;
+    --ink: #f3ecf8; --body: #cbc0d8; --mute: #9d90b3; --faint: #7a6f92;
+    --rule: rgba(205, 180, 232, 0.17); --rule-soft: rgba(205, 180, 232, 0.08);
+    --accent: 255 61 127; --amber: #e8b877;
+    --heat-1: #4c25a6; --heat-2: #9c48ff; --heat-3: #ff4f93; --heat-4: #ffd56e;
+  }
+  :root[data-hour='night'] {
+    --bg: #04060e; --panel: #090e1b; --panel-up: #10182a;
+    --ink: #e8edff; --body: #c0c9e1; --mute: #919fbe; --faint: #7283a3;
+    --rule: rgba(168, 189, 231, 0.17); --rule-soft: rgba(168, 189, 231, 0.08);
+    --accent: 122 142 255; --amber: #e3c08a;
+    --heat-1: #2c43a6; --heat-2: #4f7dff; --heat-3: #97b6ff; --heat-4: #fff4c0;
+  }
+  :root[data-hour='dawn'] {
+    --bg: #0b080d; --panel: #140e17; --panel-up: #1d1420;
+    --ink: #f6e9df; --body: #d3c1c5; --mute: #aa929c; --faint: #927b87;
+    --rule: rgba(221, 186, 183, 0.17); --rule-soft: rgba(221, 186, 183, 0.08);
+    --accent: 247 157 116; --amber: #f0cf86;
+    --heat-1: #6c2a60; --heat-2: #e4527f; --heat-3: #ffa77b; --heat-4: #ffecb2;
+  }
+  :root[data-hour='day'] {
+    --bg: #0a1016; --panel: #111922; --panel-up: #18222d;
+    --ink: #eef4f8; --body: #c5d0da; --mute: #97a6b4; --faint: #7a8a9b;
+    --rule: rgba(176, 200, 220, 0.17); --rule-soft: rgba(176, 200, 220, 0.08);
+    --accent: 84 170 214; --amber: #f0b45c;
+    --heat-1: #17647e; --heat-2: #3aa8e8; --heat-3: #62d696; --heat-4: #ffe074;
+  }
+  :root[data-hour='gold'] {
+    --bg: #0a0705; --panel: #14100a; --panel-up: #1e170d;
+    --ink: #fbf1dc; --body: #d9c9a8; --mute: #a8946e; --faint: #8a7858;
+    --rule: rgba(230, 200, 140, 0.17); --rule-soft: rgba(230, 200, 140, 0.08);
+    --accent: 255 176 46; --amber: #ff7a59;
+    --heat-1: #6b3408; --heat-2: #c4700f; --heat-3: #ffac2e; --heat-4: #ffe59a;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 400 14px/1.5 var(--sans);
+    overflow: hidden; transition: background 1.1s;
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+  }
+  input, .brief { user-select: text; -webkit-user-select: text; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  #grid { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  .top {
+    position: fixed; inset: 0 0 auto 0; z-index: 2;
+    display: flex; justify-content: space-between; padding: 15px 18px;
+    font: 400 10.5px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint);
+    transition: opacity 1.2s;
+  }
+  .top b { color: var(--ink); font-weight: 500; margin-right: 12px; }
+  .st::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; background: rgb(var(--accent)); transition: opacity 1.2s; }
+
+  /* what was said: yours above, his below, both under him */
+  .say {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(620px, 100% - 32px); text-align: center; pointer-events: none;
+    transition: top 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 1.2s;
+  }
+  .you { font: 400 11.5px/1.6 var(--mono); color: var(--mute); min-height: 18px; }
+  .alf { font: 400 15px/1.6 var(--mono); color: var(--ink); min-height: 24px; text-wrap: balance; }
+  .alf[data-live]::after { content: '▍'; color: rgb(var(--accent)); animation: caret 0.9s steps(2) infinite; }
+  @keyframes caret { 50% { opacity: 0; } }
+  /* what he took from this: a mark you can see, and take back */
+  .kept { font: 400 10.5px/17px var(--mono); color: var(--faint); height: 17px; margin-top: 5px; opacity: 0; transition: opacity 0.6s; }
+  .kept[data-on] { opacity: 1; }
+  .kept::before { content: '◆ '; color: rgb(var(--accent)); }
+  .kept button { pointer-events: auto; margin-left: 9px; color: var(--mute); border-bottom: 1px dashed var(--rule); }
+  .kept button:hover { color: var(--ink); }
+  .hint { display: none; font: 400 10.5px/17px var(--mono); letter-spacing: 0.03em; color: var(--faint); }
+  body[data-scene='idle']:not([data-met]) .hint { display: block; }
+  body[data-scene='idle']:not([data-met]) .kept:not([data-on]) { display: none; }
+
+  /* the quiet note: he brings it out and holds it; nothing is said until you answer */
+  .nudge {
+    position: fixed; z-index: 3; display: flex; align-items: center; gap: 10px;
+    padding: 6px 7px 6px 11px; border: 1px dashed var(--rule); background: var(--panel);
+    font: 400 11px/1 var(--mono); color: var(--body); white-space: nowrap;
+    opacity: 0; visibility: hidden; transition: opacity 1.1s, visibility 0s 1.1s;
+  }
+  .nudge[data-on] { opacity: 1; visibility: visible; transition: opacity 1.1s; }
+
+  .yn { display: flex; gap: 6px; flex: none; }
+  .yn button {
+    width: 26px; height: 26px; display: grid; place-items: center;
+    border: 1px solid var(--rule); color: var(--mute); transition: 0.15s;
+  }
+  .yn button:hover { color: var(--ink); background: var(--panel-up); }
+  .yn button[data-y]:hover { border-color: rgb(var(--accent) / 0.8); color: rgb(var(--accent)); }
+  .yn svg, .tile svg { display: block; }
+
+  /* brief: three panels that wipe in under him when he has things to show */
+  .brief {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(1060px, 100% - 32px);
+    display: grid; grid-template-columns: 0.9fr 1.15fr 1.1fr;
+    border: 1px dashed var(--rule); overflow: auto; scrollbar-width: none;
+    opacity: 0; visibility: hidden; clip-path: inset(0 0 100% 0);
+    transition: clip-path 0.45s steps(9), opacity 0.2s, visibility 0s 0.45s;
+  }
+  body[data-scene='brief'] .brief { opacity: 1; visibility: visible; clip-path: inset(0); transition: clip-path 0.6s steps(12), opacity 1.2s; }
+  .panel { padding: 13px 16px 14px; border-right: 1px dashed var(--rule); transition: opacity 0.4s, background 0.4s; min-width: 0; }
+  .panel:last-child { border-right: 0; }
+  .brief[data-reading] .panel { opacity: 0.42; }
+  .brief[data-reading] .panel[data-reading] { opacity: 1; background: rgb(var(--accent) / 0.045); }
+  .panel h2 {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font: 500 10.5px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute);
+    padding-bottom: 10px;
+  }
+  .panel[data-reading] h2 { color: rgb(var(--accent)); }
+  .panel h2 i { font-style: normal; color: var(--faint); letter-spacing: 0.04em; }
+  .row { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 9px 0; border-top: 1px dashed var(--rule-soft); }
+  .row > div:first-child { min-width: 0; }
+  .who { font: 500 12px/1.4 var(--mono); color: var(--ink); }
+  .what { font-size: 12.5px; line-height: 1.5; color: var(--body); }
+  .draft { font: 400 11px/1.5 var(--mono); color: var(--mute); margin-top: 3px; }
+  .draft::before { content: '↳ '; color: rgb(var(--accent)); }
+  .row[data-done] { opacity: 0.5; }
+  .row[data-done] .yn { display: none; }
+  .row .res { display: none; font: 400 10.5px/26px var(--mono); color: var(--mute); white-space: nowrap; }
+  .row[data-done] .res { display: block; }
+  .line-item { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px dashed var(--rule-soft); font-size: 12.5px; color: var(--body); }
+  .line-item span:last-child { font: 400 11.5px/1.6 var(--mono); color: var(--mute); white-space: nowrap; }
+  .line-item[data-new] { color: var(--ink); }
+  .line-item[data-new] span:last-child { color: rgb(var(--accent)); }
+  .fyi { font: 400 11px/1.5 var(--mono); color: var(--faint); padding-top: 9px; border-top: 1px dashed var(--rule-soft); }
+
+  .cal { position: relative; height: 170px; margin-left: 34px; border-left: 1px dashed var(--rule); }
+  .cal time { position: absolute; left: -34px; font: 400 9.5px/1 var(--mono); color: var(--faint); transform: translateY(-4px); }
+  .cal .tick { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--rule-soft); }
+  .blk {
+    position: absolute; left: 6px; right: 0; padding: 0 7px; overflow: hidden;
+    display: flex; align-items: center; gap: 8px;
+    font: 400 11px/1 var(--mono); color: var(--ink); white-space: nowrap;
+    background: rgb(var(--accent) / 0.16); box-shadow: inset 2px 0 0 rgb(var(--accent));
+    transition: top 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), background 0.3s, opacity 0.3s;
+  }
+  .blk i { font-style: normal; color: var(--mute); font-size: 10px; }
+  .blk[data-proposed] { background: transparent; box-shadow: none; outline: 1px dashed rgb(var(--accent) / 0.6); outline-offset: -1px; color: var(--body); }
+  .blk[hidden] { display: none; }
+  .todo { list-style: none; padding: 0; margin-top: 4px; }
+  .todo li { display: flex; gap: 9px; align-items: center; padding: 5px 0; font-size: 12.5px; color: var(--body); }
+  .todo li::before { content: ''; width: 9px; height: 9px; border: 1px solid var(--mute); flex: none; }
+  .todo li[data-done] { color: var(--faint); text-decoration: line-through; }
+  .todo li[data-done]::before { background: rgb(var(--accent)); border-color: rgb(var(--accent)); }
+  .todo em { font: 400 10.5px/1 var(--mono); font-style: normal; color: rgb(var(--accent)); margin-left: auto; }
+
+  /* bottom stack: the deck (idle only), then the line you talk on */
+  #stack {
+    position: fixed; inset: auto 0 0 0; z-index: 2; padding: 0 16px 56px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+    transition: opacity 1.2s;
+  }
+  .deck { display: none; gap: 0; border: 1px dashed var(--rule); background: var(--panel); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  body[data-scene='idle'] .deck { display: flex; animation: rise 0.5s steps(8) both; }
+  @keyframes rise { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0); } }
+  .tile {
+    width: 148px; flex: none; padding: 13px 14px 12px; text-align: left;
+    border-right: 1px dashed var(--rule); transition: background 0.2s, transform 0.2s;
+  }
+  .tile:last-child { border-right: 0; }
+  .tile:hover, .tile[aria-current='true'] { background: var(--panel-up); transform: translateY(-4px); box-shadow: 0 4px 0 rgb(var(--accent) / 0.7); }
+  .tile svg { color: rgb(var(--accent)); margin-bottom: 10px; }
+  .tile b { display: block; font: 500 12.5px/1.3 var(--sans); color: var(--ink); }
+  .tile span { display: block; font: 400 10.5px/1.5 var(--mono); color: var(--mute); margin-top: 3px; }
+  .tile kbd { float: right; font: 400 9.5px/1 var(--mono); color: var(--faint); }
+
+  .line { width: min(620px, 100%); }
+  .line form { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px dashed var(--rule); }
+  .line form:focus-within { border-bottom-color: rgb(var(--accent) / 0.7); }
+  .line form::before { content: '›'; font: 400 14px/1 var(--mono); color: rgb(var(--accent)); }
+  .line input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--ink); font: 400 13px/1.4 var(--mono); }
+  .line input::placeholder { color: var(--faint); }
+  .line kbd { font: 400 10px/1 var(--mono); color: var(--faint); border: 1px solid var(--rule); padding: 4px 6px; white-space: nowrap; }
+  body[data-held] .line kbd { color: var(--bg); background: rgb(var(--accent)); border-color: transparent; }
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+  .chips button { font: 400 10.5px/1 var(--mono); color: var(--faint); border: 1px dashed var(--rule); padding: 5px 7px; }
+  .chips button:hover { color: var(--ink); border-color: rgb(var(--accent) / 0.6); }
+
+  /* you are away: the room dims, and he comes apart into it */
+  body[data-away] :is(.say, .brief, #stack) { opacity: 0.16; }
+  body[data-away] .top { opacity: 0.55; }
+  body[data-away] .st::before { opacity: 0.35; }
+
+  /* prototype switcher — deliberately not in the design's language */
+  .proto {
+    position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 9;
+    display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px;
+    max-width: calc(100% - 16px); overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+    background: #f4f1ea; color: #15131a; font: 500 10.5px/1 ui-monospace, Menlo, monospace;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  }
+  .proto button, .proto a { padding: 6px 7px; border-radius: 999px; color: inherit; text-decoration: none; }
+  .proto button:hover, .proto a:hover { background: #dedad0; }
+  .proto button[aria-pressed='true'] { background: #15131a; color: #f4f1ea; }
+  .proto .lab { padding: 0 4px 0 8px; color: #86808f; }
+  .proto .sep { width: 1px; height: 14px; background: #cfcabd; margin: 0 4px; flex: none; }
+
+  @media (max-width: 860px) {
+    .brief { grid-template-columns: 1fr; }
+    .panel { border-right: 0; border-bottom: 1px dashed var(--rule); }
+    .chips { display: none; }
+    .tile { width: 128px; }
+  }
+</style>
+</head>
+<body data-scene="arrive" data-away>
+<canvas id="grid"></canvas>
+
+<header class="top">
+  <span><b>Alfred</b><span class="st" id="st">resting</span></span>
+  <span id="clock"></span>
+</header>
+
+<div class="say" id="say">
+  <p class="you" id="you"></p>
+  <p class="alf" id="alf"></p>
+  <p class="kept" id="kept"></p>
+  <p class="hint">move through him — he feels it · hold him, or space, to talk</p>
+</div>
+
+<aside class="nudge" id="nudge">
+  <span id="nudge-t">Research · finished</span>
+  <span class="yn"><button data-y aria-label="Hear it"></button><button data-n aria-label="Later"></button></span>
+</aside>
+
+<section class="brief" id="brief">
+  <div class="panel" id="p-brief">
+    <h2>Brief <i id="day"></i></h2>
+    <div class="line-item"><span>Clear, 16° — rain after six</span><span>weather</span></div>
+    <div class="line-item"><span>Markets closed flat</span><span>S&amp;P +0.1%</span></div>
+    <div class="line-item"><span>Chip export rules revised</span><span>news</span></div>
+    <div class="line-item"><span>Watchlist</span><span>AAPL −0.4%</span></div>
+    <div id="tomorrow"></div>
+    <p class="fyi">Written at 06:30 · sample data</p>
+  </div>
+
+  <div class="panel" id="p-inbox">
+    <h2>Inbox <i id="need"></i></h2>
+    <div class="row" id="r-north" data-ask data-yes="Sent. Thursday at ten is on your calendar." data-no="Left it. I'll ask again tomorrow.">
+      <div><p class="who">Northwind Labs · recruiting</p><p class="what">Onsite slots: Thu 10:00 or Fri 14:00.</p><p class="draft">Reply accepting Thu 10:00</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <div class="row" id="r-team" data-ask data-yes="Confirmed." data-no="Skipped. It closes tonight.">
+      <div><p class="who">Course staff · 17-6xx</p><p class="what">Team form needs your confirmation by tonight.</p><p class="draft">Confirm with the current team</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <p class="fyi">3 others — a receipt, a newsletter, a calendar accept. Nothing needed.</p>
+  </div>
+
+  <div class="panel" id="p-today">
+    <h2>Today <i>3 blocks</i></h2>
+    <div class="cal" id="cal"></div>
+    <div class="row" id="r-hold" data-ask data-effect="hold" data-yes="Held. Two to three is yours." data-no="Fine. It's still due Friday.">
+      <div><p class="what">Paper review is due in 2 days.</p><p class="draft">Hold 14:00–15:00 for it</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <ul class="todo" id="todo">
+      <li>Send résumé to Northwind</li>
+      <li>Paper review <em>due Fri</em></li>
+      <li>Gym</li>
+    </ul>
+  </div>
+</section>
+
+<div id="stack">
+  <nav class="deck" id="deck" aria-label="Workspaces"></nav>
+  <div class="line">
+    <form id="line"><input id="in" autocomplete="off" placeholder="Say something, or type it"><kbd>hold space</kbd></form>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
+<div class="proto" id="proto"></div>
+
+<script>
+/* ── helpers ─────────────────────────────────────────────────────────── */
+const $ = s => document.querySelector(s)
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (a, b, v) => { const k = clamp((v - a) / (b - a), 0, 1); return k * k * (3 - 2 * k) }
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const TAU = Math.PI * 2
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16 - 0.5)
+// a spring with a little overshoot: how he moves, turns and nods
+const spring = (o, key, target, dt, k, z) => { const v = 'v_' + key; o[v] += (k * (target - o[key]) - 2 * z * Math.sqrt(k) * o[v]) * dt; o[key] += o[v] * dt }
+const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve']
+const num = n => NUM[n] || String(n)
+const cap = s => s[0].toUpperCase() + s.slice(1)
+
+// 7×7 glyphs as text rows, emitted as rects — same trick as the portfolio's sprites
+const GLYPHS = {
+  yes: ['.......', '......#', '.....##', '#...##.', '##.##..', '.###...', '..#....'],
+  no: ['#.....#', '##...##', '.##.##.', '..###..', '.##.##.', '##...##', '#.....#'],
+  job: ['..###..', '.#...#.', '#######', '#.....#', '###.###', '#.....#', '#######'],
+  research: ['.###...', '#...#..', '#...#..', '#...#..', '.####..', '....##.', '.....##'],
+  product: ['...#...', '.##.##.', '#..#..#', '#..#..#', '#..#..#', '.##.##.', '...#...'],
+  chat: ['######.', '#.....#', '#.#.#.#', '#.....#', '######.', '.##....', '.#.....'],
+  auto: ['....#..', '...##..', '..##...', '.#####.', '...##..', '..##...', '..#....'],
+}
+const glyph = (name, px = 2) => `<svg width="${7 * px}" height="${7 * px}" viewBox="0 0 7 7" shape-rendering="crispEdges" fill="currentColor">${
+  GLYPHS[name].map((r, y) => [...r].map((c, x) => c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '').join('')).join('')}</svg>`
+
+/* ── what he keeps between visits ────────────────────────────────────── */
+const MEM = 'alfred-swarm-v1'
+const blank = () => ({ visits: 0, lastSeen: 0, met: false, kept: [], world: { standup: 0, tickers: [], decided: {}, todo: 0, plan: false } })
+const mem = (() => { try { const m = JSON.parse(localStorage.getItem(MEM) || '{}'), b = blank(); return { ...b, ...m, world: { ...b.world, ...m.world } } } catch { return blank() } })()
+let forgetting = false   // "forget me" wipes the store; nothing may write it back on the way out
+const save = () => { if (forgetting) return; try { localStorage.setItem(MEM, JSON.stringify(mem)) } catch {} }
+const firstVisit = mem.visits === 0, sinceLast = mem.lastSeen ? Date.now() - mem.lastSeen : -1
+mem.visits++; mem.lastSeen = Date.now(); save()
+setInterval(() => { if (!document.hidden) { mem.lastSeen = Date.now(); save() } }, 10000)
+if (mem.met) document.body.dataset.met = ''
+// how long you were gone, the way a person would say it
+function span(ms) {
+  const m = Math.round(ms / 60e3), h = Math.round(m / 60), d = Math.round(h / 24)
+  return m < 2 ? 'A minute' : m < 50 ? `${cap(num(m))} minutes` : h < 2 ? 'An hour' : h < 20 ? `${cap(num(h))} hours` : d < 2 ? 'A day' : `${cap(num(d))} days`
+}
+
+/* ── hours ───────────────────────────────────────────────────────────── */
+const params = new URLSearchParams(location.search)
+const HOURS = ['dusk', 'night', 'dawn', 'day', 'gold']
+let ramp = [], INK = '#fff', AMBER = '#e8b877'
+function setHour(h) {
+  document.documentElement.dataset.hour = h
+  const css = getComputedStyle(document.documentElement)
+  const hex = n => css.getPropertyValue(`--heat-${n}`).trim()
+  const top = hex(4), mix = i => Math.round(parseInt(top.slice(i, i + 2), 16) * 0.45 + 255 * 0.55)
+  ramp = [hex(1), hex(2), hex(3), top, `rgb(${mix(1)},${mix(3)},${mix(5)})`]
+  INK = css.getPropertyValue('--ink').trim(); AMBER = css.getPropertyValue('--amber').trim()
+}
+const clockHour = () => { const h = new Date().getHours(); return h >= 5 && h < 8 ? 'dawn' : h < 17 && h >= 8 ? 'day' : h >= 17 && h < 20 ? 'dusk' : 'night' }
+
+/* ── the grid, him, and you ──────────────────────────────────────────── */
+const cv = $('#grid'), cx = cv.getContext('2d')
+let W = 0, H = 0, CELL = 8, cols = 0, rows = 0
+let field = new Float32Array(0)   // his heat
+let warm = new Float32Array(0)    // yours: where your hand has just been
+const E = { x: 0, y: 0, r: 100, tx: 0, ty: 0, tr: 100, v_x: 0, v_y: 0 }   // where he is, and where he is heading
+const w = { idle: 1, listen: 0, think: 0, speak: 0 }                    // eased weight of each formation
+const gaze = { x: 0, y: 0, v_x: 0, v_y: 0 }                             // the side he faces, on his own disc; 0,0 is you
+const ptr = { x: -9, y: -9, vx: 0, vy: 0, on: false, at: 0, calm: 0 }   // your hand
+const lean = { x: 0, y: 0, s: 1 }                                       // where the listening ring opens: round your hand when held
+const note = { x: 0, y: 0 }
+let state = 'idle', forced = null, amp = 0, presence = 0, frameNo = 0
+let away = true, woke = false, awayAt = Date.now(), simGap = 0, grace = 0, lastActive = 0, rest = 1
+let notify = false, deferred = false, landedAway = false, noteV = 0, noteOut = 0, glance = 0, report = ''
+
+function resize() {
+  W = innerWidth; H = innerHeight
+  const dpr = Math.min(2, devicePixelRatio || 1)
+  cv.width = W * dpr; cv.height = H * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  cols = Math.ceil(W / CELL); rows = Math.ceil(H / CELL)
+  field = new Float32Array(cols * rows); warm = new Float32Array(cols * rows)
+  layout(true)
+}
+function layout(snap) {
+  const scene = document.body.dataset.scene, stack = $('#stack').offsetHeight
+  if (scene === 'brief') { E.tr = clamp(Math.min(W, H) * 0.085, 44, 76); E.tx = W / 2; E.ty = 48 + E.tr * 1.25 }
+  else { const free = H - stack - 44; E.tr = clamp(Math.min(W * 0.2, free * 0.27), 48, 150); E.tx = W / 2; E.ty = 44 + free * 0.42 }
+  const sayTop = E.ty + E.tr * 1.5 + 8, top = sayTop + 72
+  $('#say').style.top = sayTop + 'px'
+  $('#brief').style.top = top + 'px'
+  $('#brief').style.maxHeight = Math.max(160, H - top - stack - 10) + 'px'
+  if (snap) { E.x = E.tx; E.y = E.ty; E.r = E.tr; E.v_x = E.v_y = 0 }
+}
+
+/* The swarm. One set of particles on springs, so anything that moves them — a new
+   formation, your hand, a word arriving — carries through with a little follow-through.
+   Four formations, as in Swarm: a turning globe, a ring that takes the shape of a voice,
+   a knot he keeps running round, a waveform. A fifth for when you are not here: dust. */
+const N = 560
+const P = new Float32Array(N * 2), V = new Float32Array(N * 2)
+const S = Float32Array.from({ length: N }, Math.random)
+const HOME = Float32Array.from({ length: N * 2 }, Math.random)   // where each one drifts when he is at rest
+const LIT = new Float32Array(N)                                   // carrying something of yours
+const scatter = () => { for (let i = 0; i < N; i++) { P[i * 2] = HOME[i * 2] * W; P[i * 2 + 1] = HOME[i * 2 + 1] * H; V[i * 2] = V[i * 2 + 1] = 0 } }
+const carry = n => { for (let k = 0; k < n; k++) LIT[(Math.random() * N) | 0] = 1 }
+
+function swarm(t, dt) {
+  const decay = Math.pow(0.78, dt * 60), f60 = dt * 60
+  for (let i = 0; i < field.length; i++) field[i] *= decay
+  const R = E.r, awake = 1 - rest
+  const sum = w.idle + w.listen + w.think + w.speak || 1
+  const wi = w.idle / sum, wl = w.listen / sum, wt = w.think / sum, ws = w.speak / sum
+  const dep = clamp(0.2 * (R / 130) ** 2, 0.045, 0.26) * (1 - 0.45 * wi)
+  // regard: the globe gathers and warms on the side he faces, and leans that way
+  const gx = gaze.x, gy = gaze.y, gz = Math.sqrt(Math.max(0.06, 1 - gx * gx - gy * gy))
+  const gather = 0.22 + 0.16 * Math.hypot(gx, gy) + 0.3 * ptr.calm   // light when he faces you, so the globe stays airy; stronger as he turns
+  const cxm = E.x + gx * R * 0.09 * awake, cym = E.y + gy * R * 0.09 * awake
+  const ca = Math.cos(0.35), sa = Math.sin(0.35), breath = 0.95 * (1 + 0.035 * Math.sin(t * 1.3))
+  // your hand: near him he reaches for it; inside him the particles part round it
+  const dp = Math.hypot(ptr.x - E.x, ptr.y - E.y) / R
+  const live = ptr.on && awake > 0.5
+  const reach = live ? 0.2 * smooth(3, 1.3, dp) * smooth(0.95, 1.2, dp) : 0
+  const rT = Math.max(30, R * 0.44), part = live && held !== 'touch', push = 5600 * (1 - 0.94 * ptr.calm)
+  const lx = E.x + lean.x, ly = E.y + lean.y
+  for (let i = 0; i < N; i++) {
+    const p = i / N, rnd = S[i], j = i * 2
+    let X = 0, Y = 0, front = 0, glow = 1
+    if (wi > 0.01) {                                         // a slowly turning globe, facing you
+      const yy = 1 - 2 * (i + 0.5) / N, rr = Math.sqrt(1 - yy * yy), ph = i * 2.399963 + t * 0.35
+      let x = rr * Math.cos(ph), z0 = rr * Math.sin(ph), y = yy * ca - z0 * sa, z = yy * sa + z0 * ca
+      x += gx * gather; y += gy * gather; z += gz * gather
+      const n = Math.hypot(x, y, z); x /= n; y /= n; z /= n
+      const face = Math.max(0, x * gx + y * gy + z * gz), f4 = face ** 4, r = breath * (1 + reach * f4 * f4)
+      X += wi * (cxm + x * r * R); Y += wi * (cym + y * r * R); front += wi * (0.5 + 0.5 * z); glow += wi * 0.55 * f4
+    }
+    if (wl > 0.01) {                                         // a ring that takes the shape of your voice
+      const th = p * TAU, rr = 0.95 + (0.04 + 0.34 * amp) * Math.sin(th * 7 + t * 6) * Math.sin(th * 3 - t * 2.2) + (rnd - 0.5) * 0.05
+      X += wl * (lx + rr * Math.cos(th) * R * lean.s); Y += wl * (ly + rr * Math.sin(th) * R * lean.s); front += wl * 0.8
+    }
+    if (wt > 0.01) {                                         // a knot he keeps running round
+      const th = p * TAU + t * 0.8, r2 = 0.68 + 0.28 * Math.cos(3 * th), a = 2 * th + t * 0.25
+      X += wt * (E.x + r2 * Math.cos(a) * 1.08 * R); Y += wt * (E.y + r2 * Math.sin(a) * 1.08 * R); front += wt * (0.6 + 0.4 * Math.sin(3 * th))
+    }
+    if (ws > 0.01) {                                         // a waveform, flat when he pauses
+      const sx = (p * 2 - 1) * 1.4, env = (0.02 + 0.62 * amp) * Math.pow(Math.cos(sx / 1.4 * 1.5708), 0.6)
+      X += ws * (E.x + sx * R); Y += ws * (E.y + env * Math.sin(p * 46 + t * 11) * (0.55 + 0.45 * Math.sin(p * 9 - t * 3.1)) * Math.sqrt(rnd) * R); front += ws * 0.85
+    }
+    X += Math.sin(t * 2.3 + rnd * 40) * 0.012 * R; Y += Math.cos(t * 2.1 + rnd * 31) * 0.012 * R
+    let a = dep * (0.3 + 0.7 * front) * glow
+    const rs = clamp(rest * 1.5 - rnd * 0.5, 0, 1)           // at rest: dust in the room, each one leaving in its own time
+    if (rs > 0) {
+      const hx = HOME[j] * W + Math.sin(t * 0.13 + rnd * 50) * 26, hy = HOME[j + 1] * H + Math.cos(t * 0.11 + rnd * 37) * 18
+      X += (hx - X) * rs; Y += (hy - Y) * rs; a = lerp(a, 0.1 * (0.45 + 0.55 * Math.sin(t * 0.9 + rnd * 60) ** 2), rs)
+    }
+    const k = (70 + 90 * rnd) * (0.1 + 0.9 * presence) * (1 - 0.93 * rs), c = 1.44 * Math.sqrt(k)
+    let ax = k * (X - P[j]) - c * V[j], ay = k * (Y - P[j + 1]) - c * V[j + 1]
+    if (part) {
+      const dx = P[j] - ptr.x, dy = P[j + 1] - ptr.y, d = Math.hypot(dx, dy)
+      if (d < rT) { const f = (1 - d / rT) ** 2, q = push * f / (d || 1); ax += dx * q; ay += dy * q; V[j] += ptr.vx * f * 14 * dt; V[j + 1] += ptr.vy * f * 14 * dt }
+    }
+    V[j] += ax * dt; V[j + 1] += ay * dt
+    const px = P[j] += V[j] * dt, py = P[j + 1] += V[j + 1] * dt
+    if (LIT[i] > 0.01) { a *= 1 + 3 * LIT[i]; LIT[i] *= Math.exp(-dt / 1.6) }
+    const gxc = px / CELL - 0.5, gyc = py / CELL - 0.5, cc = Math.floor(gxc), cr = Math.floor(gyc)
+    if (cc < 0 || cr < 0 || cc >= cols - 1 || cr >= rows - 1) continue
+    const fx = gxc - cc, fy = gyc - cr, q = cr * cols + cc; a *= f60
+    field[q] += a * (1 - fx) * (1 - fy); field[q + 1] += a * fx * (1 - fy)
+    field[q + cols] += a * (1 - fx) * fy; field[q + cols + 1] += a * fx * fy
+  }
+}
+
+// where he looks. Your pointer is your hand, not your face: he glances at it when it
+// moves, then comes back to you (the middle of his own disc).
+function toward(px, py, exact = 0) {
+  const dx = px - E.x, dy = py - E.y, d = Math.hypot(dx, dy) || 1
+  const m = lerp(Math.min(1, d / (E.r * 1.7)) * 0.78, Math.min(0.9, d / (E.r * 0.95)), exact)
+  return [dx / d * m, dy / d * m]
+}
+function regard(now, t) {
+  if (now < glance) return toward(note.x, note.y)
+  const read = document.querySelector('.panel[data-reading]')
+  if (read) { const b = read.getBoundingClientRect(); return toward(b.left + b.width / 2, b.top + Math.min(b.height / 2, 90)) }
+  if (held === 'touch') return toward(ptr.x, ptr.y, 1)
+  if (state === 'listen' && document.activeElement === input) { const b = input.getBoundingClientRect(); return toward(b.left + b.width / 2, b.top) }
+  if (ptr.on && now - ptr.at < 5000) return toward(ptr.x, ptr.y, ptr.calm)
+  return [Math.sin(t * 0.23) * 0.1, Math.sin(t * 0.17) * 0.05]
+}
+
+/* Motes: the things that pass between you. Yours are white and fly in; his are heat and
+   flow out; a note is amber. Each one lands somewhere and something happens there. */
+const motes = []
+function mote(x, y, to, kind, land, delay = 0) { motes.push({ x0: x, y0: y, x, y, px: x, py: y, to, kind, land, age: -delay, life: 0.34 + Math.random() * 0.26, bend: (Math.random() - 0.5) * 0.6 }) }
+const toHim = (x, y) => () => { const dx = x - E.x, dy = y - E.y, d = Math.hypot(dx, dy) || 1, r = Math.min(d, E.r * 0.8); return [E.x + dx / d * r, E.y + dy / d * r] }
+// where it lands he takes it in: the particles there are knocked inward and light up
+function absorb(m) {
+  let dx = m.x - m.px, dy = m.y - m.py; const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d
+  const r2 = (E.r * 0.5) ** 2; let lit = 2
+  for (let i = 0; i < N; i++) {
+    const ex = P[i * 2] - m.x, ey = P[i * 2 + 1] - m.y, d2 = ex * ex + ey * ey
+    if (d2 < r2) { const f = 1 - d2 / r2; V[i * 2] += dx * 80 * f; V[i * 2 + 1] += dy * 80 * f; if (lit && d2 < r2 * 0.12) { LIT[i] = 1; lit-- } }
+  }
+}
+function fromYou(el, n = 5) { const b = el.getBoundingClientRect(); for (let k = 0; k < n; k++) { const x = b.left + (k + 0.5) / n * b.width, y = b.top + b.height / 2; mote(x, y, toHim(x, y), 'you', absorb, k * 0.02) } }
+function tickMotes(dt) {
+  for (let i = motes.length - 1; i >= 0; i--) {
+    const m = motes[i]; m.age += dt; if (m.age < 0) continue
+    const p = Math.min(1, m.age / m.life), e = m.kind === 'you' ? p * p : 1 - (1 - p) ** 2, q = 1 - e
+    const [tx, ty] = m.to(), mx = (m.x0 + tx) / 2 - (ty - m.y0) * m.bend, my = (m.y0 + ty) / 2 + (tx - m.x0) * m.bend
+    m.px = m.x; m.py = m.y
+    m.x = q * q * m.x0 + 2 * q * e * mx + e * e * tx; m.y = q * q * m.y0 + 2 * q * e * my + e * e * ty
+    if (p >= 1) { motes.splice(i, 1); m.land?.(m) }
+  }
+}
+
+const buckets = [[], [], [], [], []], haze = [[], [], []]
+const cell = (x, y) => cx.fillRect(Math.floor(x / CELL) * CELL + 1, Math.floor(y / CELL) * CELL + 1, CELL - 2, CELL - 2)
+function draw(t, dt) {
+  cx.clearRect(0, 0, W, H)
+  for (const b of buckets) b.length = 0
+  for (const b of haze) b.length = 0
+  const fade = Math.exp(-dt / 0.3)
+  for (let r = 0, i = 0; r < rows; r++) for (let c = 0; c < cols; c++, i++) {
+    const u = warm[i]
+    if (u > 0.05) { warm[i] = u * fade; haze[u > 0.6 ? 2 : u > 0.3 ? 1 : 0].push(c, r) } else if (u) warm[i] = 0
+    const v = Math.min(1, field[i]); if (v < 0.03) continue
+    const band = (v * 5 + BAYER[(r & 3) * 4 + (c & 3)] * 0.9) | 0
+    if (band >= 1) buckets[Math.min(5, band) - 1].push(c, r)
+  }
+  cx.fillStyle = INK                                        // your warmth, under him
+  haze.forEach((b, i) => { cx.globalAlpha = [0.07, 0.14, 0.26][i]; for (let k = 0; k < b.length; k += 2) cx.fillRect(b[k] * CELL + 1, b[k + 1] * CELL + 1, CELL - 2, CELL - 2) })
+  cx.globalAlpha = 1
+  buckets.forEach((b, i) => { cx.fillStyle = ramp[i]; for (let k = 0; k < b.length; k += 2) cx.fillRect(b[k] * CELL + 1, b[k + 1] * CELL + 1, CELL - 2, CELL - 2) })
+  for (const m of motes) {
+    if (m.age < 0) continue
+    cx.fillStyle = m.kind === 'you' ? INK : m.kind === 'amber' ? AMBER : ramp[3]
+    cx.globalAlpha = 0.4; cell(m.px, m.py); cx.globalAlpha = 1; cell(m.x, m.y)
+  }
+  // the note: he brings it out and holds it off his shoulder; "later" and he tucks it inside
+  const ba = -0.62 + 0.05 * Math.sin(t * 0.8), sx = E.x + E.r * 1.5 * Math.cos(ba), sy = E.y + E.r * 1.5 * Math.sin(ba)
+  note.x = lerp(E.x + E.r * 0.22 * Math.cos(t * 0.7), sx, noteOut); note.y = lerp(E.y + E.r * 0.22 * Math.sin(t * 0.7), sy, noteOut)
+  if (noteV > 0.02) {
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.2), arm = (0.2 + 0.5 * pulse) * (0.35 + 0.65 * noteOut)
+    cx.fillStyle = AMBER
+    cx.globalAlpha = noteV * arm; for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) cell(note.x + ox * CELL, note.y + oy * CELL)
+    cx.globalAlpha = noteV * (0.6 + 0.4 * noteOut); cell(note.x, note.y); cx.globalAlpha = 1
+  }
+  const n = $('#nudge')
+  if (n.dataset.on !== undefined) { n.style.left = Math.min(sx + 18, W - n.offsetWidth - 10) + 'px'; n.style.top = sy - 19 + 'px' }
+}
+
+/* ── speech, hearing ─────────────────────────────────────────────────── */
+const you = $('#you'), alf = $('#alf'), st = $('#st'), input = $('#in')
+let run = 0, job = null, voice = false, held = null, heldAt = 0, lastKey = 0, mic = null, rec = null, recText = ''
+const LABEL = { idle: 'with you', listen: 'listening', think: 'thinking', speak: 'speaking', rest: 'resting' }
+const label = () => { st.textContent = LABEL[forced || (away ? 'rest' : state)] }
+function setState(s) { state = s; label() }
+function cancel() { run++; job = null; delete alf.dataset.live; try { speechSynthesis.cancel() } catch {} }
+function mark(sel) {
+  document.querySelectorAll('.panel[data-reading]').forEach(p => delete p.dataset.reading)
+  if (sel) { $(sel).dataset.reading = ''; $('#brief').dataset.reading = '' } else delete $('#brief').dataset.reading
+}
+// the end of his line, where the next word will be written
+const rng = document.createRange()
+let caretAt = -1, caretXY = [0, 0]
+function caret() {
+  if (caretAt === frameNo) return caretXY
+  caretAt = frameNo
+  const n = alf.firstChild
+  if (n && n.nodeType === 3 && n.length) { rng.setStart(n, n.length - 1); rng.setEnd(n, n.length); const b = rng.getBoundingClientRect(); if (b.height) return caretXY = [b.right, b.top + b.height / 2] }
+  const b = alf.getBoundingClientRect(); return caretXY = [b.left + b.width / 2, b.top + 12]
+}
+// He writes his line as he says it, out of himself; his amplitude follows the letters.
+function say(text, opts = {}) {
+  const my = run
+  return new Promise(done => {
+    if ('read' in opts) mark(opts.read)
+    setState('speak'); alf.textContent = ''; alf.dataset.live = ''
+    job = { text, start: performance.now(), my, done, spoken: !voice, shown: 0 }
+    if (voice) try {
+      const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.onend = u.onerror = () => { if (job && job.my === my) job.spoken = true }
+      speechSynthesis.speak(u); setTimeout(() => { if (job && job.my === my) job.spoken = true }, 9000)
+    } catch { job.spoken = true }
+  })
+}
+function tickSpeech(now, t) {
+  if (!job) return 0
+  const i = Math.floor((now - job.start) / 1000 * 34), n = Math.min(i, job.text.length)
+  if (n !== job.shown) {
+    alf.textContent = job.text.slice(0, n)
+    if (n % 2 === 0 && /\S/.test(job.text[n - 1] || ' ')) mote(E.x + (Math.random() * 2 - 1) * E.r, E.y + (Math.random() - 0.5) * E.r * 0.3, caret, 'his')
+    job.shown = n
+  }
+  if (i > job.text.length + 12 && job.spoken) { const d = job.done; job = null; delete alf.dataset.live; setState('idle'); d(); return 0 }
+  if (i >= job.text.length) return 0
+  return /[a-z0-9]/i.test(job.text[i]) ? 0.3 + 0.65 * Math.abs(Math.sin(t * 12.3) * Math.sin(t * 4.1 + i)) : 0.06
+}
+
+// what he took from this: said back to you on your next visit, and yours to take away
+let keptTimer = 0
+function keep(id, text, back) {
+  mem.kept = mem.kept.filter(k => k.id !== id); mem.kept.push({ id, back }); save()
+  const k = $('#kept'); k.innerHTML = `kept · ${text}<button type="button">forget</button>`; k.dataset.on = ''
+  clearTimeout(keptTimer); keptTimer = setTimeout(() => delete k.dataset.on, 9000)
+}
+$('#kept').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return
+  mem.kept.pop(); save(); $('#kept').textContent = 'forgotten'
+  clearTimeout(keptTimer); keptTimer = setTimeout(() => delete $('#kept').dataset.on, 1600)
+})
+
+const SAMPLES = ['Move standup to 3pm', 'I finished the résumé', 'How are my auto tasks?', 'Is my pi session done?', 'Look into vector DBs for me', 'Plan my afternoon', "Add NVDA to tomorrow's brief", 'What do you remember?']
+const RESEARCH = "Vector DBs. Took six minutes. Good: pgvector covers your scale with no new infra. Bad: recall drops past five million rows. I'd stay on Postgres. Notes are in Research."
+const PI = 'Pi session finished. All nine steps passed. One warning: the migration ran twice, harmlessly. The diff is in Product.'
+let sampleAt = 0
+async function hear(text) {
+  cancel(); const my = run, wd = mem.world
+  you.textContent = '› ' + text; alf.textContent = ''
+  carry(Math.min(64, 12 + text.length * 2))                  // your words, lit inside him while he turns them over
+  setState('think'); await sleep(750 + Math.random() * 500)
+  if (my !== run) return
+  const q = text.toLowerCase()
+  if (/remember|know about me|记得|记住/.test(q)) {
+    await say(`You are Bruce. This is visit ${num(mem.visits)}. ${mem.kept.length ? mem.kept.map(k => k.back).join(' ') : 'Nothing else kept yet. I am paying attention.'}`)
+  } else if (/^forget|忘/.test(q)) {
+    mem.kept = []; save(); await say('Forgotten. I still know your name.')
+  } else if (/good ?night|\bbye\b|晚安|再见/.test(q)) {
+    await say("Good night, Bruce. I'll keep watch."); if (my !== run) return
+    await sleep(500); if (my === run) { grace = performance.now() + 2500; leave() }
+    return
+  } else if (/thank|谢/.test(q)) {
+    await say('Of course.')
+  } else if (/you there|how are you|^(hi|hey|hello)\b|在吗|你好/.test(q)) {
+    await say('Here. I have been the whole time.')
+  } else if (/move|resched|push|改/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    wd.standup = 15; save(); place('b-standup', 15, 0.5, '15:00')
+    keep('standup', 'standup at 15:00', "Standup's still at three.")
+    await say('Moved. Standup is at three.', { read: '#p-today' })
+  } else if (/finish|done with|complete|完成/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    const li = $('#todo li:not([data-done])'); if (li) li.dataset.done = ''
+    wd.todo = document.querySelectorAll('#todo li[data-done]').length; save()
+    const left = document.querySelectorAll('#todo li:not([data-done])').length
+    await say(`Marked. ${['Nothing', 'One', 'Two', 'Three'][left]} left today.`, { read: '#p-today' })
+  } else if (/auto|task|cron|自动/.test(q)) {
+    await say('Three ran overnight. Two clean. The job scraper failed at 2:14 — a retry is queued.')
+  } else if (/\bpi\b|session/.test(q)) {
+    await say("Still running. Step six of nine, about four minutes left. I'll leave a note when it lands.")
+    later(9000, 'pi session · finished', PI)
+  } else if (/look into|research|investigat|find out|调查|查/.test(q)) {
+    await say("On it. I'll leave a note.")
+    later(7000, 'Research · finished', RESEARCH)
+  } else if (/plan|计划/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    wd.plan = true; delete wd.decided['r-plan']; save(); showPlan()
+    await say('Two open hours. Résumé at one, gym at five-thirty — your usual. Keep it?', { read: '#p-today' })
+  } else if (/brief|tomorrow|stock|早报|明天/.test(q)) {
+    const tick = (text.match(/\b[A-Z]{2,5}\b/) || ['NVDA'])[0]
+    scene('brief'); await sleep(500); if (my !== run) return
+    if (!wd.tickers.includes(tick)) { wd.tickers.push(tick); save(); addTicker(tick) }
+    keep('brief', `${tick} in tomorrow's brief`, `${tick} is still in tomorrow's brief.`)
+    await say(`Noted. ${tick} is in tomorrow's brief.`, { read: '#p-brief' })
+  } else await say("That one isn't wired in this prototype. Try a line below.")
+  if (my === run) mark(null)
+}
+
+// Work finishing in the background never interrupts: he brings a note out, looks at it,
+// looks at you, and waits.
+function later(ms, text, body) {
+  setTimeout(() => {
+    report = body; $('#nudge-t').textContent = text; notify = true; deferred = false; noteOut = 0; landedAway = away
+    $('#nudge').dataset.on = ''; glanceNote(); syncProto()
+  }, ms)
+}
+function glanceNote() { glance = performance.now() + 1000; setTimeout(() => { if (notify && !deferred) glance = performance.now() + 450 }, 1800) }
+
+/* ── scenes ──────────────────────────────────────────────────────────── */
+function scene(name) { if (document.body.dataset.scene === name) return; document.body.dataset.scene = name; layout(); syncProto() }
+const open = sel => document.querySelectorAll(`${sel} .row[data-ask]:not([data-done]):not([hidden])`).length
+const pending = () => open('.brief')
+const needs = (n, still) => n ? `${cap(num(n))} thing${n > 1 ? 's' : ''} ${still ? 'still ' : ''}need${n > 1 ? '' : 's'} you.` : 'Nothing needs you.'
+const counts = () => { const n = open('#p-inbox'); $('#need').textContent = `5 new · ${n ? n + (n > 1 ? ' need you' : ' needs you') : 'none need you'}` }
+
+// You are here: he greets you by how long it has been and what he kept, not by rote.
+async function arrive() {
+  cancel(); const my = run
+  scene('arrive'); you.textContent = ''; alf.textContent = ''; mark(null)
+  st.textContent = 'waking'; await sleep(1500); if (my !== run) return
+  const hr = new Date().getHours(), due = pending()
+  if (firstVisit) await say(`Good ${hr >= 5 && hr < 12 ? 'morning' : hr >= 12 && hr < 18 ? 'afternoon' : 'evening'}, Bruce.`)
+  else if (sinceLast < 120e3) await say('Bruce.')
+  else {
+    await say('Welcome back, Bruce.'); if (my !== run) return
+    await sleep(300); await say(`${span(sinceLast)}. ${mem.kept.length ? mem.kept[mem.kept.length - 1].back : 'Nothing moved while you were out.'}`)
+  }
+  if (my !== run) return
+  await sleep(350); await say(firstVisit ? `Your brief is ready. ${needs(due)}` : needs(due, true)); if (my !== run) return
+  await sleep(450); if (my !== run) return
+  if (due) brief(); else idle()
+}
+async function brief() {
+  cancel(); const my = run
+  scene('brief'); await sleep(800); if (my !== run) return
+  await say('Quiet night. Markets flat, rain after six.', { read: '#p-brief' }); if (my !== run) return
+  const n = open('#p-inbox'), hold = mem.world.decided['r-hold']
+  await sleep(250); await say(`Five new emails. ${n > 1 ? 'Two need a yes or no.' : n ? 'One still needs a yes or no.' : 'None need you.'}`, { read: '#p-inbox' }); if (my !== run) return
+  await sleep(250); await say(hold === 'y' ? "Three blocks today. Two o'clock is held for the paper review." : hold === 'n' ? 'Three blocks today. Paper review is still due Friday.' : "Three blocks today. Paper review is due Friday — I'd hold two o'clock for it.", { read: '#p-today' })
+  if (my === run) mark(null)
+}
+function idle() { cancel(); mark(null); scene('idle'); setState('idle'); alf.textContent = ''; you.textContent = '' }
+
+// You left. He comes apart into the room and waits; nothing is said to an empty chair.
+function leave() {
+  if (away) return
+  away = true; awayAt = Date.now(); cancel(); mark(null); setState('idle'); alf.textContent = ''; you.textContent = ''
+  document.body.dataset.away = ''; label()
+}
+// You are back. He gathers. He only speaks if it has been long, or something landed.
+function back() {
+  if (!away) return
+  away = false; delete document.body.dataset.away; presence = 0; E.v_y -= 200; lastActive = performance.now(); label()
+  if (!woke) { woke = true; return arrive() }
+  const gap = Date.now() - awayAt + simGap, landed = landedAway; simGap = 0; landedAway = false
+  if (gap >= 30 * 60e3 || landed) welcome(gap, landed)
+}
+async function welcome(gap, landed) {
+  cancel(); const my = run
+  st.textContent = 'waking'; await sleep(1200); if (my !== run) return
+  await say('Welcome back, Bruce.'); if (my !== run) return
+  await sleep(250); if (landed && notify) glanceNote()
+  await say(`${span(gap)}. ${landed ? 'One thing landed while you were out. I have it here.' : 'Nothing moved while you were out.'}`)
+}
+const stir = () => { lastActive = performance.now(); if (away && lastActive > grace) back() }
+
+const KEEP = {
+  'r-north': ['north', 'Northwind onsite · Thu 10:00', 'Northwind is set for Thursday at ten.'],
+  'r-hold': ['hold', '14:00–15:00 held for the review', "Two o'clock is still held for the paper review."],
+  'r-plan': ['plan', 'résumé 13:00 · gym 17:30', 'Résumé at one and gym at five-thirty are still booked.'],
+}
+function settle(row, yes) {
+  row.dataset.done = ''; row.querySelector('.res').textContent = yes ? 'approved' : 'declined'
+  if (row.dataset.effect === 'hold') { if (yes) delete $('#b-review').dataset.proposed; else $('#b-review').hidden = true }
+  if (row.dataset.effect === 'plan') for (const id of ['b-resume', 'b-gym']) { if (yes) delete $('#' + id).dataset.proposed; else $('#' + id).hidden = true }
+  counts()
+}
+async function decide(row, yes) {
+  cancel(); const my = run
+  settle(row, yes); mem.world.decided[row.id] = yes ? 'y' : 'n'; save()
+  if (yes && KEEP[row.id]) keep(...KEEP[row.id])
+  E.v_y += 150                                               // a nod
+  await say(yes ? row.dataset.yes : row.dataset.no, { read: null }); if (my !== run) return
+  if (pending() === 0) { await sleep(300); await say("That's everything."); if (my !== run) return; await sleep(1300); if (my === run) idle() }
+}
+function showPlan() {
+  if (!$('#r-plan')) $('#r-hold').insertAdjacentHTML('afterend', `<div class="row" id="r-plan" data-ask data-effect="plan" data-yes="Booked. Both are on the calendar." data-no="Dropped. The afternoon stays open."><div><p class="what">Afternoon draft</p><p class="draft">13:00 résumé · 17:30 gym</p></div><span class="yn"><button data-y aria-label="Approve">${glyph('yes')}</button><button data-n aria-label="Decline">${glyph('no')}</button></span><span class="res"></span></div>`)
+  const r = $('#r-plan'); delete r.dataset.done
+  for (const id of ['b-resume', 'b-gym']) { $('#' + id).hidden = false; $('#' + id).dataset.proposed = '' }
+}
+const addTicker = tick => $('#tomorrow').insertAdjacentHTML('beforeend', `<div class="line-item" data-new><span>${tick} prior-day close</span><span>+ tomorrow</span></div>`)
+
+/* ── calendar, deck, chips ───────────────────────────────────────────── */
+const DAY0 = 9, PXH = 17
+function place(id, start, dur, text) { const b = $('#' + id); b.style.top = (start - DAY0) * PXH + 'px'; b.style.height = Math.max(13, dur * PXH - 2) + 'px'; if (text) b.querySelector('i').textContent = text }
+$('#cal').innerHTML = [9, 11, 13, 15, 17, 19].map(h => `<time style="top:${(h - DAY0) * PXH}px">${h}:00</time><span class="tick" style="top:${(h - DAY0) * PXH}px"></span>`).join('') + [
+  ['b-standup', '09:30', 'Standup'], ['b-deep', '10:30', 'Deep work · Alfred'],
+  ['b-resume', '13:00', 'Résumé → Northwind', 1, 1], ['b-review', '14:00', 'Paper review', 1],
+  ['b-prep', '16:00', 'Interview prep'], ['b-gym', '17:30', 'Gym', 1, 1],
+].map(([id, at, name, prop, hid]) => `<div class="blk" id="${id}"${prop ? ' data-proposed' : ''}${hid ? ' hidden' : ''}><i>${at}</i>${name}</div>`).join('')
+;[['b-standup', 9.5, 0.5], ['b-deep', 10.5, 2], ['b-resume', 13, 1], ['b-review', 14, 1], ['b-prep', 16, 1], ['b-gym', 17.5, 1]].forEach(a => place(...a))
+
+const DECK = [
+  ['job', 'Job hunt', '2 replies · onsite Thu', 'Job hunt. Two replies since yesterday. Northwind wants Thursday.'],
+  ['research', 'Research', '1 run finished', 'Research. One run finished, nothing in flight.'],
+  ['product', 'Product', 'Alfred · 3 open', 'Product. Three open on Alfred. The entity is the one you are looking at.'],
+  ['chat', 'Chat', 'pi · 1 session live', 'Chat. One pi session is live, step six of nine.'],
+  ['auto', 'Automations', '3 ran · 1 failed', 'Automations. Three ran, one failed. The retry is queued.'],
+]
+$('#deck').innerHTML = DECK.map(([g, name, sub], i) => `<button class="tile" data-i="${i}"><kbd>${i + 1}</kbd>${glyph(g)}<b>${name}</b><span>${sub}</span></button>`).join('')
+function openTile(i) {
+  if (document.body.dataset.scene !== 'idle') return
+  document.querySelectorAll('.tile').forEach((t, k) => t.setAttribute('aria-current', k === i))
+  cancel(); you.textContent = ''; say(DECK[i][3])
+}
+$('#deck').addEventListener('click', e => { const t = e.target.closest('.tile'); if (t) { fromYou(t, 3); openTile(+t.dataset.i) } })
+
+$('#chips').innerHTML = SAMPLES.map(s => `<button type="button">${s}</button>`).join('')
+$('#chips').addEventListener('click', e => { if (e.target.tagName === 'BUTTON') { fromYou(e.target, 8); hear(e.target.textContent) } })
+document.querySelectorAll('.yn [data-y]').forEach(b => b.innerHTML = glyph('yes'))
+document.querySelectorAll('.yn [data-n]').forEach(b => b.innerHTML = glyph('no'))
+
+// the world as you left it
+;(() => {
+  const wd = mem.world
+  if (wd.standup) place('b-standup', wd.standup, 0.5, wd.standup + ':00')
+  wd.tickers.forEach(addTicker)
+  if (wd.plan) showPlan()
+  for (const [id, v] of Object.entries(wd.decided)) { const row = $('#' + id); if (row) settle(row, v === 'y') }
+  document.querySelectorAll('#todo li').forEach((li, i) => { if (i < wd.todo) li.dataset.done = '' })
+  counts()
+})()
+
+/* ── your side: yes and no, the line, your hand ──────────────────────── */
+$('#brief').addEventListener('click', e => { const b = e.target.closest('.yn button'); if (b) { fromYou(b); decide(b.closest('.row'), 'y' in b.dataset) } })
+$('#nudge').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return
+  delete $('#nudge').dataset.on
+  if ('y' in b.dataset) { notify = false; for (let k = 0; k < 5; k++) mote(note.x, note.y, caret, 'amber', null, k * 0.05); cancel(); you.textContent = ''; say(report) }
+  else deferred = true                                       // later: he tucks it inside and carries it
+  syncProto()
+})
+
+// Holding him (or space) is how you talk: he opens round your hand and listens until you let go.
+function holdStart(how) {
+  if (held) return
+  held = how; heldAt = performance.now(); document.body.dataset.held = ''
+  cancel(); setState('listen'); you.textContent = '› …'; alf.textContent = ''
+  recText = ''; if (rec) try { rec.start() } catch {}
+}
+async function holdEnd() {
+  if (!held) return
+  const how = held, dur = performance.now() - heldAt; held = null; delete document.body.dataset.held
+  if (how === 'touch' && dur < 240) { you.textContent = ''; if (rec) try { rec.abort() } catch {} ; setState('idle'); return tap() }
+  if (!mem.met) { mem.met = true; save(); document.body.dataset.met = '' }
+  if (rec) { try { rec.stop() } catch {} await sleep(450) }
+  hear(recText.trim() || SAMPLES[sampleAt++ % SAMPLES.length])   // no microphone: play the next sample line
+}
+// A tap is a tap on the shoulder. If he is carrying something for you, this is when it comes back out.
+function tap() { if (notify && deferred) { deferred = false; $('#nudge').dataset.on = ''; glanceNote() } else { E.v_y -= 140; say('Yes?') } }
+
+const onStage = e => e.target === document.body || e.target === cv || e.target === document.documentElement
+function stamp(x0, y0, x1, y1) {
+  const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (CELL * 0.7)))
+  for (let s = 1; s <= n; s++) { const c = Math.floor(lerp(x0, x1, s / n) / CELL), r = Math.floor(lerp(y0, y1, s / n) / CELL); if (c >= 0 && r >= 0 && c < cols && r < rows) warm[r * cols + c] = Math.min(1, warm[r * cols + c] + 0.5) }
+}
+addEventListener('pointermove', e => {
+  const now = performance.now()
+  if (ptr.on) { const dt = Math.max(8, now - ptr.at) / 1000; ptr.vx = lerp(ptr.vx, (e.clientX - ptr.x) / dt, 0.5); ptr.vy = lerp(ptr.vy, (e.clientY - ptr.y) / dt, 0.5); stamp(ptr.x, ptr.y, e.clientX, e.clientY) }
+  ptr.x = e.clientX; ptr.y = e.clientY; ptr.on = true; ptr.at = now; stir()
+})
+document.documentElement.addEventListener('pointerleave', () => { ptr.on = false })
+addEventListener('pointerdown', e => {
+  ptr.x = e.clientX; ptr.y = e.clientY; ptr.on = true; ptr.at = performance.now()
+  const wasAway = away; stir()
+  if (wasAway || !onStage(e) || e.button) return
+  if (Math.hypot(e.clientX - E.x, e.clientY - E.y) < E.r * 1.35) holdStart('touch')
+  else for (let k = 0; k < 3; k++) mote(e.clientX, e.clientY, toHim(e.clientX, e.clientY), 'you', absorb, k * 0.03)   // anything you do reaches him
+})
+addEventListener('pointerup', () => { if (held === 'touch') holdEnd() })
+addEventListener('pointercancel', () => { if (held === 'touch') holdEnd() })
+
+const inputCaret = () => { const b = input.getBoundingClientRect(); return [b.left + Math.min(b.width - 6, input.value.length * 7.8 + 2), b.top + b.height / 2] }
+input.addEventListener('input', e => {
+  lastKey = performance.now(); stir()
+  if (state !== 'listen') { cancel(); setState('listen') }      // he stops the moment you start
+  if (!e.inputType || e.inputType.startsWith('insert')) { const [x, y] = inputCaret(); mote(x, y, toHim(x, y), 'you', absorb) }
+})
+input.addEventListener('blur', () => { if (state === 'listen' && !input.value && !held) setState('idle') })
+$('#line').addEventListener('submit', e => {
+  e.preventDefault()
+  const v = input.value.trim(), b = input.getBoundingClientRect(), wd = Math.min(b.width, v.length * 7.8), n = Math.min(24, v.length)
+  for (let k = 0; k < n; k++) { const x = b.left + (k + 0.5) / n * wd, y = b.top + b.height / 2; mote(x, y, toHim(x, y), 'you', absorb, k * 0.012) }
+  input.value = ''; input.blur(); if (v) hear(v); else setState('idle')
+})
+
+const typing = e => e.target.matches('input, textarea, [contenteditable]')
+addEventListener('keydown', e => {
+  stir()
+  if (typing(e)) { if (e.key === 'Escape') input.blur(); return }
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  if (e.key === 'Escape') idle()
+  else if (/^[1-5]$/.test(e.key)) openTile(+e.key - 1)
+  else if (e.key === '/') { e.preventDefault(); input.focus() }
+  else if (e.code === 'Space') { e.preventDefault(); holdStart('space') }
+})
+addEventListener('keyup', e => { if (e.code === 'Space' && held === 'space') holdEnd() })
+document.addEventListener('visibilitychange', () => { if (document.hidden) leave() })
+addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus() && woke) leave() }, 8000))
+addEventListener('focus', stir)
+addEventListener('pagehide', () => { mem.lastSeen = Date.now(); save() })
+
+async function toggleMic() {
+  if (mic) { mic.stream.getTracks().forEach(t => t.stop()); mic.ac.close(); mic = rec = null; return syncProto() }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 512; ac.createMediaStreamSource(stream).connect(an)
+    mic = { stream, ac, an, buf: new Uint8Array(512) }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (SR) { rec = new SR(); rec.interimResults = true; rec.onresult = ev => { recText = [...ev.results].map(r => r[0].transcript).join(''); if (held) you.textContent = '› ' + recText } }
+  } catch { mic = null }
+  syncProto()
+}
+const micLevel = () => { mic.an.getByteTimeDomainData(mic.buf); let s = 0; for (const b of mic.buf) s += ((b - 128) / 128) ** 2; return Math.min(1, Math.sqrt(s / 512) * 6) }
+
+/* ── prototype switcher ──────────────────────────────────────────────── */
+const proto = $('#proto')
+function syncProto() {
+  const sc = document.body.dataset.scene, hr = document.documentElement.dataset.hour
+  const btn = (act, text, on) => `<button data-act="${act}" aria-pressed="${!!on}">${text}</button>`
+  proto.innerHTML = '<a href="./index.html?variant=C" title="the entity prototype this grew from">← forms</a><span class="sep"></span>'
+    + '<span class="lab">state</span>' + btn('s:', 'auto', !forced) + ['idle', 'listen', 'think', 'speak', 'rest'].map(s => btn('s:' + s, s, forced === s)).join('') + '<span class="sep"></span>'
+    + '<span class="lab">you</span>' + btn('gone', 'away 2h') + btn('notify', '+ note', notify) + btn('reset', 'forget me') + '<span class="sep"></span>'
+    + '<span class="lab">scene</span>' + ['arrive', 'brief', 'idle'].map(s => btn('g:' + s, s, sc === s)).join('') + '<span class="sep"></span>'
+    + btn('hour', hr) + btn('cell', CELL + 'px') + btn('voice', 'voice ' + (voice ? 'on' : 'off'), voice) + btn('mic', 'mic ' + (mic ? 'on' : 'off'), !!mic)
+}
+proto.addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.act; if (!a) return
+  if (a.startsWith('s:')) { forced = a.slice(2) || null; label() }
+  else if (a === 'notify') { if (notify) { notify = false; delete $('#nudge').dataset.on } else later(0, 'Research · finished', RESEARCH) }
+  else if (a === 'gone') { simGap = 2 * 3600e3; grace = performance.now() + 2200; leave(); if (!notify) later(1500, 'pi session · finished', PI) }   // two hours pass; something lands
+  else if (a === 'reset') { forgetting = true; try { localStorage.removeItem(MEM) } catch {} return location.reload() }
+  else if (a === 'g:arrive') { cancel(); scene('arrive'); alf.textContent = ''; you.textContent = ''; away = true; woke = false; document.body.dataset.away = ''; label(); grace = performance.now() + 1700; setTimeout(back, 1700) }
+  else if (a === 'g:brief') brief()
+  else if (a === 'g:idle') idle()
+  else if (a === 'hour') setHour(HOURS[(HOURS.indexOf(document.documentElement.dataset.hour) + 1) % HOURS.length])
+  else if (a === 'cell') { CELL = { 5: 6, 6: 8, 8: 10, 10: 5 }[CELL] || 8; resize(); if (away) scatter() }
+  else if (a === 'voice') voice = !voice
+  else if (a === 'mic') return toggleMic()
+  setTimeout(syncProto)
+})
+
+/* ── frame ───────────────────────────────────────────────────────────── */
+let last = performance.now(), reachable = false
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000; last = now; frameNo++
+  const ease = r => 1 - Math.exp(-dt * r)
+  const resting = away || forced === 'rest', cur = forced && forced !== 'rest' ? forced : state
+  for (const s in w) w[s] += ((cur === s ? 1 : 0) - w[s]) * ease(7)
+  rest += ((resting ? 1 : 0) - rest) * ease(resting ? 1.3 : 2.6)
+  presence = resting ? 0 : Math.min(1, presence + dt / 1.3)
+
+  let target = tickSpeech(now, t)
+  if (cur === 'listen') target = mic ? micLevel() : (held || now - lastKey < 240 || forced === 'listen') ? 0.2 + 0.7 * Math.abs(Math.sin(t * 9.3) * Math.sin(t * 2.7 + 1)) : 0.05
+  else if (cur === 'speak' && !job) target = 0.25 + 0.7 * Math.abs(Math.sin(t * 10) * Math.sin(t * 3.3))
+  else if (cur !== 'speak') target = 0
+  amp += (target - amp) * ease(16)
+
+  spring(E, 'x', E.tx, dt, 30, 0.78); spring(E, 'y', E.ty, dt, 30, 0.78); E.r += (E.tr - E.r) * ease(5)
+  const [ax, ay] = resting ? [0, 0] : regard(now, t)
+  spring(gaze, 'x', ax, dt, 46, 0.6); spring(gaze, 'y', ay, dt, 46, 0.6)
+
+  // your hand: how fast it is going, and whether it has come to rest inside him
+  const k = Math.exp(-dt * 9); ptr.vx *= k; ptr.vy *= k
+  const dp = Math.hypot(ptr.x - E.x, ptr.y - E.y), still = Math.hypot(ptr.vx, ptr.vy) < 45
+  ptr.calm = clamp(ptr.calm + (ptr.on && dp < E.r && still && cur === 'idle' && !resting ? dt / 0.8 : -dt / 0.3), 0, 1)
+  const touch = held === 'touch'
+  lean.x += ((touch ? (ptr.x - E.x) * 0.6 : 0) - lean.x) * ease(12)
+  lean.y += ((touch ? (ptr.y - E.y) * 0.6 : document.activeElement === input ? E.r * 0.1 : 0) - lean.y) * ease(12)
+  lean.s += ((touch ? 0.62 : 1) - lean.s) * ease(12)
+  const near = ptr.on && !resting && dp < E.r * 1.35
+  if (near !== reachable) { reachable = near; document.body.style.cursor = near ? 'grab' : '' }
+
+  noteV += ((notify ? 1 : 0) - noteV) * ease(notify ? 1.4 : 4)
+  noteOut += ((notify && !deferred ? 1 : 0) - noteOut) * ease(2.2)
+  // gone quiet on an empty stage for a while: treat it as away (a real build would ask the OS)
+  if (!away && woke && !job && !held && state === 'idle' && document.body.dataset.scene === 'idle' && document.activeElement !== input && now - lastActive > 75000) leave()
+
+  swarm(t, dt); tickMotes(dt); draw(t, dt)
+  requestAnimationFrame(frame)
+}
+
+const today = new Date()
+$('#day').textContent = today.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })
+const tickClock = () => $('#clock').textContent = `${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · visit ${mem.visits} · sample data`
+tickClock(); setInterval(tickClock, 20000)
+setHour(HOURS.includes(params.get('hour')) ? params.get('hour') : clockHour())
+addEventListener('resize', resize)
+resize(); scatter(); syncProto()
+requestAnimationFrame(frame)
+// He is dust until you arrive: your first move wakes him. If you only watch, he wakes anyway.
+if (params.get('scene') === 'idle' || params.get('scene') === 'brief') {
+  woke = true; away = false; rest = 0; presence = 1; delete document.body.dataset.away; lastActive = performance.now()
+  if (params.get('scene') === 'idle') idle(); else brief()
+} else setTimeout(() => { if (!woke) back() }, 2600)
+</script>
+</body>
+</html>

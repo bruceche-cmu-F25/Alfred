@@ -1,0 +1,137 @@
+<!doctype html>
+<!--
+  Alfred: the tesseract is the body; every other state is a 3D wireframe one step simpler than it.
+    rest   tesseract, almost still (the body)        hello   tesseract, a hop and one turn (the body)
+    listen a globe turning, swelling with your voice think    an octahedron spinning like a top
+    speak  four stacked rings swelling with the voice work    a hex nut turned a sixth at a time
+    notice a tetrahedron, amber, hopping              done    a cube, settled, green
+    error  two crossed beams, red, shaking            sleep   a flat slab lying down, breathing
+  Every figure is drawn with the same 96 line pieces. On a change, each piece flies to the nearest free spot on
+  the new figure, and the figure arrives turned and settles. Lines further away fade toward the background.
+  Flat colour, no gradients.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred · 超立方体</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root { --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", sans-serif; --mono: "SF Mono", ui-monospace, Menlo, monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 1140px; margin: 0 auto; padding: 64px 24px 120px; }
+h1 { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+h2 { margin: 48px 0 6px; font-size: 21px; font-weight: 650; }
+p { margin: 0; }
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+.sub { margin-top: 8px; color: var(--muted); }
+.lead { margin: 22px 0 0; padding-left: 20px; display: grid; gap: 8px; color: var(--copy); }
+.lead b { color: var(--ink); }
+.toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 12px 0; margin-top: 18px; background: var(--bg); }
+.st { height: 30px; padding: 0 12px; border-radius: 999px; color: var(--copy); font-size: 13px; box-shadow: inset 0 0 0 1px var(--line); }
+.st[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.top { display: grid; grid-template-columns: 360px 1fr; gap: 20px; margin-top: 14px; align-items: start; }
+.hero { position: relative; border-radius: 22px; background: #fef9f4; box-shadow: inset 0 0 0 1px var(--line-soft); }
+.hero svg { display: block; width: 100%; height: auto; aspect-ratio: 1; }
+.hero .lab { position: absolute; left: 16px; top: 12px; font-size: 13px; color: #75716c; }
+.hero .dim { position: absolute; right: 16px; top: 12px; font: 12px var(--mono); color: #75716c; }
+.side { display: grid; gap: 12px; }
+.map { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 14px; padding: 14px 16px; border-radius: 16px; background: var(--paper); font-size: 13.5px; color: var(--copy); }
+.map b { color: var(--ink); font-weight: 600; }
+.map span { font: 11px var(--mono); color: var(--muted); margin-left: 4px; }
+.ctx { display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: var(--paper); }
+.bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; height: 26px; padding: 0 10px; border-radius: 7px; background: #ebe7e1; color: #292622; font-size: 12px; }
+.bar.dk { background: #2a2723; color: #eae7e4; }
+.panel { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #fffefb; box-shadow: inset 0 0 0 1px var(--line-soft); font-size: 13px; color: #55524d; }
+.panel b { color: #292622; }
+.lockup { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 16px; background: var(--paper); font-size: 34px; font-weight: 650; letter-spacing: -.02em; }
+.lockup small { font-size: 12px; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-left: auto; }
+.states { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; margin-top: 12px; }
+.cell { display: flex; flex-direction: column; align-items: center; border-radius: 12px; background: #fef9f4; box-shadow: inset 0 0 0 1px var(--line-soft); padding: 4px 2px 8px; font-size: 12px; color: #75716c; text-align: center; }
+.cell svg { display: block; width: 100%; height: auto; aspect-ratio: 1; }
+.cell small { font: 10px var(--mono); color: #9a958f; }
+.cell.on { box-shadow: inset 0 0 0 2px var(--alf); color: var(--ink); }
+.dk-tiles .hero, .dk-tiles .cell { background: #181612; box-shadow: inset 0 0 0 1px #2a2723; color: #aeaaa5; }
+.dk-tiles .hero .lab, .dk-tiles .hero .dim { color: #aeaaa5; }
+.dk-tiles .cell.on { box-shadow: inset 0 0 0 2px #86a0f2; color: #eae7e4; }
+@media (max-width: 960px) { .top { grid-template-columns: 1fr; } .hero { max-width: 380px; } .states { grid-template-columns: repeat(5, 1fr); } }
+@media (max-width: 520px) { main { padding: 36px 14px 80px; } .toolbar { position: static; } .states { grid-template-columns: repeat(3, 1fr); } .map { grid-template-columns: 1fr; } .lockup { font-size: 26px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Alfred · 超立方体</h1>
+  <p class="sub">2026-11-18 · 标志是超立方体线框。其他状态都是比它简单一级的立体线框，繁复程度一致。</p>
+  <ul class="lead">
+    <li><b>本体：</b>平静和打招呼是超立方体本身：平时几乎不动，打招呼时跳一下、转一圈。</li>
+    <li><b>其他状态：</b>在听是一个转动的球，随你的声音微微鼓起；在想是一个像陀螺一样转的八面体；在说是四圈叠起来的环，随声音从下往上依次鼓起；在做事是一颗一次拧六分之一圈的六角螺母；有事找你是四面体（琥珀）；做好了是立方体（绿）；出错了是两根交叉的立体横梁（红），会抖；睡着是一块躺平、轻轻呼吸的平板。</li>
+    <li><b>立体感：</b>离你远的线会淡向背景，所以看得出前后。</li>
+    <li><b>变形：</b>所有形状都由同一组 96 段线组成。换状态时，每段线飞到新形状上离它最近的位置，新形状转着进来，再落定。</li>
+  </ul>
+  <div class="toolbar" id="toolbar"></div>
+
+  <div class="top">
+    <div class="hero"><span class="lab" data-lab></span><span class="dim" data-dim></span><svg viewBox="0 0 120 120" data-hero></svg></div>
+    <div class="side">
+      <div class="map">
+        <p><b>平静</b> 超立方体（本体）<span>4D</span></p><p><b>打招呼</b> 本体跳一下、转一圈<span>4D</span></p>
+        <p><b>在听</b> 球，随你的声音鼓起<span>3D</span></p><p><b>在想</b> 八面体，像陀螺一样转<span>3D</span></p>
+        <p><b>在说</b> 四圈环，随声音依次鼓起<span>3D</span></p><p><b>在做事</b> 六角螺母，一下下拧<span>3D</span></p>
+        <p><b>有事找你</b> 四面体（琥珀）<span>3D</span></p><p><b>做好了</b> 立方体（绿）<span>3D</span></p>
+        <p><b>出错了</b> 交叉横梁（红）<span>3D</span></p><p><b>睡着</b> 平板，躺平呼吸<span>3D</span></p>
+      </div>
+      <div class="lockup"><svg viewBox="0 0 120 120" width="54" height="54" data-logo></svg>Alfred<small>名字是占位</small></div>
+      <div class="ctx">
+        <div class="bar"><svg viewBox="0 0 120 120" width="18" height="18" data-mono></svg>Wi-Fi　12:41</div>
+        <div class="bar dk"><svg viewBox="0 0 120 120" width="18" height="18" data-mono></svg>Wi-Fi　12:41</div>
+        <div class="panel"><svg viewBox="0 0 120 120" width="36" height="36" data-small></svg><span><b>Alfred</b>　在看 · 日程<br>下午 2–4 点我先替你占住了写方案。</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>十个状态</h2>
+  <div class="states" id="states"></div>
+</main>
+
+<script type="module">
+/* The figure itself lives in packages/ui/src/entity/tesseract.js (linked here as figure.js), shared with the Mac app. */
+import { createFigure, drawMark } from "./figure.js";
+const STATES = [["rest", "平静", "超立方体"], ["hello", "打招呼", "超立方体"], ["listen", "在听", "球"], ["think", "在想", "八面体"], ["speak", "在说", "声环"], ["work", "在做事", "六角柱"], ["notice", "有事找你", "四面体"], ["done", "做好了", "立方体"], ["error", "出错了", "立体 ×"], ["sleep", "睡着", "平板"]];
+
+const live = [];
+live.push(createFigure(document.querySelector("[data-hero]"), { width: 3.8 }));
+document.querySelectorAll("[data-mono]").forEach((svg) => live.push(createFigure(svg, { mono: true, width: 7 })));
+live.push(createFigure(document.querySelector("[data-small]"), { width: 5.5, small: true }));
+document.getElementById("states").innerHTML = STATES.map(([k, l, d]) => `<div class="cell" data-cell="${k}"><svg viewBox="0 0 120 120"></svg>${l}<small>${d}</small></div>`).join("");
+const cells = [...document.querySelectorAll("[data-cell]")].map((c) => createFigure(c.querySelector("svg"), { state: c.dataset.cell, width: 4.2 }));
+const logo = document.querySelector("[data-logo]");
+
+/* ── Controls ── */
+let state = "rest", auto = true, autoI = 0, dark = false;
+const tb = document.getElementById("toolbar"), lab = document.querySelector("[data-lab]"), dim = document.querySelector("[data-dim]");
+function render() {
+  tb.innerHTML = `<button class="st" data-auto aria-pressed="${auto}">自动轮播</button>` + STATES.map(([k, l]) => `<button class="st" data-s="${k}" aria-pressed="${!auto && state === k}">${l}</button>`).join("") + `<button class="st" data-dark aria-pressed="${dark}" style="margin-left:8px">深色</button>`;
+  document.querySelectorAll(".cell").forEach((c) => c.classList.toggle("on", c.dataset.cell === state));
+  const s = STATES.find((x) => x[0] === state); lab.textContent = s[1]; dim.textContent = s[2];
+  live.forEach((f) => f.setState(state));
+}
+function setDark() {
+  document.body.classList.toggle("dk-tiles", dark);
+  [...live, ...cells].forEach((f) => f.setDark(dark));
+  drawMark(logo, { dark });
+}
+render(); setDark();
+tb.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.hasAttribute("data-dark")) { dark = !dark; setDark(); }
+  else if (b.hasAttribute("data-auto")) auto = !auto;
+  else { auto = false; state = b.dataset.s; }
+  render();
+});
+setInterval(() => { if (!auto) return; autoI = (autoI + 1) % STATES.length; state = STATES[autoI][0]; render(); }, 3000);
+/* For checking by hand from the console. */
+window.figurePage = { set: (s) => { auto = false; state = s; render(); }, dark: (d) => { dark = d; setDark(); render(); } };
+</script>
+</body>
+</html>

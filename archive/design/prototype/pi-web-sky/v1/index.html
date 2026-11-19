@@ -1,0 +1,140 @@
+<!doctype html>
+<!-- Throwaway visual mock. Synthetic data only; no Pi/Robin API, microphone, model or storage. -->
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4f3f5">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Sky × Pi Web · 独立交互样稿</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x2='0.3' y2='1'%3E%3Cstop stop-color='%237d65ef'/%3E%3Cstop offset='.65' stop-color='%23ee91ca'/%3E%3Cstop offset='1' stop-color='%23ffd3ab'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='27' fill='url(%23g)'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7"/></symbol>
+      <symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v5m10-5v5M3 11h18"/></symbol>
+      <symbol id="note" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6M8 13h8m-8 4h5"/></symbol>
+      <symbol id="chat" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H5l-3 2V11.5a9.5 9.5 0 0 1 19 0Z"/><path d="M7 9h9m-9 5h6"/></symbol>
+      <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+      <symbol id="send" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+      <symbol id="voice" viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></symbol>
+      <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+      <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
+      <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+      <symbol id="pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+      <symbol id="code" viewBox="0 0 24 24"><path d="m7 7-5 5 5 5m10-10 5 5-5 5M14 4l-4 16"/></symbol>
+    </defs>
+  </svg>
+
+  <aside class="rail" aria-label="样稿导航">
+    <button class="brand" data-page="home" aria-label="回到样稿首页">π<span class="brand-dot"></span></button>
+    <nav>
+      <button class="nav-item" data-page="home" aria-current="page"><svg><use href="#home"/></svg><span>首页</span></button>
+      <button class="nav-item" data-calendar><svg><use href="#calendar"/></svg><span>日历</span></button>
+      <button class="nav-item" data-page="notes"><svg><use href="#note"/></svg><span>笔记</span></button>
+      <button class="nav-item" data-page="sessions"><svg><use href="#chat"/></svg><span>会话</span></button>
+    </nav>
+    <div class="rail-bottom"><span class="rail-rule"></span><span class="avatar" aria-label="演示用户 Bruce">B</span></div>
+  </aside>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="breadcrumb"><span>Personal space</span><span class="slash">/</span><strong id="pageName">首页</strong></div>
+      <div class="top-actions">
+        <span class="mock-badge"><i></i>独立样稿<span class="badge-detail"> · 全部为演示数据</span></span>
+        <button class="icon-button" id="themeToggle" aria-label="切换到夜色" title="切换浅色／夜色"><svg><use href="#sun"/></svg></button>
+        <button class="icon-button" id="motionToggle" aria-pressed="false" aria-label="暂停形象动画" title="暂停形象动画"><svg><use href="#pause"/></svg></button>
+      </div>
+    </header>
+
+    <main>
+      <section id="homePage" class="page home-page" aria-labelledby="homeTitle">
+        <div class="date-line"><span>WEDNESDAY, NOVEMBER 18</span><span>留一点空间，给今天。</span></div>
+        <section class="companion-home" aria-label="Robin 陪伴区">
+          <button class="home-orb orb-slot" data-open aria-label="和 Robin 聊聊"><canvas data-sky aria-hidden="true"></canvas></button>
+          <div class="hello">
+            <div class="eyebrow"><span class="presence-dot"></span> ROBIN <span class="presence-label">在这里</span></div>
+            <h1 id="homeTitle">下午好，<em>Bruce.</em></h1>
+            <p class="greeting">事情可以一件一件来。想先从哪里开始？</p>
+            <form id="homeForm" class="home-composer">
+              <label class="sr-only" for="homeInput">给 Robin 的消息（仅演示）</label>
+              <input id="homeInput" autocomplete="off" maxlength="2000" placeholder="安排一下今天，或聊点别的…" enterkeyhint="send">
+              <button class="icon-button voice-trigger" type="button" data-voice aria-label="体验语音状态演示，不使用麦克风" title="语音状态演示 · 不使用麦克风"><svg><use href="#voice"/></svg></button>
+              <button class="send-button" type="submit" aria-label="发送演示消息"><svg><use href="#send"/></svg></button>
+            </form>
+            <div class="suggestions"><button data-prompt="帮我看看今天的安排">看看今天 <span>↗</span></button><button data-prompt="帮我安排一下下午，留一点休息时间">一起安排下午 <span>↗</span></button><span class="mic-note">麦克风未开启</span></div>
+          </div>
+        </section>
+
+        <button class="quiet-notice" id="noticeButton"><span class="notice-icon"><svg><use href="#note"/></svg></span><span><strong>那份语音方案比较，已经整理好了。</strong><span class="notice-detail">不急，等你有空再看。</span></span><span class="notice-action">看一眼 <svg><use href="#arrow"/></svg></span></button>
+
+        <div class="daily-grid">
+          <section class="paper schedule" id="schedule" aria-labelledby="scheduleTitle">
+            <header class="section-head"><div><p class="eyebrow">YOUR DAY</p><h2 id="scheduleTitle">今天的安排</h2></div><span class="date-chip">11 月 18 日 · 周三</span></header>
+            <div class="week-strip" aria-label="本周日期（静态示意）"><span>一<b>16</b></span><span>二<b>17</b></span><span class="today">三<b>18</b></span><span>四<b>19</b></span><span>五<b>20</b></span><span>六<b>21</b></span><span>日<b>22</b></span></div>
+            <div class="agenda">
+              <div class="agenda-row finished"><time>10:00</time><div class="event sage"><div><strong>晨间阅读</strong><span>留给自己的半小时</span></div><span class="event-duration">30 min</span></div></div>
+              <div class="now-line"><span>现在 13:40</span><i></i></div>
+              <div class="agenda-row"><time>14:00</time><div class="event blue"><div><strong>项目讨论</strong><span>线上 · 产品方向与下一步</span></div><span class="event-duration">45 min</span></div></div>
+              <div class="agenda-row"><time>16:30</time><div class="event clay"><div><strong>出去走一走</strong><span>把屏幕放下，也是一种进展</span></div><span class="event-duration">30 min</span></div></div>
+            </div>
+            <div class="section-footer"><span>本地日历 · 示例安排</span><button class="text-button" data-prompt="一起看看今天的安排，有没有需要调整的地方">和 Robin 一起看看 <svg><use href="#arrow"/></svg></button></div>
+          </section>
+
+          <section class="paper todos" aria-labelledby="todosTitle">
+            <header class="section-head"><div><p class="eyebrow">A FEW SMALL THINGS</p><h2 id="todosTitle">手边的事</h2></div><span class="count" id="todoCount">3 件</span></header>
+            <div class="todo-list">
+              <label class="todo-row"><input type="checkbox"><span class="check-box"><svg><use href="#check"/></svg></span><span class="todo-copy"><strong>整理项目讨论的想法</strong><small>今天 · 项目</small></span></label>
+              <label class="todo-row"><input type="checkbox"><span class="check-box"><svg><use href="#check"/></svg></span><span class="todo-copy"><strong>读完那篇收藏的文章</strong><small>今天 · 阅读</small></span></label>
+              <label class="todo-row"><input type="checkbox"><span class="check-box"><svg><use href="#check"/></svg></span><span class="todo-copy"><strong>给研究笔记补一个例子</strong><small>明天 · 研究</small></span></label>
+            </div>
+            <p class="todo-footnote">不用一次做完。先选一件就好。</p>
+            <div class="section-footer"><span>勾选只影响本页演示</span><button class="text-button" data-prompt="这几件事，我应该先做哪件？">帮我理一理 <svg><use href="#arrow"/></svg></button></div>
+          </section>
+        </div>
+
+        <section class="continue-section" aria-labelledby="continueTitle"><div class="continue-heading"><h2 id="continueTitle">接着上次的思路</h2><span>工作区还在原来的地方</span></div><div class="continue-grid">
+          <button class="continue-item" data-page="notes"><span class="continue-icon"><svg><use href="#note"/></svg></span><span><strong>一个一直在场的助手</strong><small>笔记 · 关于交互的一点想法</small></span><svg class="arrow"><use href="#arrow"/></svg></button>
+          <button class="continue-item" data-page="sessions"><span class="continue-icon"><svg><use href="#code"/></svg></span><span><strong>导出功能的小修复</strong><small>Pi Web · 进入项目会话</small></span><svg class="arrow"><use href="#arrow"/></svg></button>
+        </div></section>
+        <footer class="page-foot"><span>Pi Web, with a little presence.</span><span>SKY / INTERACTION STUDY 01</span></footer>
+      </section>
+
+      <section id="notesPage" class="page workspace-page" aria-labelledby="notesTitle" hidden>
+        <div class="workspace-heading"><div><p class="eyebrow">A PLACE TO THINK</p><h1 id="notesTitle">笔记</h1></div><button class="docked-companion" data-open><span class="orb-slot dock-orb"><canvas data-sky aria-hidden="true"></canvas></span><span>Robin <small>还在这里</small></span><svg><use href="#chat"/></svg></button></div>
+        <div class="notes-layout">
+          <aside class="notes-index" aria-label="示例笔记目录"><span class="eyebrow">我的笔记</span><button class="selected" data-note="presence"><svg><use href="#note"/></svg>一个一直在场的助手</button><button data-note="voice"><svg><use href="#note"/></svg>关于语音的几个想法</button><p>这里是工作区示意。<br>没有读取你的真实笔记。</p></aside>
+          <article class="note-paper" id="noteArticle"><p class="note-meta">随手记 / NOV 18</p><h2>一个一直在场的助手</h2><p class="note-lead">不需要每次都把世界重新解释一遍。</p><p>我想要的不是另一个聊天窗口。它应该知道我正在做什么，但不会抢走我的注意力。</p><blockquote>需要它时，它出现。开始工作时，它让开。</blockquote><h3>在场，而不是占据</h3><p>首页有它的位置。进入笔记以后，它缩在右上角，安静地陪着。点击还是同一段对话，不用换一个「笔记助手」。</p><h3>事实，留在原来的地方</h3><p>安排仍然在日历里，想法仍然在笔记里，代码仍然在项目里。形象是入口，不是把所有东西装进去的容器。</p><div class="note-margin"><span>试一试</span>点击右上角的 Sky，刚才的演示对话还在。</div></article>
+        </div>
+      </section>
+
+      <section id="sessionsPage" class="page workspace-page" aria-labelledby="sessionsTitle" hidden>
+        <div class="workspace-heading"><div><p class="eyebrow">THE WORKSHOP</p><h1 id="sessionsTitle">Pi Web 会话</h1></div><button class="docked-companion" data-open><span class="orb-slot dock-orb"><canvas data-sky aria-hidden="true"></canvas></span><span>Robin <small>日常对话</small></span><svg><use href="#chat"/></svg></button></div>
+        <div class="session-layout"><aside class="sessions-index"><p class="eyebrow">PI-WEB-ROBIN</p><div class="session-selected"><span class="session-dot"></span>导出功能的小修复<small>项目会话 · 演示</small></div><p class="session-explainer">项目会话和日常对话各有上下文。Sky 不会自动接管当前编程会话。</p></aside><article class="session-paper"><header><span>导出功能的小修复</span><span class="context-chip">项目上下文</span></header><div class="session-messages"><p class="user-bubble">帮我看看为什么导出的日期会少一天。</p><div class="assistant-sample"><span class="eyebrow">PI · 示例回复</span><p>先核对日期序列化的边界：这里需要保留本地日期，而不是截取 UTC 字符串。</p><div class="tool-sample"><span>read</span><code>lib/export.ts</code><span>示意</span></div><p>修复和测试记录留在这段项目会话里。日常安排仍然可以从右上角找 Robin。</p></div><p class="session-safety">这是静态会话示意，没有访问文件或执行代码。</p></div><button class="session-return" data-page="home">回到日常首页 <svg><use href="#arrow"/></svg></button></article></div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="手机样稿导航"><button data-page="home" aria-current="page"><svg><use href="#home"/></svg><span>首页</span></button><button data-calendar><svg><use href="#calendar"/></svg><span>日历</span></button><button class="mobile-sky" data-open aria-label="打开 Robin 对话"><span class="orb-slot"><canvas data-sky aria-hidden="true"></canvas></span></button><button data-page="notes"><svg><use href="#note"/></svg><span>笔记</span></button><button data-page="sessions"><svg><use href="#chat"/></svg><span>会话</span></button></nav>
+
+  <dialog id="companionDialog" aria-labelledby="dialogTitle">
+    <div class="dialog-top"><span class="dialog-brand">Robin <span>/ 日常对话</span></span><span class="dialog-demo">交互演示 · 不连接模型</span><button id="closeDialog" class="icon-button" aria-label="收起对话" title="收起对话"><svg><use href="#minus"/></svg></button></div>
+    <div class="conversation-layout">
+      <aside class="presence-pane"><div class="orb-slot conversation-orb"><canvas data-sky aria-hidden="true"></canvas></div><div class="presence-copy"><p class="eyebrow" id="stateEyebrow">RIGHT HERE</p><h2 id="dialogTitle">我在，慢慢说。</h2><p id="stateDescription">打字就可以。<br>语音也可以等你准备好了再开始。</p></div><span class="presence-footer"><span class="presence-dot"></span><span id="privacyStatus">麦克风未开启</span></span></aside>
+      <section class="conversation-pane" aria-label="演示对话">
+        <div class="conversation-context"><span id="contextLabel">从首页开始</span><span>同一段日常对话</span></div>
+        <div id="messages" class="messages" role="log" aria-label="演示消息" aria-live="polite" aria-relevant="additions"><div class="assistant-message intro-message"><span class="message-label">ROBIN</span><p>不用先想好怎么说。<br>今天的安排、手边的小事，或者一个还没成形的想法，都可以从这里开始。</p><div class="starter-actions"><button data-prompt="帮我安排一下下午，留一点休息时间">一起安排下午 <svg><use href="#arrow"/></svg></button><button data-research>看看那份研究 <svg><use href="#arrow"/></svg></button></div></div></div>
+        <div class="conversation-input"><form id="chatForm"><label class="sr-only" for="chatInput">演示对话消息</label><textarea id="chatInput" rows="2" maxlength="2000" placeholder="告诉 Robin…" enterkeyhint="send"></textarea><div class="composer-bottom"><button class="voice-demo" type="button" id="voiceDemo"><svg><use href="#voice"/></svg><span>体验语音状态</span></button><span class="local-label">仅本页演示</span><button type="submit" class="send-button" id="chatSend" aria-label="发送演示消息"><svg><use href="#send"/></svg></button></div></form><p class="dialog-footnote">没有录音、模型调用或真实操作。刷新后演示记录清空。</p></div>
+      </section>
+    </div>
+  </dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <noscript><p class="noscript">这是独立视觉样稿。启用 JavaScript 后可以体验 Sky 和页面切换；不会连接真实服务。</p></noscript>
+</body>
+</html>

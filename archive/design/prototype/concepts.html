@@ -1,0 +1,293 @@
+<!doctype html>
+<!--
+  Alfred's form, round 5: divergent concepts, no hands. Flat solid colour only: no gradients, no 3D, no texture.
+  Twelve marks in four families. Each one is alive in five states (rest, listen, think, notice, done), smoothly blended,
+  and has a 16px silhouette for the menu bar. A sketch sheet to point at, not a finished design.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred 形象 · 发散</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root { --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; --mono: "SF Mono", ui-monospace, Menlo, monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 1180px; margin: 0 auto; padding: 64px 24px 120px; }
+h1 { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+h2 { margin: 56px 0 4px; font-size: 21px; font-weight: 650; }
+p { margin: 0; }
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+.sub { margin-top: 8px; color: var(--muted); }
+.lead { margin: 22px 0 0; padding-left: 20px; display: grid; gap: 8px; color: var(--copy); }
+.lead b { color: var(--ink); }
+.toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 12px 0; margin-top: 18px; background: var(--bg); }
+.st { height: 30px; padding: 0 12px; border-radius: 999px; color: var(--copy); font-size: 13px; box-shadow: inset 0 0 0 1px var(--line); }
+.st[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.now { margin-left: 8px; color: var(--muted); font-size: 13px; }
+.fam-sub { color: var(--muted); font-size: 14px; }
+.grid { margin-top: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.card { position: relative; padding: 14px; border-radius: 18px; background: var(--paper); display: flex; flex-direction: column; gap: 8px; }
+.card.fav { box-shadow: inset 0 0 0 2px var(--ink); }
+.fav-tag { position: absolute; top: 12px; right: 12px; padding: 1px 8px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 11px; }
+.tile { border-radius: 14px; background: #fef9f4; box-shadow: inset 0 0 0 1px var(--line-soft); }
+.tile svg { display: block; width: 100%; height: auto; aspect-ratio: 1; }
+.card h3 { margin: 4px 0 0; font-size: 17px; font-weight: 650; }
+.card p { font-size: 13.5px; color: var(--copy); line-height: 1.6; }
+.card p b { color: var(--ink); font-weight: 600; }
+.icons { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 6px; font-size: 11px; color: var(--muted); }
+.bar { display: inline-flex; align-items: center; gap: 8px; height: 24px; padding: 0 10px; border-radius: 6px; background: #ebe7e1; color: #292622; }
+.bar.dk { background: #2a2723; color: #eae7e4; }
+.bar.dk svg { filter: invert(1); }
+@media (max-width: 1000px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+.grid > * { min-width: 0; }
+.icons { flex-wrap: wrap; }
+@media (max-width: 520px) { main { padding: 36px 14px 80px; } .grid { grid-template-columns: 1fr; gap: 12px; } .tile { max-width: 260px; margin: 0 auto; width: 100%; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Alfred 形象 · 发散</h1>
+  <p class="sub">2026-11-18 · 第五轮 · 不再是手。十二个方向，全部纯色、扁平、简约；这是一张草图墙，用来挑方向，不是成品。</p>
+  <ul class="lead">
+    <li><b>从「Alfred 是谁」出发：</b>名字来自那位管家；它住在你的家里（home 节点）；它替你出去办事，但始终和你连着；它会长期陪你。四组方向各对应一种理解。</li>
+    <li><b>纯色：</b>只有靛蓝的深浅、琥珀（有事找你）和墨色，没有渐变、没有光影。每个都能缩成 16px 的单色剪影。</li>
+    <li><b>都没有脸和眼睛</b>，靠动作表达五个状态：平静、在听、在想、有事找你、做好了。上面可以切状态，默认自动轮播。</li>
+    <li>描了黑框的三个是我最看好的：<b>领结、风筝、「」</b>。</li>
+  </ul>
+  <div class="toolbar" id="toolbar"></div>
+  <div id="fams"></div>
+</main>
+
+<script>
+const C0 = { ind: "#4967c5", deep: "#34479f", light: "#b9c6f6", amber: "#e09a1f", ink: "#292622", paper: "#fffefb" };
+const MONO = { ind: "#000", deep: "#000", light: "#000", amber: "#000", ink: "#000", paper: "#fef9f4" };
+const S = Math.sin, abs = Math.abs, max = Math.max;
+const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mixHex = (a, b, t) => { const A = hex(a), B = hex(b); return "#" + A.map((x, i) => Math.round(x + (B[i] - x) * Math.max(0, Math.min(1, t))).toString(16).padStart(2, "0")).join(""); };
+const STATES = [["rest", "平静"], ["listen", "在听"], ["think", "在想"], ["notice", "有事找你"], ["done", "做好了"]];
+
+const FAMS = [
+  { name: "管家", sub: "呼应 Alfred 这个名字：一位看不见的管家，只露出他身上的一样东西。", items: ["bowtie", "hat", "tea", "bell"] },
+  { name: "连着你", sub: "它会替你出去办事，但始终和你连着。", items: ["kite", "quote", "lighthouse"] },
+  { name: "家和生长", sub: "它住在你家里，跟你一起慢慢长大。", items: ["house", "sprout", "crane"] },
+  { name: "几何与字", sub: "最抽象的一组：用形状和字母本身来表达。", items: ["shapes", "letter"] },
+];
+
+const CONCEPTS = {
+  bowtie: { name: "领结", fav: true,
+    why: "看不见的管家，只露出一个领结。",
+    how: "在听时歪一下、挺起来；在想时两翼轮流扇；有事时中间的结变琥珀色、跳一跳；做好了微微鞠个躬。",
+    def: { tilt: 0, lift: 0, sc: 1, flap: 0, breath: 0, amber: 0 },
+    st: { rest: () => ({ breath: 1 }), listen: () => ({ tilt: -12, lift: -3, sc: 1.07 }), think: () => ({ flap: 1 }),
+          notice: (t) => ({ amber: 1, lift: -7 * abs(S(t * 4.5)) }), done: (t) => ({ lift: 7 * max(0, S(t * 3)), tilt: 5 * max(0, S(t * 3)) }) },
+    draw(p, t, C) {
+      const fl = p.flap * S(t * 6) * 11 + p.breath * S(t * 1.4) * 2.5;
+      const wing = `<path d="M-4 -8 Q-24 -26 -41 -20 Q-48 0 -41 20 Q-24 26 -4 8 Z" fill="${C.ind}"/><path d="M-4 -8 L-17 -5 L-17 5 L-4 8 Z" fill="${C.deep}"/>`;
+      return `<g transform="translate(60 ${60 + p.lift}) rotate(${p.tilt}) scale(${p.sc})"><g transform="rotate(${fl} -4 0)">${wing}</g><g transform="scale(-1 1) rotate(${-fl} -4 0)">${wing}</g><rect x="-9" y="-11" width="18" height="22" rx="6" fill="${mixHex(C.deep, C.amber, p.amber)}"/></g>`;
+    } },
+  hat: { name: "礼帽",
+    why: "管家和魔术师的礼帽：脱帽致意，帽子底下变出你要的东西。",
+    how: "在听时歪戴着；在想时晃一晃；有事时帽子抬起来，下面露出一个琥珀色的东西；做好了脱帽致意。",
+    def: { tilt: 0, lift: 0, peek: 0, sc: 1 },
+    st: { rest: (t) => ({ sc: 1 + 0.015 * S(t * 1.3) }), listen: () => ({ tilt: -10 }), think: (t) => ({ tilt: 7 * S(t * 3.2) }),
+          notice: (t) => ({ lift: 17 + 2 * S(t * 4), peek: 1 }), done: (t) => ({ tilt: 22 * max(0, S(t * 2.6)), lift: 6 * max(0, S(t * 2.6)) }) },
+    draw(p, t, C) {
+      return `<circle cx="60" cy="78" r="${8 * p.peek}" fill="${C.amber}"/><g transform="translate(60 ${86 - p.lift}) rotate(${p.tilt}) scale(${p.sc})">
+        <rect x="-23" y="-50" width="46" height="48" rx="5" fill="${C.ind}"/><rect x="-23" y="-14" width="46" height="9" fill="${C.light}"/><rect x="-38" y="-5" width="76" height="9" rx="4.5" fill="${C.deep}"/></g>`;
+    } },
+  tea: { name: "茶杯",
+    why: "管家给你泡的一杯茶。热气就是它的呼吸。",
+    how: "平时热气慢慢升；在听时热气朝你飘；在想时热气卷得更快；有事时冒出一块琥珀色的方糖；做好了热气变高变满。",
+    def: { lean: 0, speed: 1, amp: 3, sugar: 0, big: 0, tilt: 0 },
+    st: { rest: () => ({}), listen: () => ({ lean: -9, tilt: -4 }), think: () => ({ speed: 2.6, amp: 6 }), notice: () => ({ sugar: 1 }), done: () => ({ big: 1 }) },
+    draw(p, t, C) {
+      let steam = "";
+      for (let i = 0; i < 3; i++) {
+        const x0 = 47 + i * 13, top = 22 - p.big * 10; let d = "";
+        for (let y = 48; y >= top; y -= 3) { const x = x0 + p.amp * S(y * 0.24 + t * p.speed * 3 + i * 1.7) + p.lean * (48 - y) / 26; d += (y === 48 ? "M" : "L") + x.toFixed(1) + " " + y; }
+        steam += `<path d="${d}" fill="none" stroke="${C.light}" stroke-width="4.5" stroke-linecap="round"/>`;
+      }
+      const sy = 22 - abs(S(t * 4)) * 7;
+      return `<g transform="rotate(${p.tilt} 60 90)">${steam}<rect x="22" y="88" width="76" height="6" rx="3" fill="${C.deep}"/>
+        <circle cx="88" cy="66" r="8.5" fill="none" stroke="${C.ind}" stroke-width="6"/><path d="M33 52 H87 L83 76 Q81 88 70 88 H50 Q39 88 37 76 Z" fill="${C.ind}"/><rect x="35" y="52" width="50" height="5" rx="2.5" fill="${C.light}"/></g>
+        <rect x="${60 - 5 * p.sugar}" y="${sy}" width="${10 * p.sugar}" height="${10 * p.sugar}" rx="2" fill="${C.amber}"/>`;
+    } },
+  bell: { name: "服务铃",
+    why: "前台的服务铃：你按它，它就来；它有事时也会「叮」你一下。掀开铃罩，就是它给你准备好的东西。",
+    how: "在听时微微抬起；在想时铃罩一掀一掀；有事时「叮」，铃罩抖一下；做好了掀开铃罩，下面是结果。",
+    def: { press: 0, shake: 0, ding: 0, lid: 0, tilt: 0 },
+    st: { rest: () => ({}), listen: () => ({ tilt: -6, lid: 0.08 }), think: (t) => ({ lid: 0.18 + 0.06 * S(t * 3) }),
+          notice: (t) => { const ph = (t * 1.5) % 1; return { press: ph < 0.12 ? 1 : 0, shake: ph < 0.5 ? (1 - ph * 2) * S(t * 40) * 6 : 0, ding: ph < 0.55 ? 1 - ph / 0.55 : 0 }; },
+          done: () => ({ lid: 1 }) },
+    draw(p, t, C) {
+      const ding = `<g stroke="${C.amber}" stroke-width="4" stroke-linecap="round" opacity="${p.ding}"><path d="M-40 -28 L-49 -35"/><path d="M-43 -14 L-54 -14"/><path d="M40 -28 L49 -35"/><path d="M43 -14 L54 -14"/></g>`;
+      return `<rect x="22" y="84" width="76" height="10" rx="5" fill="${C.deep}"/><circle cx="60" cy="77" r="7.5" fill="${C.amber}"/>
+        <g transform="translate(60 ${84 - p.lid * 28}) rotate(${p.tilt + p.shake})">${ding}<path d="M-30 0 A30 30 0 0 1 30 0 Z" fill="${C.ind}"/><rect x="-34" y="-3" width="68" height="6" rx="3" fill="${C.deep}"/>
+        <rect x="-3" y="${-37 + p.press * 4}" width="6" height="8" fill="${C.deep}"/><circle cx="0" cy="${-39 + p.press * 4}" r="5.5" fill="${C.deep}"/><path d="M-19 -13 A22 22 0 0 1 -7 -23" fill="none" stroke="${C.light}" stroke-width="4" stroke-linecap="round"/></g>`;
+    } },
+  kite: { name: "风筝", fav: true,
+    why: "它替你飞出去办事，线一直在你手里。agent 的自主和你的掌控，就是这根线。",
+    how: "在听时降下来、靠近你；在想时飞高、迎风摆；有事时尾巴的结变琥珀色，线轻轻一扯；做好了绕一圈飞回你身边。",
+    def: { x: 66, y: 42, tilt: 8, wave: 1, amber: 0 },
+    st: { rest: (t) => ({ x: 66 + 2 * S(t * 0.9), y: 42 + 3 * S(t * 1.3), tilt: 8 + 3 * S(t * 1.1) }), listen: (t) => ({ x: 50, y: 58 + 2 * S(t * 2), tilt: -8 }),
+          think: (t) => ({ x: 72 + 6 * S(t * 1.4), y: 30, tilt: 14 * S(t * 1.8), wave: 2.4 }), notice: (t) => ({ amber: 1, x: 66 + 1.5 * S(t * 14), y: 42 - 3 * max(0, S(t * 5)) }),
+          done: (t) => ({ x: 60 + 14 * Math.cos(t * 2), y: 46 + 10 * S(t * 2), tilt: 18 * Math.cos(t * 2) }) },
+    draw(p, t, C) {
+      const r = (p.tilt * Math.PI) / 180, bx = p.x - 30 * S(r), by = p.y + 30 * Math.cos(r);
+      let tail = "", d = "M0 30";
+      for (let y = 30; y <= 72; y += 3) d += ` L${(6 * S(y * 0.15 - t * p.wave * 4)).toFixed(1)} ${y}`;
+      tail = `<path d="${d}" fill="none" stroke="${C.ind}" stroke-width="2"/>`;
+      [44, 57, 70].forEach((y) => { const x = 6 * S(y * 0.15 - t * p.wave * 4), c = mixHex(C.light, C.amber, p.amber); tail += `<path d="M${x - 6} ${y - 4} L${x + 6} ${y + 4} L${x + 6} ${y - 4} L${x - 6} ${y + 4} Z" fill="${c}"/>`; });
+      return `<circle cx="12" cy="110" r="3.5" fill="${C.ink}"/><path d="M12 110 Q${(bx - 30).toFixed(1)} ${(by + 40).toFixed(1)} ${bx.toFixed(1)} ${by.toFixed(1)}" fill="none" stroke="${C.ink}" stroke-width="1.3" opacity=".75"/>
+        <g transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${p.tilt.toFixed(1)})">${tail}
+        <path d="M0 -22 L-18 0 L0 0 Z" fill="${C.ind}"/><path d="M0 -22 L18 0 L0 0 Z" fill="${C.deep}"/><path d="M-18 0 L0 30 L0 0 Z" fill="${C.deep}"/><path d="M18 0 L0 30 L0 0 Z" fill="${C.ind}"/></g>`;
+    } },
+  quote: { name: "「」", fav: true,
+    why: "一对引号。它把你说的话框起来，也把它要说的话框起来；对话就是它的身体。",
+    how: "在听时张开，给你的话留出位置；在想时中间出现「…」；有事时中间跳出一个琥珀色的点；做好了合上，像一句话说完。",
+    def: { gap: 10, dots: 0, amber: 0 },
+    st: { rest: (t) => ({ gap: 10 + 1.5 * S(t * 1.3) }), listen: (t) => ({ gap: 26 + 2 * S(t * 3) }), think: () => ({ gap: 18, dots: 1 }), notice: () => ({ gap: 18, amber: 1 }), done: () => ({ gap: 2 }) },
+    draw(p, t, C) {
+      const lx = 60 - p.gap - 16, rx = 60 + p.gap + 16;
+      let s = `<path d="M${lx + 22} 36 H${lx} V67" fill="none" stroke="${C.ind}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>`;
+      s += `<path d="M${rx} 53 V84 H${rx - 22}" fill="none" stroke="${C.ind}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>`;
+      [-11, 0, 11].forEach((dx, i) => { s += `<circle cx="${60 + dx}" cy="60" r="4" fill="${C.deep}" opacity="${p.dots * (0.25 + 0.75 * max(0, S(t * 5 - i * 0.9)))}"/>`; });
+      return s + `<circle cx="60" cy="${60 - abs(S(t * 4.5)) * 7}" r="${6 * p.amber}" fill="${C.amber}"/>`;
+    } },
+  lighthouse: { name: "灯塔",
+    why: "一直在那儿，为你看着。平时只是一点光，需要时把光照向你。",
+    how: "在听时光束转向你；在想时光束慢慢扫过；有事时灯变琥珀色、一闪一闪；做好了光束稳稳照着。",
+    def: { beam: 0, sweep: 0, dir: -150, amber: 0, blink: 1 },
+    st: { rest: () => ({}), listen: () => ({ beam: 0.7, dir: 200 }), think: (t) => ({ beam: 1, dir: 180 + 70 * S(t * 1.5) }),
+          notice: (t) => ({ amber: 1, blink: 0.4 + 0.6 * max(0, S(t * 7)), beam: 0.5, dir: 200 }), done: () => ({ beam: 1, dir: 340 }) },
+    draw(p, t, C) {
+      const a = (p.dir * Math.PI) / 180, len = 46 * p.beam, sp = 0.32;
+      const bx1 = 60 + Math.cos(a - sp) * len, by1 = 38 + S(a - sp) * len, bx2 = 60 + Math.cos(a + sp) * len, by2 = 38 + S(a + sp) * len;
+      const lamp = mixHex(C.light, C.amber, p.amber * p.blink);
+      return `<path d="M60 38 L${bx1.toFixed(1)} ${by1.toFixed(1)} L${bx2.toFixed(1)} ${by2.toFixed(1)} Z" fill="${mixHex(C.light, C.amber, p.amber)}" opacity="${0.55 * p.beam}"/>
+        <rect x="26" y="96" width="68" height="8" rx="4" fill="${C.deep}"/><path d="M50 46 H70 L76 96 H44 Z" fill="${C.ind}"/><path d="M48.6 58 H71.4 L72.6 68 H47.4 Z" fill="${C.deep}"/><path d="M46.2 78 H73.8 L75 88 H45 Z" fill="${C.deep}"/>
+        <rect x="51" y="31" width="18" height="15" rx="2" fill="${lamp}"/><path d="M47 32 L60 20 L73 32 Z" fill="${C.deep}"/>`;
+    } },
+  house: { name: "小屋",
+    why: "Alfred 就住在你家里（home 节点）。窗里有光，就是它在。",
+    how: "在听时门开一半；在想时烟囱冒烟更快；有事时窗户亮起琥珀色的灯；做好了门全开，灯亮着。",
+    def: { door: 0, smoke: 1, win: 0, lean: 0 },
+    st: { rest: () => ({}), listen: () => ({ door: 0.7, lean: -3 }), think: () => ({ smoke: 2.8 }), notice: (t) => ({ win: 0.55 + 0.45 * S(t * 6) }), done: () => ({ door: 1, win: 1 }) },
+    draw(p, t, C) {
+      let smoke = "";
+      for (let i = 0; i < 3; i++) { const ph = (t * 0.5 * p.smoke + i / 3) % 1; smoke += `<circle cx="${77 + ph * 7}" cy="${28 - ph * 22}" r="${3 + ph * 4}" fill="${C.light}" opacity="${1 - ph}"/>`; }
+      return `<g transform="rotate(${p.lean} 60 98)">${smoke}<rect x="72" y="30" width="9" height="18" fill="${C.deep}"/><path d="M26 58 L60 28 L94 58 Z" fill="${C.deep}"/>
+        <rect x="32" y="56" width="56" height="42" fill="${C.ind}"/><rect x="40" y="66" width="14" height="14" rx="2" fill="${mixHex(C.paper, C.amber, p.win)}"/>
+        <rect x="64" y="76" width="14" height="22" fill="${C.ink}"/><rect x="64" y="76" width="${14 * (1 - p.door * 0.75)}" height="22" fill="${C.deep}"/></g><rect x="20" y="98" width="80" height="3" rx="1.5" fill="${C.light}"/>`;
+    } },
+  sprout: { name: "嫩芽",
+    why: "它和你一起慢慢长大：用得越久，长得越多。",
+    how: "在听时朝你弯；在想时长出一片新叶；有事时顶上冒出一个琥珀色的花苞；做好了叶子张开。",
+    def: { lean: 0, third: 0, bud: 0, spread: 0 },
+    st: { rest: () => ({}), listen: () => ({ lean: -13 }), think: () => ({ third: 1 }), notice: () => ({ bud: 1 }), done: () => ({ spread: 1 }) },
+    draw(p, t, C) {
+      const sw = 3 * S(t * 1.2);
+      const leaf = `M0 0 Q-11 -19 -33 -15 Q-23 5 0 0 Z`;
+      return `<path d="M43 88 H77 L73 104 H47 Z" fill="${C.deep}"/><rect x="40" y="83" width="40" height="7" rx="3.5" fill="${C.ind}"/>
+        <g transform="rotate(${p.lean + sw} 60 86)"><path d="M60 86 Q57 70 60 54" fill="none" stroke="${C.ind}" stroke-width="5" stroke-linecap="round"/>
+        <g transform="translate(60 72) scale(${p.third})"><path d="M0 0 Q9 -13 24 -11 Q15 3 0 0 Z" fill="${C.light}"/></g>
+        <g transform="translate(60 55) rotate(${-14 - p.spread * 24 + 4 * S(t * 1.5)})"><path d="${leaf}" fill="${C.ind}"/></g>
+        <g transform="translate(60 55) scale(-1 1) rotate(${-14 - p.spread * 24 + 4 * S(t * 1.5 + 1)})"><path d="${leaf}" fill="${C.deep}"/></g>
+        <circle cx="60" cy="48" r="${6 * p.bud}" fill="${C.amber}"/></g>`;
+    } },
+  crane: { name: "纸鹤",
+    why: "一只折纸鹤：替你送信、替你守着；也和「纸」这个视觉呼应。",
+    how: "在听时把头转向你；在想时慢慢扇翅膀；有事时嘴里衔着一张琥珀色的纸条、跳一下；做好了翅膀全展开。",
+    def: { wing: 0.3, neck: 0, hop: 0, note: 0 },
+    st: { rest: (t) => ({ wing: 0.3 + 0.05 * S(t * 1.3) }), listen: () => ({ neck: 1 }), think: (t) => ({ wing: 0.5 + 0.5 * S(t * 3) }),
+          notice: (t) => ({ note: 1, hop: 6 * abs(S(t * 4)) }), done: () => ({ wing: 1 }) },
+    draw(p, t, C) {
+      const hx = 26 - p.neck * 5, hy = 44 + p.neck * 9;
+      return `<g transform="translate(0 ${-p.hop})"><path d="M52 68 L68 68 L${40 - p.wing * 4} ${68 - (16 + p.wing * 30)} Z" fill="${C.ind}"/>
+        <path d="M38 74 L60 62 L84 74 L60 86 Z" fill="${C.deep}"/><path d="M56 68 L72 68 L${86 + p.wing * 4} ${68 - (12 + p.wing * 28)} Z" fill="${C.light}"/>
+        <path d="M44 74 L51 76 L${hx} ${hy} Z" fill="${C.ind}"/><path d="M${hx} ${hy} L${hx - 11} ${hy + 6 + p.neck * 3} L${hx + 3} ${hy + 6} Z" fill="${C.ind}"/>
+        <path d="M76 74 L83 76 L101 46 Z" fill="${C.ind}"/><rect x="${hx - 17}" y="${hy + 5}" width="${9 * p.note}" height="${6 * p.note}" rx="1" fill="${C.amber}"/></g>`;
+    } },
+  shapes: { name: "三形",
+    why: "圆、方、三角，像包豪斯的积木。叠在一起是一个小小的「人」，拆开就能干活。",
+    how: "在听时整摞朝你倾；在想时圆绕着方转；有事时三角变琥珀色、往上跳；做好了三个排成一行。",
+    def: { cx: 60, cy: 57, sx: 60, sy: 80, tx: 60, ty: 33, rot: 0, lean: 0, amber: 0 },
+    st: { rest: (t) => ({ cy: 57 + S(t * 1.4), ty: 33 + S(t * 1.4 + 0.6) * 1.5 }), listen: () => ({ lean: -12 }),
+          think: (t) => ({ cx: 60 + 28 * Math.cos(t * 2), cy: 74 + 14 * S(t * 2), ty: 46, rot: t * 50 }), notice: (t) => ({ amber: 1, ty: 30 - abs(S(t * 4)) * 11 }),
+          done: () => ({ cx: 60, cy: 76, sx: 34, sy: 76, tx: 86, ty: 76 }) },
+    draw(p, t, C) {
+      return `<g transform="rotate(${p.lean} 60 94)"><rect x="${p.sx - 13}" y="${p.sy - 13}" width="26" height="26" rx="2" fill="${C.deep}"/>
+        <circle cx="${p.cx}" cy="${p.cy}" r="12" fill="${C.ind}"/>
+        <path d="M${p.tx} ${p.ty - 13} L${p.tx + 13} ${p.ty + 10} L${p.tx - 13} ${p.ty + 10} Z" transform="rotate(${p.rot % 360} ${p.tx} ${p.ty})" fill="${mixHex(C.light, C.amber, p.amber)}"/></g>`;
+    } },
+  letter: { name: "字母 A",
+    why: "名字的第一个字母本身就是角色：一个会鞠躬、会侧耳、会思考的 A。",
+    how: "在听时朝你倾；在想时中间那一横上下滑动；有事时头顶冒出一个琥珀色的点、跳一跳；做好了鞠一躬。",
+    def: { bow: 0, bar: 66, hop: 0, lean: 0, dot: 0 },
+    st: { rest: (t) => ({ bar: 66 + 1.5 * S(t * 1.3) }), listen: () => ({ lean: -9 }), think: (t) => ({ bar: 64 + 11 * S(t * 2.6) }),
+          notice: (t) => ({ dot: 1, hop: 7 * abs(S(t * 4.2)) }), done: (t) => ({ bow: 20 * max(0, S(t * 2.6)) }) },
+    draw(p, t, C) {
+      const k = (p.bar - 26) / 68, xl = 60 - k * 22, xr = 60 + k * 22;
+      return `<g transform="translate(0 ${-p.hop}) rotate(${p.lean} 60 94)"><g transform="translate(60 94) skewX(${-p.bow * 0.7}) scale(1 ${1 - p.bow / 90}) translate(-60 -94)">
+        <path d="M38 94 L60 28 L82 94" fill="none" stroke="${C.ind}" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M${xl} ${p.bar} H${xr}" stroke="${C.deep}" stroke-width="9" stroke-linecap="round"/></g>
+        <circle cx="60" cy="13" r="${6 * p.dot}" fill="${C.amber}"/></g>`;
+    } },
+};
+
+/* ── Build the sheet ── */
+const fams = document.getElementById("fams");
+const cards = [];
+FAMS.forEach((F) => {
+  const sec = document.createElement("section");
+  sec.innerHTML = `<h2>${F.name}</h2><p class="fam-sub">${F.sub}</p><div class="grid"></div>`;
+  fams.appendChild(sec);
+  F.items.forEach((id) => {
+    const K = CONCEPTS[id];
+    const card = document.createElement("article"); card.className = "card" + (K.fav ? " fav" : "");
+    card.innerHTML = `${K.fav ? '<span class="fav-tag">看好</span>' : ""}<div class="tile"><svg viewBox="0 0 120 120"></svg></div><h3>${K.name}</h3><p>${K.why}</p><p><b>怎么连接你：</b>${K.how}</p>
+      <div class="icons"><span>16px</span><span class="bar"><svg viewBox="0 0 120 120" width="18" height="18"></svg>12:41</span><span class="bar dk"><svg viewBox="0 0 120 120" width="18" height="18"></svg>12:41</span></div>`;
+    sec.querySelector(".grid").appendChild(card);
+    const p = { ...K.def, ...K.st.rest(0.5) };
+    card.querySelectorAll(".bar svg").forEach((s) => (s.innerHTML = K.draw(p, 0.5, MONO)));
+    cards.push({ K, svg: card.querySelector(".tile svg"), W: { rest: 1, listen: 0, think: 0, notice: 0, done: 0 } });
+  });
+});
+
+/* ── States: buttons, auto play, smooth blending between states ── */
+let state = "rest", auto = true, autoT = 0, autoI = 0;
+const tb = document.getElementById("toolbar");
+function renderBar() {
+  tb.innerHTML = `<button class="st" data-auto aria-pressed="${auto}">自动轮播</button>` + STATES.map(([k, l]) => `<button class="st" data-s="${k}" aria-pressed="${!auto && state === k}">${l}</button>`).join("") + `<span class="now">现在：${STATES.find((s) => s[0] === state)[1]}</span>`;
+}
+renderBar();
+tb.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.hasAttribute("data-auto")) { auto = !auto; autoT = 0; } else { auto = false; state = b.dataset.s; }
+  renderBar();
+});
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let prev = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+  const t = still ? 0.5 : now / 1000;
+  if (auto) { autoT += dt; if (autoT > 2.6) { autoT = 0; autoI = (autoI + 1) % STATES.length; state = STATES[autoI][0]; renderBar(); } }
+  const k = 1 - Math.exp(-dt * 6);
+  for (const c of cards) {
+    let sum = 0; const P = {};
+    for (const [s] of STATES) { c.W[s] += ((s === state ? 1 : 0) - c.W[s]) * k; sum += c.W[s]; }
+    for (const [s] of STATES) {
+      const w = c.W[s] / sum; if (w < 0.001) continue;
+      const ps = { ...c.K.def, ...c.K.st[s](t) };
+      for (const key in ps) P[key] = (P[key] || 0) + ps[key] * w;
+    }
+    c.svg.innerHTML = c.K.draw(P, t, C0);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!doctype html>
+<!-- Visual companion to docs/research/visual-style.md: the four colour directions side by side, live. -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred 视觉语言</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root { --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; --mono: "SF Mono", ui-monospace, Menlo, monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 1040px; margin: 0 auto; padding: 64px 24px 120px; }
+h1 { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+h2 { margin: 72px 0 6px; font-size: 22px; font-weight: 650; }
+h3 { margin: 0; font-size: 20px; font-weight: 650; }
+p { margin: 0; }
+a { color: var(--alf); text-underline-offset: 3px; }
+.sub { margin-top: 8px; color: var(--muted); }
+.lead { margin-top: 28px; display: grid; gap: 10px; color: var(--copy); }
+.lead li::marker { color: var(--muted); }
+.lead b { color: var(--ink); }
+ul { margin: 0; padding-left: 20px; }
+
+.dir { margin-top: 28px; padding: 28px; border-radius: 20px; background: var(--paper); }
+.dir-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; }
+.dir-head .pick { padding: 2px 10px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 12px; }
+.mood { flex-basis: 100%; color: var(--copy); }
+.shots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+.shot { display: block; position: relative; overflow: hidden; aspect-ratio: 16 / 10; border-radius: 12px; box-shadow: 0 0 0 1px var(--line-soft), var(--shadow); }
+.shot iframe { position: absolute; top: 0; left: 0; width: 1440px; height: 900px; border: 0; transform-origin: 0 0; pointer-events: none; }
+.shot span { position: absolute; left: 10px; bottom: 10px; padding: 2px 9px; border-radius: 999px; background: oklch(0 0 0 / .55); color: #fff; font-size: 12px; }
+.swatches { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 12px; }
+.sw { display: flex; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--line-soft); }
+.sw div { flex: 1; min-width: 0; height: 52px; padding: 6px; display: flex; flex-direction: column; justify-content: flex-end; font: 10px/1.3 var(--mono); }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; font-size: 14px; color: var(--copy); }
+.notes b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+
+.rules { margin-top: 18px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.rule { padding: 16px 18px; border-radius: 14px; background: var(--paper); font-size: 14px; color: var(--copy); }
+.rule b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 2px; }
+.rule small { display: block; margin-top: 6px; color: var(--muted); }
+.refs { margin-top: 14px; columns: 2; gap: 32px; font-size: 14px; color: var(--copy); }
+.refs li { break-inside: avoid; margin-bottom: 8px; }
+.status { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.status span { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--paper); font-size: 13px; color: var(--copy); }
+.status i { width: 10px; height: 10px; border-radius: 50%; }
+/* Colour system */
+.palette { margin-top: 18px; display: grid; gap: 8px; }
+.prow { display: grid; grid-template-columns: 96px 1fr 1fr; gap: 12px; align-items: stretch; }
+.prow > b { align-self: center; font-size: 14px; font-weight: 600; }
+.prow > b small { display: block; color: var(--muted); font: 11px var(--mono); }
+.pcell { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.sw-solid { flex: none; width: 26px; height: 26px; border-radius: 7px; background: var(--k-solid); }
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; background: var(--k-fill); color: var(--k-text); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--k-solid); }
+.ev-s { flex: 1; min-width: 0; padding: 4px 8px 4px 10px; border-radius: 7px; background: var(--k-fill); box-shadow: inset 3px 0 0 var(--k-solid); color: var(--k-text); font-size: 12px; font-weight: 600; line-height: 1.35; }
+.ev-s small { display: block; font: 400 10px/1.5 var(--mono); opacity: .75; }
+.hexes { font: 10px/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
+.ladder { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
+.step { padding: 16px; border-radius: 14px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-soft); display: flex; flex-direction: column; gap: 10px; font-size: 13px; color: var(--copy); }
+.step b { color: var(--ink); font-size: 14px; }
+.step .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 30px; }
+.solid-btn { height: 28px; padding: 0 12px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 12px; display: inline-flex; align-items: center; }
+.pill { min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; border-radius: 10px; background: var(--k-solid); color: #fff; font-size: 11px; font-weight: 600; }
+.today { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--k-solid); color: #fff; font-weight: 600; font-size: 13px; }
+.textdemo { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.textdemo > div { padding: 20px; border-radius: 14px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-soft); display: grid; gap: 6px; }
+.textdemo .t1 { color: var(--ink); font-size: 22px; font-weight: 650; }
+.textdemo .t2 { color: var(--copy); }
+.textdemo .t3 { color: var(--muted); font-size: 13px; }
+.textdemo code { font: 11px var(--mono); color: var(--muted); }
+
+@media (max-width: 760px) {
+  main { padding: 36px 16px 80px; }
+  .prow { grid-template-columns: 1fr; gap: 6px; }
+  .ladder, .textdemo { grid-template-columns: 1fr; }
+  .hexes { display: none; }
+  .shots, .swatches, .notes, .rules { grid-template-columns: 1fr; }
+  .refs { columns: 1; }
+  .dir { padding: 18px; }
+  .sw { flex-wrap: wrap; }
+  .sw div { flex: 1 0 33.33%; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Alfred 视觉语言</h1>
+  <p class="sub">2026-11-18 · 第二版 · 调查加样品，没有定稿。完整文字和来源在 docs/research/visual-style.md。点任意截图会打开可用的原型。</p>
+
+  <ul class="lead">
+    <li><b>颜色可以多，但每个颜色只有一个固定意思。</b>四类：领域色（工作、生活……）、状态色（等你、现在）、Alfred 色、中性色。</li>
+    <li><b>7 个领域色，顺序固定，用配色校验器验过。</b>按这个顺序，相邻两色浅色、深色下都分得开，色弱读者也一样。日程、待办共用。</li>
+    <li><b>层次靠强调阶梯。</b>静 → 标识 → 着色 → 实色。实色每个区域最多一个，重点是靠周围安静才显出来的。</li>
+    <li><b>明暗适中。</b>标题约 14:1，正文约 7:1，不用纯黑；深色模式的底是柔和深灰，不是近黑。</li>
+    <li><b>底座是生成器，默认用「纸」。</b>领域色和状态色在所有主题里一样。</li>
+  </ul>
+
+  <h2>领域色</h2>
+  <p class="sub">每个颜色四个用法：实色（点、色条、图标）、浅底、同色文字、描边。左边浅色，右边深色。</p>
+  <div id="areas" class="palette"></div>
+
+  <h2>状态色和 Alfred 色</h2>
+  <p class="sub">不随主题变，总是带文字或数字出现。琥珀特意偏金，和「出行」的橙色拉开。</p>
+  <div id="status" class="palette"></div>
+
+  <h2>强调阶梯</h2>
+  <p class="sub">越往右越抢眼，越少用。实色每个区域最多一个。</p>
+  <div id="ladder"></div>
+
+  <h2>文字</h2>
+  <div id="text"></div>
+
+  <h2>四个主题</h2>
+  <p class="sub">主题只换中性色和 Alfred 色。每个方向是浅色和深色各一张实时截图，下面是同一套 token 的色块。</p>
+  <div id="dirs"></div>
+
+  <h2>三个状态色，所有主题共用</h2>
+  <div class="status">
+    <span><i style="background:var(--warm)"></i>琥珀：等你决定</span>
+    <span><i style="background:var(--now)"></i>红：现在、危险</span>
+    <span><i style="background:var(--ok)"></i>绿：完成</span>
+    <span><i style="background:var(--alf)"></i>Alfred 色：Alfred 和它做过的事</span>
+  </div>
+
+  <h2>从参考里借来的原则</h2>
+  <div class="rules">
+    <div class="rule"><b>中性为主，颜色要有意思才出现</b>今天的星、到期的红之所以醒目，是因为别处都没有颜色。<small>Things 3</small></div>
+    <div class="rule"><b>结构靠感觉，不靠线</b>分隔线更少、更淡。侧栏比内容暗一档，让内容优先。<small>Linear 2026 改版</small></div>
+    <div class="rule"><b>主题 = 几个输入</b>base、accent、contrast 三个输入在 LCH 里生成整套主题，代替 98 个变量。<small>Linear</small></div>
+    <div class="rule"><b>token 按用途命名</b>底、控件、线、实色、文字各有固定的色阶位置。<small>Radix Colors</small></div>
+    <div class="rule"><b>深色单独设计</b>表面越高越亮，不用纯黑，强调色降低饱和度，不靠阴影分层。<small>OKLCH 指南 · Raycast</small></div>
+    <div class="rule"><b>侧栏可以是玻璃</b>Mac 上侧栏浮在窗口上，颜色随背后的内容变。强调色只给重要控件。<small>macOS Tahoe Liquid Glass</small></div>
+    <div class="rule"><b>日常克制，品牌留给关键时刻</b>Dia 从 Arc 的个性收敛到「熟悉和克制」，只在少数时刻表达品牌。<small>The Browser Company</small></div>
+    <div class="rule"><b>AI 在旁边，用状态说话</b>AI 放在边栏和可收起的面板里，用「不需要你处理」这样的平稳状态代替提醒。<small>Calm technology</small></div>
+  </div>
+
+  <h2>参考</h2>
+  <ul class="refs">
+    <li><a href="https://linear.app/now/behind-the-latest-design-refresh">Linear 2026-03 改版</a>：更暖的灰，更暗的侧栏，更少的线，三输入主题</li>
+    <li><a href="https://linear.app/now/how-we-redesigned-the-linear-ui">Linear 2024 重做界面</a>：LCH 生成器，Inter Display 标题</li>
+    <li><a href="https://developer.apple.com/videos/play/wwdc2025/310/">WWDC25：AppKit 新设计</a>：玻璃侧栏，强调色着色</li>
+    <li><a href="https://blakecrosley.com/blog/design-study-things">Things 3 设计分析</a>：颜色只表达意思</li>
+    <li><a href="https://blakecrosley.com/guides/design/notion-calendar">Notion Calendar 设计分析</a>：极淡的网格，大标题</li>
+    <li><a href="https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale">Radix Colors 色阶</a>：12 级，各有用途</li>
+    <li><a href="https://examples.vercel.com/geist/colors">Vercel Geist 颜色</a>：灰加一套蓝，P3</li>
+    <li><a href="https://open-design.ai/systems/claude/">Claude 风格（第三方提取）</a>：暖底、陶土色、衬线</li>
+    <li><a href="https://open-design.ai/systems/raycast/">Raycast 风格（第三方提取）</a>：近黑，靠灰阶分层</li>
+    <li><a href="https://browsercompany.substack.com/p/the-strategy-behind-dias-design">Dia 的设计策略</a>：熟悉和克制</li>
+  </ul>
+</main>
+
+<script>
+const DIRS = [
+  { id: "paper", name: "纸 · 暖白", pick: true, mood: "像好纸上的墨水。暖白的底，靛蓝的 Alfred，安静、有人味。参考 Things、Claude 的暖底、Linear 2026 的暖灰。",
+    good: "最接近简约大气、有呼吸感。冷色的 Alfred 放在暖底上最好认，而且不像任何一个现成的产品。", risk: "深色模式下暖灰容易发脏，所以深色的冷暖压得很低。" },
+  { id: "graphite", name: "石 · 石墨", mood: "精确、专业，像工具。近中性的冷灰，紫色的 Alfred，对比更高。参考 Linear、Vercel、Raycast。",
+    good: "信息多的时候最清楚，深色最好看。", risk: "冷，connection 最弱，而且和 Linear 很像。" },
+  { id: "mist", name: "雾 · 玻璃", mood: "Mac 原生。侧栏是浮着的毛玻璃，Alfred 用系统蓝。参考 macOS Tahoe 的 Liquid Glass，以及 Apple 备忘录和日历。",
+    good: "在 Mac 上最像系统的一部分。Alfred 色以后可以跟随系统的强调色。", risk: "这里的玻璃是 CSS 模拟，真正的要靠 Electron vibrancy；手机和网页上没有这个效果。" },
+  { id: "night", name: "夜 · 夜空", mood: "Robin 的延续，以深色为主。深蓝的夜，月光色的 Alfred，金色的「等你」。就是 packages/ui 现在用的配色。",
+    good: "已经有感情基础，夜里用最舒服。", risk: "浅色版本个性弱，白天用不如「纸」。" },
+];
+const KEYS = ["bg", "paper", "raise", "wash", "line", "muted", "copy", "ink", "alf"];
+const cv = document.createElement("canvas"); cv.width = cv.height = 1;
+const g = cv.getContext("2d", { willReadFrequently: true });
+const hex = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = "#000"; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return "#" + [d[0], d[1], d[2]].map((x) => x.toString(16).padStart(2, "0")).join(""); };
+
+const shot = (d, scheme) => `<a class="shot" href="workspace.html?theme=${d.id}&scheme=${scheme}" target="_blank" rel="noopener">
+  <iframe loading="lazy" tabindex="-1" title="${d.name} ${scheme}" src="workspace.html?theme=${d.id}&scheme=${scheme}&bare&page=${scheme === "light" ? "cal" : "inbox"}"></iframe><span>${scheme === "light" ? "浅色" : "深色"}</span></a>`;
+const strip = (d, scheme) => `<div class="sw" data-theme="${d.id}" data-scheme="${scheme}">${KEYS.map((k) => `<div data-k="${k}" style="background:var(--${k})"><span>${k}</span><span class="hx"></span></div>`).join("")}</div>`;
+
+/* Colour system: areas, status, ladder, text. Each cell carries its own scheme so light and dark sit side by side. */
+const AREAS = [["工作", "blue", 250, "周会", "10:30 – 11:30"], ["生活", "green", 142, "爬山", "9:00 – 12:00"], ["学习", "violet", 300, "日语课", "19:00 – 20:00"],
+  ["出行", "orange", 45, "去机场接爸妈", "15:00 – 16:30"], ["健康", "teal", 188, "看牙医", "10:00 – 11:00"], ["财务", "yellow", 88, "还信用卡", "12:00 – 12:30"], ["家人朋友", "pink", 355, "和 Mia 吃午饭", "12:00 – 13:00"]];
+const cell = (scheme, k, inner) => `<div class="pcell" data-theme="paper" data-scheme="${scheme}" data-k="${k}"><span class="sw-solid"></span>${inner}<span class="hexes"></span></div>`;
+document.getElementById("areas").innerHTML = AREAS.map(([name, k, h, ev, t]) => `<div class="prow"><b>${name}<small>${k} · ${h}</small></b>
+  ${["light", "dark"].map((s) => cell(s, k, `<span class="tag">${name}</span><span class="ev-s">${ev}<small>${t}</small></span>`)).join("")}</div>`).join("");
+const STATUS = [["等你决定", "warm", "琥珀 70", `<span class="pill">3</span><span class="tag"><span class="mark"></span>等你决定</span><span style="color:var(--k-text);font-size:12px">逾期 · 11月16日</span>`],
+  ["现在 / 危险", "now", "红 25", `<span class="today">18</span><span style="flex:1;height:2px;background:var(--k-solid);border-radius:1px"></span><span class="tag">删除</span>`],
+  ["Alfred", "alfred", "随主题", `<span class="tag"><span class="mark"></span>Alfred 在做</span><span style="color:var(--k-text);font-size:13px;text-decoration:underline">3 件事等你点头</span>`]];
+document.getElementById("status").innerHTML = STATUS.map(([name, k, sub, inner]) => `<div class="prow"><b>${name}<small>${sub}</small></b>${["light", "dark"].map((s) => cell(s, k, inner)).join("")}</div>`).join("");
+
+document.getElementById("ladder").innerHTML = `<div class="ladder">
+  <div class="step"><b>0 静</b><div class="demo"><span style="color:var(--muted);text-decoration:line-through">买猫粮</span><span class="ev-s" data-k="blue" style="opacity:.45;flex:none">站会<small>9:30</small></span></div>灰字，没有颜色。过去的日程、已完成、时间。</div>
+  <div class="step"><b>1 标识</b><div class="demo"><span class="mark" data-k="blue"></span>工作 <span class="mark" data-k="green"></span>生活 <span class="mark" data-k="violet"></span>学习</div>色点、彩色图标、彩色圆圈。侧栏、列表、筛选、图例。</div>
+  <div class="step"><b>2 着色</b><div class="demo"><span class="tag" data-k="pink">家人朋友</span><span class="tag" data-k="warm">等你决定</span><span class="tag" data-k="alfred">Alfred 在做</span></div>浅底加同色文字。日程块、标签、头像、回执。</div>
+  <div class="step"><b>3 实色</b><div class="demo"><span class="pill" data-k="warm">3</span><span class="today" data-k="now">18</span><span class="solid-btn">发送草稿</span></div>实色底加白字。每个区域最多一个。</div>
+</div>`;
+document.getElementById("text").innerHTML = `<div class="textdemo">${[["light", "14.4:1 · 7.4:1 · 4.6:1"], ["dark", "14.7:1 · 约 11:1 · 约 7:1"]].map(([s, c]) => `<div data-theme="paper" data-scheme="${s}">
+  <span class="t1">今天的事不多</span><span class="t2">3 件事等你点头，最急的是 Stripe 续约。下午 2–4 点我先替你占住了写方案。</span><span class="t3">早报 · 07:30 · 来自 Alfred</span><code>ink · copy · muted = ${c}</code></div>`).join("")}</div>`;
+
+/* Hex labels for the palette cells. */
+document.querySelectorAll(".pcell").forEach((el) => {
+  const vals = ["solid", "fill", "text"].map((r) => { const p = document.createElement("i"); p.style.color = `var(--k-${r})`; el.appendChild(p); const v = hex(getComputedStyle(p).color); p.remove(); return v; });
+  el.querySelector(".hexes").textContent = vals.join(" ");
+});
+
+document.getElementById("dirs").innerHTML = DIRS.map((d) => `<section class="dir">
+  <div class="dir-head"><h3>${d.name}</h3>${d.pick ? '<span class="pick">推荐默认</span>' : ""}<p class="mood">${d.mood}</p></div>
+  <div class="shots">${shot(d, "light")}${shot(d, "dark")}</div>
+  <div class="swatches">${strip(d, "light")}${strip(d, "dark")}</div>
+  <div class="notes"><p><b>好处</b>${d.good}</p><p><b>风险</b>${d.risk}</p></div>
+</section>`).join("");
+
+/* Label each swatch with its hex, in a text colour that reads on it. */
+document.querySelectorAll(".sw div").forEach((el) => {
+  const bg = getComputedStyle(el).backgroundColor;
+  const h = hex(bg);
+  const [r, gg, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const light = (0.299 * r + 0.587 * gg + 0.114 * b) > 140;
+  el.style.color = light ? "#000a" : "#fffc";
+  el.querySelector(".hx").textContent = h;
+});
+
+/* Scale the 1440×900 live previews to fit their frames. */
+const fit = () => document.querySelectorAll(".shot").forEach((s) => { s.querySelector("iframe").style.transform = `scale(${s.clientWidth / 1440})`; });
+addEventListener("resize", fit);
+fit();
+
+/* The report itself follows the system's light or dark. */
+const mq = matchMedia("(prefers-color-scheme: dark)");
+const scheme = () => { document.documentElement.dataset.scheme = mq.matches ? "dark" : "light"; };
+mq.addEventListener("change", scheme);
+scheme();
+</script>
+</body>
+</html>

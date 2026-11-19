@@ -1,0 +1,1338 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Delete or absorb once the question is answered.
+
+  Question: starting over, and borrowing from entity designs people already love —
+  which body should Alfred have? Each is drawn properly (WebGL, fresh every frame,
+  no pixel grid), each after a reference that was well received.
+
+  The sky family (Bruce preferred Sky, but Clouds is too close to ChatGPT's orb):
+    Horizon after Rothko's colour fields and Sugimoto's Seascapes: the hour's sky over
+            still water, split by one line of light. He listens and speaks along the
+            line; work is a light running along it; a result is a sun set on it.
+    Aurora  after the northern lights: dark glass with the hour's lights moving inside.
+    Clouds  after ChatGPT Voice's orb and the ElevenLabs Orb: clouds in a sphere. Kept
+            only to compare against. Working = light running round his rim.
+
+  The others:
+    Murmur  after starling murmurations, and Bruce's own Swarm: thousands of soft motes
+            that move as one body. Working = a stream of him goes to the job and back.
+    Bloom   after Apple Watch's Breathe: six translucent petals that breathe, open
+            toward you, and reach for the work.
+
+  The same script and the same signals drive every form, so only the body differs:
+    rest · listening · thinking · speaking · working · notice · asleep
+  plus regard (he turns to your pointer, and to the job he is doing), touch (he
+  answers your pointer coming near) and one breath (4.8 s).
+
+  Every size is the same body: stage, widget, talk bar, menu bar, the tab mark.
+
+  Keys: ← → form · 1–6 state · N notice · P play scene · G all states · hold Space to talk
+  URL:  ?form=horizon|aurora|clouds|murmur|bloom  ?hour=dawn|day|dusk|night  ?grid=1  ?state=listen
+  Everything around him is sample data — nothing here talks to a real service.
+  Run: serve the folder (python3 -m http.server 4173 --directory prototype), open /forms.html
+-->
+<html lang="en" data-hour="dusk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred — forms</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #08060e; --panel: #100b19; --panel-up: #181024;
+    --ink: #f3ecf8; --body: #cbc0d8; --mute: #9d90b3; --faint: #7a6f92;
+    --rule: rgba(205, 180, 232, 0.15); --rule-soft: rgba(205, 180, 232, 0.07);
+    --accent: 255 61 127; --amber: #e8b877;
+    --heat-1: #4c25a6; --heat-2: #9c48ff; --heat-3: #ff4f93; --heat-4: #ffd56e;
+    --R: 160px;
+  }
+  :root[data-hour='night'] {
+    --bg: #04060e; --panel: #090e1b; --panel-up: #10182a;
+    --ink: #e8edff; --body: #c0c9e1; --mute: #919fbe; --faint: #7283a3;
+    --rule: rgba(168, 189, 231, 0.15); --rule-soft: rgba(168, 189, 231, 0.07);
+    --accent: 122 142 255; --amber: #e3c08a;
+    --heat-1: #2c43a6; --heat-2: #4f7dff; --heat-3: #97b6ff; --heat-4: #fff4c0;
+  }
+  :root[data-hour='dawn'] {
+    --bg: #0b080d; --panel: #140e17; --panel-up: #1d1420;
+    --ink: #f6e9df; --body: #d3c1c5; --mute: #aa929c; --faint: #927b87;
+    --rule: rgba(221, 186, 183, 0.15); --rule-soft: rgba(221, 186, 183, 0.07);
+    --accent: 247 157 116; --amber: #f0cf86;
+    --heat-1: #6c2a60; --heat-2: #e4527f; --heat-3: #ffa77b; --heat-4: #ffecb2;
+  }
+  :root[data-hour='day'] {
+    --bg: #0a1016; --panel: #111922; --panel-up: #18222d;
+    --ink: #eef4f8; --body: #c5d0da; --mute: #97a6b4; --faint: #7a8a9b;
+    --rule: rgba(176, 200, 220, 0.15); --rule-soft: rgba(176, 200, 220, 0.07);
+    --accent: 84 170 214; --amber: #f0b45c;
+    --heat-1: #17647e; --heat-2: #3aa8e8; --heat-3: #62d696; --heat-4: #ffe074;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 400 14px/1.5 var(--sans);
+    overflow: hidden; transition: background 1.1s;
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  kbd {
+    font: 500 10.5px/1 var(--mono); color: var(--mute);
+    padding: 3px 5px 2px; border: 1px solid var(--rule); border-radius: 5px;
+  }
+
+  .bg {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(52% 50% at 50% 44%, color-mix(in srgb, var(--panel-up) 70%, transparent), transparent 72%);
+    transition: background 1.1s;
+  }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 30; }
+
+  /* ── top ── */
+  .top {
+    position: fixed; top: 0; left: 0; right: 0; height: 64px; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 22px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 500; letter-spacing: -0.01em; }
+  .brand .slot { width: 14px; height: 14px; }
+  .brand .dim { color: var(--faint); font-weight: 400; }
+  .seg {
+    display: inline-flex; gap: 2px; padding: 3px;
+    border: 1px solid var(--rule); border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .seg button {
+    padding: 6px 14px; border-radius: 999px; color: var(--mute); font-size: 13px;
+    transition: color .2s, background .2s, box-shadow .2s;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .seg button:hover { color: var(--body); }
+  .seg button.on { color: var(--ink); background: rgba(255,255,255,0.075); box-shadow: inset 0 0 0 1px var(--rule-soft); }
+  .seg.small button { padding: 5px 11px; font-size: 12px; }
+  .forms { position: absolute; left: 50%; transform: translateX(-50%); }
+  .forms button { padding: 7px 16px; font-size: 13.5px; }
+  .forms .sep { width: 1px; margin: 6px 4px; background: var(--rule); }
+
+  .about {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%); z-index: 10;
+    width: min(640px, 92vw); text-align: center; color: var(--body); font-size: 13.5px;
+    transition: opacity .3s;
+  }
+  .about .ref {
+    display: block; margin-top: 4px;
+    font: 400 10.5px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  }
+
+  /* ── stage ── */
+  .stage {
+    position: absolute; left: 50%; top: 46%;
+    width: calc(var(--R) * 2); height: calc(var(--R) * 2);
+    transform: translate(-50%, -50%); border-radius: 50%;
+    cursor: pointer; touch-action: none; z-index: 5;
+  }
+  .caption {
+    position: absolute; left: 50%; top: calc(46% + var(--R) + 58px); transform: translateX(-50%);
+    width: min(580px, 88vw); text-align: center; z-index: 5;
+    font-size: 19px; line-height: 1.45; letter-spacing: -0.01em; color: var(--ink);
+    transition: opacity .6s;
+  }
+  .caption .who {
+    display: block; margin-bottom: 10px;
+    font: 500 10px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--faint);
+  }
+  .caption .w { opacity: 0; filter: blur(4px); transition: opacity .4s, filter .4s; }
+  .caption .w.on { opacity: 1; filter: none; }
+  .caption.you { color: var(--body); }
+  .caption.dim { opacity: .38; }
+  .caption.out { opacity: 0; }
+  .caption.away { font: 400 11px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--faint); }
+
+  .task {
+    position: absolute; left: calc(50% + var(--R) + 92px); top: 46%; z-index: 5;
+    display: flex; align-items: center; gap: 12px; min-width: 230px;
+    padding: 12px 16px 12px 14px; border: 1px solid var(--rule); border-radius: 14px;
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    opacity: 0; transform: translate(10px, -50%); transition: opacity .5s, transform .5s, border-color .5s;
+    pointer-events: none;
+  }
+  .task.on { opacity: 1; transform: translate(0, -50%); pointer-events: auto; }
+  .task .dot { width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--accent)); flex: none; transition: background .5s, box-shadow .5s; }
+  .task .t { font-size: 13px; color: var(--ink); }
+  .task .s { font: 400 10.5px/1.4 var(--mono); letter-spacing: .06em; color: var(--faint); margin-top: 3px; }
+  .task .bar { height: 2px; margin-top: 8px; background: var(--rule-soft); border-radius: 2px; overflow: hidden; }
+  .task .bar i { display: block; height: 100%; width: 0; background: rgb(var(--accent)); border-radius: 2px; }
+  .task.done { cursor: pointer; border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+  .task.done .dot { background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+  .task.done .bar { display: none; }
+
+  /* ── all states ── */
+  .grid {
+    position: absolute; left: 50%; top: 47%; transform: translate(-50%, -50%); z-index: 5;
+    display: none; grid-template-columns: repeat(7, 128px); gap: 22px 18px; justify-items: center;
+  }
+  body.gridview .grid { display: grid; }
+  body.gridview .stage, body.gridview .caption, body.gridview .task, body.gridview .sizes { display: none; }
+  .cell { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .cell .slot { width: 96px; height: 96px; margin: 26px 0 30px; }
+  .cell b { font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--body); }
+  .cell small { display: block; margin-top: 7px; font-size: 12px; line-height: 1.35; color: var(--faint); max-width: 120px; }
+  @media (max-width: 1080px) { .grid { grid-template-columns: repeat(4, 128px); } }
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: repeat(3, 108px); gap: 10px 8px; }
+    .cell .slot { width: 72px; height: 72px; margin: 16px 0 22px; }
+    .cell small { font-size: 11px; }
+  }
+
+  /* ── bottom ── */
+  .bar {
+    position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 10;
+    display: flex; align-items: center; gap: 10px; white-space: nowrap;
+  }
+  .states button i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .35; transition: opacity .2s, background .2s; }
+  .states button.on i { opacity: 1; background: rgb(var(--accent)); box-shadow: 0 0 8px rgb(var(--accent)); }
+  .btn {
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; color: var(--body);
+    border: 1px solid var(--rule); background: color-mix(in srgb, var(--panel) 55%, transparent);
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  .btn:hover { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 30%, transparent); }
+  .btn.on { color: var(--ink); background: rgba(255,255,255,0.075); }
+  .btn.notice.on { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+  .hint {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 10;
+    font-size: 11.5px; color: var(--faint); display: flex; gap: 6px; align-items: center; white-space: nowrap;
+  }
+
+  /* ── sizes ── */
+  .sizes {
+    position: fixed; left: 22px; top: 50%; transform: translateY(-50%); z-index: 10; width: 228px;
+    padding: 14px; border: 1px solid var(--rule); border-radius: 18px;
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .sizes .cap { font: 500 9.5px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--faint); margin-bottom: 2px; }
+  .sizes .row { display: flex; align-items: center; border-radius: 10px; }
+  .menubar {
+    height: 26px; padding: 0 10px; justify-content: space-between; gap: 10px;
+    background: rgba(255,255,255,0.045); font-size: 11.5px; color: var(--body); white-space: nowrap;
+  }
+  .menubar .l { display: flex; gap: 12px; color: var(--mute); }
+  .menubar .l b { color: var(--body); font-weight: 600; }
+  .menubar .r { display: flex; align-items: center; gap: 10px; }
+  .menubar .slot { width: 15px; height: 15px; }
+  .talk {
+    height: 42px; padding: 0 8px 0 9px; gap: 10px;
+    border: 1px solid var(--rule); border-radius: 999px; font-size: 13px; color: var(--faint);
+  }
+  .talk .slot { width: 26px; height: 26px; }
+  .talk .ph { flex: 1; }
+  .widget { gap: 14px; padding: 6px 4px 2px; }
+  .widget .slot { width: 60px; height: 60px; margin: 6px; }
+  .widget b { display: block; font-weight: 500; font-size: 14px; }
+  .widget span { font-size: 12px; color: var(--mute); }
+  .slot { display: inline-block; flex: none; border-radius: 50%; }
+
+  @media (max-width: 1000px) { .sizes { display: none; } }
+  @media (max-width: 860px) {
+    .brand, .top .hours, .hint { display: none; }
+    .forms button { padding: 6px 11px; font-size: 12.5px; }
+    .about { top: 62px; font-size: 12.5px; }
+    .task { left: 50%; top: calc(46% + var(--R) + 120px); transform: translate(-50%, -50%); min-width: 0; }
+    .task.on { transform: translate(-50%, -50%); }
+    .bar { width: 100%; padding: 0 12px; bottom: 18px; flex-wrap: wrap; justify-content: center; white-space: normal; }
+    .states { flex-wrap: wrap; justify-content: center; border-radius: 18px; }
+    .states button, .btn { padding: 6px 11px; font-size: 12.5px; }
+    .caption { font-size: 16px; top: calc(44% + var(--R) + 40px); }
+    .stage { top: 44%; }
+  }
+
+  #nogl[hidden] { display: none; }
+  #nogl { position: fixed; inset: 0; display: grid; place-items: center; color: var(--mute); z-index: 50; }
+</style>
+</head>
+<body>
+<div class="bg"></div>
+
+<header class="top">
+  <div class="brand"><span class="slot" data-slot="brand"></span>Alfred <span class="dim">· forms</span></div>
+  <nav class="seg forms" id="forms">
+    <button data-form="horizon">Horizon</button>
+    <button data-form="aurora">Aurora</button>
+    <button data-form="clouds">Clouds</button>
+    <span class="sep"></span>
+    <button data-form="murmur">Murmur</button>
+    <button data-form="bloom">Bloom</button>
+  </nav>
+  <nav class="seg small hours" id="hours">
+    <button data-hour="dawn">dawn</button>
+    <button data-hour="day">day</button>
+    <button data-hour="dusk">dusk</button>
+    <button data-hour="night">night</button>
+  </nav>
+</header>
+
+<div class="about"><span id="aboutText"></span><span class="ref" id="aboutRef"></span></div>
+
+<main>
+  <div class="stage" id="stage" data-slot="stage" title="Press and hold to talk"></div>
+  <div class="caption out" id="caption"></div>
+  <div class="task" id="task">
+    <span class="dot"></span>
+    <div style="flex:1">
+      <div class="t" id="taskT">Comparing local speech-to-text</div>
+      <div class="s" id="taskS">working · 3 sources</div>
+      <div class="bar"><i id="taskBar"></i></div>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer class="bar">
+  <nav class="seg states" id="states">
+    <button data-s="rest"><i></i>Rest</button>
+    <button data-s="listen"><i></i>Listening</button>
+    <button data-s="think"><i></i>Thinking</button>
+    <button data-s="speak"><i></i>Speaking</button>
+    <button data-s="work"><i></i>Working</button>
+    <button data-s="sleep"><i></i>Asleep</button>
+  </nav>
+  <button class="btn notice" id="noticeBtn">Notice</button>
+  <button class="btn" id="playBtn">Play scene</button>
+  <button class="btn" id="gridBtn">All states</button>
+  <button class="btn" id="micBtn">Mic off</button>
+</footer>
+<div class="hint">Hold <kbd>Space</kbd> or press on him to talk · <kbd>←</kbd><kbd>→</kbd> form · <kbd>G</kbd> all states</div>
+
+<aside class="sizes">
+  <div class="cap">Same body · every size</div>
+  <div class="row menubar">
+    <span class="l"><b>Alfred</b><span>File</span></span>
+    <span class="r"><span class="slot" data-slot="menubar"></span><span>Sat 9:41</span></span>
+  </div>
+  <div class="row talk"><span class="slot" data-slot="talk"></span><span class="ph">Ask Alfred…</span><kbd>space</kbd></div>
+  <div class="row widget"><span class="slot" data-slot="widget"></span><div><b>Alfred</b><span id="wstate">with you</span></div></div>
+</aside>
+
+<div id="nogl" hidden>This page needs WebGL 2.</div>
+<canvas id="gl"></canvas>
+
+<script>
+(() => {
+'use strict';
+
+/* ════════════════════════════ shaders ════════════════════════════ */
+
+const COMMON = `#version 300 es
+precision highp float;
+uniform vec2 u_cv;        // canvas size, device px
+uniform vec2 u_c;         // centre, device px, origin bottom-left
+uniform float u_r;        // radius, device px
+uniform float u_rcss;     // radius, css px (level of detail)
+uniform float u_dpr, u_t;
+uniform float u_listen, u_think, u_speak, u_work, u_notice, u_sleep;
+uniform float u_voice, u_breath, u_phase, u_band, u_spin, u_near, u_open, u_n, u_cov;
+uniform vec2 u_gaze, u_task, u_ptr;   // in units of radius, y up
+uniform vec3 u_h1, u_h2, u_h3, u_h4, u_amber, u_ink, u_you;
+mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+vec3 ramp(float x){
+  x = clamp(x, 0., 1.) * 3.;
+  vec3 c = mix(u_h1, u_h2, smoothstep(0., 1., x));
+  c = mix(c, u_h3, smoothstep(1., 2., x));
+  return mix(c, u_h4, smoothstep(2., 3., x));
+}
+`;
+const GRAIN = `
+float grain(){ return fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - .5; }
+`;
+
+// Simplex noise 3D — Ashima Arts / Stefan Gustavson (MIT)
+const NOISE = `
+vec3 mod289(vec3 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 mod289(vec4 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
+vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+float snoise(vec3 v){
+  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = mod289(i);
+  vec4 p = permute(permute(permute(
+            i.z + vec4(0.0, i1.z, i2.z, 1.0))
+          + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+          + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  float n_ = 0.142857142857;
+  vec3 ns = n_ * D.wyz - D.xzx;
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0) * 2.0 + 1.0;
+  vec4 s1 = floor(b1) * 2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m * m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+}
+float fbm(vec3 p, int oct){
+  float a = .5, s = 0.;
+  for (int i = 0; i < 4; i++) { if (i >= oct) break; s += a * snoise(p); p = p * 2.03 + vec3(1.7, 9.2, 3.1); a *= .5; }
+  return s;
+}
+`;
+
+const VS_QUAD = `#version 300 es
+void main(){ vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(p * 2. - 1., 0., 1.); }`;
+
+/* Clouds — a sphere of moving sky. After ChatGPT Voice's orb / the ElevenLabs Orb. Too close to it; kept to compare. */
+const FS_SKY = COMMON + GRAIN + NOISE + `
+out vec4 o;
+void main(){
+  vec2 p = (gl_FragCoord.xy - u_c) / u_r;
+  float L = length(p);
+  if (L > 2.7) { o = vec4(0.); return; }
+  float lod = smoothstep(9., 60., u_rcss);
+  int oct = u_rcss > 24. ? 3 : 2;
+  vec2 ca = L > 1e-4 ? p / L : vec2(0., 1.);
+  float sl = u_sleep;
+
+  // a living edge: barely moves at rest, moves with a voice, leans to a near hand
+  float wob = snoise(vec3(ca * 1.1, u_t * .3)) * .010
+            + snoise(vec3(ca * 2.3 + 4.1, u_t * 1.7)) * .075 * u_voice * (u_speak * .85 + u_listen);
+  vec2 pd = length(u_ptr) > 1e-3 ? normalize(u_ptr) : vec2(0.);
+  wob += .04 * u_near * pow(max(dot(ca, pd), 0.), 4.);
+  float R = 1. + wob * lod;
+  float d = L / R;
+  float aa = 1.4 / u_r;
+  float inside = smoothstep(1. + aa * .5, 1. - aa, d);
+
+  // halo
+  float hd = max(d - 1., 0.);
+  float hk = mix(2.2, 4.0, lod);
+  float gw = (.55 + .5 * u_voice * u_speak + .15 * u_listen) * (1. - .8 * sl);
+  float low = clamp(-ca.y * .5 + .5, 0., 1.);
+  vec3 hc = mix(u_h2, u_h3, .3 + .5 * low);
+  hc = mix(hc, u_amber, u_notice * .75 * low);
+  float halo = (exp(-hd * hk) * .24 + exp(-hd * hk * 4.) * .20) * gw;
+
+  vec3 col = vec3(0.);
+  if (d < 1. + aa * 2.) {
+    float dd = min(d, .9999);
+    float z = sqrt(1. - dd * dd);
+    vec3 n = vec3(p / R, z);
+    vec3 q = n;
+    q.xz = rot(u_phase) * q.xz;
+    q.yz = rot(.35) * q.yz;
+    vec3 w = q * .8;
+    w.y *= 1. + 1.7 * u_think;                 // thinking: the weather lines up into bands
+    float f1 = fbm(w + vec3(0., 0., u_spin), 2);
+    float f2 = fbm(w * 1.25 + vec3(f1 * .9, f1 * .7, -u_spin * 1.1), oct);
+
+    vec3 Ld = normalize(vec3(u_gaze * 1.2, 1.));   // regard: lit from the side he attends to
+    float lam = dot(n, Ld) * .5 + .5;
+
+    float h = n.y * .5 + .5;                       // dusk: deep above, warm low down, bent by the weather
+    float x = mix(.68, .14, h) + f2 * .30 + (lam - .5) * .24;
+    x += u_voice * u_speak * .20 + u_listen * .03 - sl * .42;
+    col = mix(ramp(x), u_ink, .07);
+    float cl = smoothstep(.05, .7, f2 + .3 * f1);   // soft clouds catch the light
+    col = mix(col, mix(col, u_ink, .62), cl * .42 * (1. - .6 * sl));
+
+    float facing = pow(clamp(dot(n, normalize(vec3(u_gaze, .55))), 0., 1.), 3.);
+    col = mix(col, u_you, u_listen * (.10 + .40 * u_voice) * facing);   // your light, on the side facing you
+
+    col *= (.78 + .38 * lam) * mix(1., .30, sl);
+    float fr = pow(1. - z, 2.6);
+    float a2 = atan(p.y, p.x) - u_t * 1.7;          // working: light runs round the rim
+    float run = pow(.5 + .5 * cos(a2), 5.) + .6 * pow(.5 + .5 * cos(a2 * 2. + 2.), 9.);
+    vec3 rim = mix(u_h3, u_h4, .45);
+    col += rim * fr * (.38 + 1.8 * run * u_work) * (1. - .55 * sl);
+    col *= 1. - .30 * (1. - fr) * pow(1. - z, 2.);
+
+    float nb = smoothstep(.15, -1., n.y);            // notice: an amber dawn rising inside
+    col += u_amber * u_notice * nb * (.55 + .2 * sin(u_t * 2.1));
+
+    float sv = max(dot(n, normalize(vec3(-.38, .5, .78))), 0.);
+    col += (pow(sv, 30.) * .14 + pow(sv, 5.) * .07) * (1. - sl) * lod;
+  }
+  vec3 outc = col * inside + hc * halo * (1. - inside);
+  float a = inside + halo * (1. - inside);
+  outc += grain() / 255. * a;
+  o = vec4(outc, clamp(a, 0., 1.));
+}`;
+
+/* Shared by the two Sky variants below: the living edge, the halo, glass. */
+const SKY_EDGE = `
+float hash3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float edgeR(vec2 ca, float lod){
+  float wob = snoise(vec3(ca * 1.1, u_t * .3)) * .008
+            + snoise(vec3(ca * 2.3 + 4.1, u_t * 1.7)) * .05 * u_voice * (u_speak * .8 + u_listen);
+  vec2 pd = length(u_ptr) > 1e-3 ? normalize(u_ptr) : vec2(0.);
+  wob += .035 * u_near * pow(max(dot(ca, pd), 0.), 4.);
+  return 1. + wob * lod;
+}
+vec3 glass(vec3 col, vec3 n, float z, vec3 rimc, float rimAmt, float lod){
+  float fr = pow(1. - z, 2.6);
+  col += rimc * fr * rimAmt * (1. - .55 * u_sleep);
+  col *= 1. - .28 * (1. - fr) * pow(1. - z, 2.);
+  float sv = max(dot(n, normalize(vec3(-.38, .5, .78))), 0.);
+  col += (pow(sv, 34.) * .16 + pow(sv, 5.) * .05) * (1. - u_sleep) * lod;
+  return col;
+}
+`;
+
+/* Horizon — the hour's sky over still water, split by one line of light.
+   After Rothko's colour fields and Sugimoto's Seascapes. He listens and speaks
+   along the line; work is a light running along it; a result is a sun on it. */
+const FS_HORIZON = COMMON + GRAIN + NOISE + SKY_EDGE + `
+out vec4 o;
+void main(){
+  vec2 p = (gl_FragCoord.xy - u_c) / u_r;
+  float L = length(p);
+  if (L > 2.7) { o = vec4(0.); return; }
+  float lod = smoothstep(9., 60., u_rcss);
+  vec2 ca = L > 1e-4 ? p / L : vec2(0., 1.);
+  float sl = u_sleep;
+  float R = edgeR(ca, lod);
+  float d = L / R;
+  float aa = 1.4 / u_r;
+  float inside = smoothstep(1. + aa * .5, 1. - aa, d);
+
+  float hY = -.10 + .025 * u_breath + .09 * u_listen + .05 * u_speak * u_voice - .12 * sl;
+
+  float hd = max(d - 1., 0.);
+  float hk = mix(2.2, 4.0, lod);
+  float gw = (.50 + .5 * u_voice * u_speak + .2 * u_listen) * (1. - .8 * sl);
+  float band = exp(-abs(p.y - hY) * 2.2);                  // the halo is brightest level with the horizon
+  vec3 hc = mix(ramp(.5), ramp(.92), band);
+  hc = mix(hc, u_amber, u_notice * .55 * band);
+  float halo = (exp(-hd * hk) * .20 + exp(-hd * hk * 4.) * .16) * gw * (.7 + .5 * band);
+
+  vec3 col = vec3(0.);
+  if (d < 1. + aa * 2.) {
+    float dd = min(d, .9999), z = sqrt(1. - dd * dd);
+    vec3 n = vec3(p / R, z);
+    vec3 q = n;
+    q.xy = rot(-u_gaze.x * .10) * q.xy;                     // leans toward what he attends to, like a level
+    float yy = q.y - hY;
+    yy += snoise(vec3(q.x * 2.4, u_t * 2.2, 3.)) * .03 * u_voice * (u_listen + u_speak);  // trembles with a voice
+    float horiz = smoothstep(-aa * 1.5, aa * 1.5, yy);       // 0 water .. 1 sky
+
+    // sky: soft strata, a few wisps low down
+    float up = clamp(yy / (1. - hY), 0., 1.);
+    float strata = snoise(vec3(q.x * .9 + u_spin * .8, up * 4.5, 1.7));
+    float wisp = smoothstep(.25, .85, snoise(vec3(q.x * 1.8 + u_spin * 1.4, up * 11., 5.3)));
+    float xs = mix(.95, .06, pow(up, .6)) + strata * .06 * (1. - up * .4) + u_voice * u_speak * .10 - sl * .5;
+    vec3 sky = ramp(xs);
+    sky = mix(sky, mix(sky, u_ink, .55), wisp * .22 * (1. - up) * (1. - sl));
+    vec3 sc = floor(q * 38.);                                // stars, high up; more when he is asleep
+    float hs = hash3(sc);
+    float star = step(.975, hs) * smoothstep(.22, 0., length(fract(q * 38.) - .5)) * (.6 + .4 * sin(u_t * 2. + hs * 40.));
+    sky += u_ink * star * smoothstep(.25, .8, up) * (.08 + .7 * sl) * lod;
+
+    // water: the sky mirrored, darker, in lines that crowd toward the horizon
+    float dn = clamp(-yy / (1. + hY), 0., 1.);
+    float rip = snoise(vec3(q.x * (1.2 + 5. * (1. - dn)), .9 / (dn + .05) - u_t * .45, 9.1));
+    vec3 water = ramp(mix(.9, .04, pow(dn, .45)) + rip * .07 - sl * .4) * mix(.62, .22, dn);
+    water += mix(u_ink, ramp(1.), .5) * smoothstep(.55, 1., rip) * .16 * (1. - dn) * (1. - sl) * lod;
+    col = mix(water, sky, horiz);
+
+    // the line of light, and its glow
+    float lk = mix(16., 60., lod);
+    float gAmt = (.55 + .45 * u_listen + .7 * u_speak * u_voice) * (1. - .75 * sl) * (1. - .35 * u_think);
+    vec3 lc = mix(ramp(1.), u_ink, .45);
+    col += lc * (exp(-abs(yy) * lk) * .8 + exp(-abs(yy) * 6.) * .16) * gAmt;
+    col += lc * pow(.5 + .5 * cos(q.x * 3.2 - u_t * 2.2), 14.) * exp(-abs(yy) * lk * .5) * 1.2 * u_work;  // working
+
+    // notice: a sun half-set on the horizon, and its path on the water
+    float sd = length(vec2(q.x - .42, yy));
+    float sun = smoothstep(.13 + aa, .13 - aa, sd) * horiz;
+    col = mix(col, mix(u_amber, u_ink, .25), sun * u_notice);
+    col += u_amber * exp(-sd * 7.) * .35 * u_notice * (.85 + .15 * sin(u_t * 2.1));
+    col += u_amber * exp(-abs(q.x - .42) * 22.) * (1. - horiz) * smoothstep(.2, 1., rip) * (1. - dn) * .6 * u_notice;
+
+    vec3 Ld = normalize(vec3(u_gaze * 1.2, 1.));
+    float lam = dot(n, Ld) * .5 + .5;
+    float facing = pow(clamp(dot(n, normalize(vec3(u_gaze, .55))), 0., 1.), 3.);
+    col = mix(col, u_you, u_listen * (.06 + .25 * u_voice) * facing);
+    col *= (.82 + .30 * lam) * mix(1., .40, sl);
+    col = glass(col, n, z, mix(u_h3, u_h4, .45), .30, lod);
+  }
+  vec3 outc = col * inside + hc * halo * (1. - inside);
+  float a = inside + halo * (1. - inside);
+  outc += grain() / 255. * a;
+  o = vec4(outc, clamp(a, 0., 1.));
+}`;
+
+/* Aurora — dark glass with the hour's lights moving in it. After the northern lights. */
+const FS_AURORA = COMMON + GRAIN + NOISE + SKY_EDGE + `
+out vec4 o;
+void main(){
+  vec2 p = (gl_FragCoord.xy - u_c) / u_r;
+  float L = length(p);
+  if (L > 2.7) { o = vec4(0.); return; }
+  float lod = smoothstep(9., 60., u_rcss);
+  vec2 ca = L > 1e-4 ? p / L : vec2(0., 1.);
+  float sl = u_sleep;
+  float R = edgeR(ca, lod);
+  float d = L / R;
+  float aa = 1.4 / u_r;
+  float inside = smoothstep(1. + aa * .5, 1. - aa, d);
+
+  float hd = max(d - 1., 0.);
+  float hk = mix(2.2, 4.0, lod);
+  float gw = (.45 + .6 * u_voice * u_speak + .2 * u_listen) * (1. - .7 * sl);
+  float low = clamp(-ca.y * .5 + .5, 0., 1.);
+  vec3 hc = mix(ramp(.45), ramp(.8), low);
+  hc = mix(hc, u_amber, u_notice * .5 * low);
+  float halo = (exp(-hd * hk) * .20 + exp(-hd * hk * 4.) * .16) * gw;
+
+  vec3 col = vec3(0.);
+  if (d < 1. + aa * 2.) {
+    float dd = min(d, .9999), z = sqrt(1. - dd * dd);
+    vec3 n = vec3(p / R, z);
+    vec3 q = n;
+    q.xz = rot(u_phase) * q.xz;
+    col = mix(u_h1 * .32, u_h1 * .10, smoothstep(-1., .9, n.y));     // dark glass, warmer low down
+    vec3 sc = floor(q * 34.);
+    float hs = hash3(sc);
+    float star = step(.972, hs) * smoothstep(.25, 0., length(fract(q * 34.) - .5)) * (.55 + .45 * sin(u_t * 1.7 + hs * 50.));
+    col += u_ink * star * .55 * lod * smoothstep(-.2, .7, n.y);
+
+    vec3 au = vec3(0.);                                              // three curtains hanging from moving lines
+    for (int i = 0; i < 3; i++) {
+      float fi = float(i);
+      float yb = -.42 + fi * .16
+               + .20 * snoise(vec3(q.x * 1.1 + fi * 3.1, q.z * 1.1, u_spin * .7 + fi * 1.7))
+               + .12 * u_listen + .10 * u_speak * u_voice - .25 * sl;
+      float rays = .5 + .5 * snoise(vec3(q.x * 7. + fi * 5., q.z * 7., u_spin * 2.4 + n.y * 1.2 + fi));
+      rays = pow(rays, 2.2);
+      float hgt = n.y - yb;
+      float prof = smoothstep(-.025, .02, hgt) * exp(-max(hgt, 0.) * (3.4 - 1.2 * u_speak * u_voice - .6 * u_listen));
+      vec3 c = mix(ramp(.95), ramp(.42), clamp(hgt * 2.2, 0., 1.));
+      c = mix(c, u_amber, u_notice * (i == 0 ? .85 : 0.));        // notice: the lowest curtain turns amber
+      au += c * prof * (.25 + .95 * rays) * (.75 - fi * .16);
+    }
+    float lonp = atan(q.z, q.x);
+    au *= 1. + 1.1 * u_work * pow(.5 + .5 * cos(lonp * 2. - u_t * 2.4), 6.);   // working: a pulse runs along them
+    au *= (1. + u_voice * (u_listen * .8 + u_speak * 1.3)) * (1. - .7 * sl);
+    float facing = pow(clamp(dot(n, normalize(vec3(u_gaze, .55))), 0., 1.), 3.);
+    au += u_you * .25 * length(au) * u_listen * facing;
+    col += au;
+
+    vec3 Ld = normalize(vec3(u_gaze * 1.2, 1.));
+    col *= .80 + .35 * (dot(n, Ld) * .5 + .5);
+    col = glass(col, n, z, mix(ramp(.5), ramp(.85), low), .35, lod);
+  }
+  vec3 outc = col * inside + hc * halo * (1. - inside);
+  float a = inside + halo * (1. - inside);
+  outc += grain() / 255. * a;
+  o = vec4(outc, clamp(a, 0., 1.));
+}`;
+
+/* Bloom — six translucent petals. After Apple Watch's Breathe. */
+const FS_BLOOM = COMMON + GRAIN + `
+out vec4 o;
+void main(){
+  vec2 p = (gl_FragCoord.xy - u_c) / u_r;
+  float L = length(p);
+  if (L > 2.7) { o = vec4(0.); return; }
+  float aa = 1.3 / u_r;
+  float sl = u_sleep;
+  float glen = length(u_gaze);
+  vec2 gd = glen > 1e-3 ? u_gaze / glen : vec2(0., -1.);
+  vec2 td = length(u_task) > 1e-3 ? normalize(u_task) : vec2(1., 0.);
+  vec2 pd = length(u_ptr) > 1e-3 ? normalize(u_ptr) : vec2(0.);
+  vec3 acc = vec3(0.); float cov = 0.;
+  for (int i = 0; i < 6; i++) {
+    float fi = float(i);
+    float th = fi * 1.0471976 + u_phase;
+    vec2 dir = vec2(cos(th), sin(th));
+    float off = .5 * u_open;
+    off *= 1. + .34 * u_listen * pow(max(dot(dir, gd), 0.), 2.);
+    off += .50 * u_work * pow(max(dot(dir, td), 0.), 4.);
+    off += .10 * u_near * pow(max(dot(dir, pd), 0.), 3.);
+    off += u_voice * (u_speak * .11 + u_listen * .07) * (.55 + .45 * sin(u_t * 6.1 + fi * 2.17));
+    off += u_think * .05 * sin(u_t * 3.6 - fi * 1.0471976);
+    float rad = .5 * (1. + .03 * sin(u_t * .7 + fi * 2.3)) * (1. - .12 * sl);
+    vec2 v = p - dir * off;
+    float dd = length(v);
+    float m = smoothstep(rad + aa * .6, rad - aa * .6, dd);
+    float gr = clamp(dot(v, dir) / rad * .5 + .5, 0., 1.);
+    float hue = .5 + .5 * cos(th + 2.0);
+    float base = .30 + .16 * hue + .07 * mod(fi, 2.);
+    vec3 pc = mix(ramp(base), ramp(base + .26), smoothstep(0., 1., gr));
+    pc = mix(pc, u_you, u_listen * (.12 + .38 * u_voice) * pow(max(dot(dir, gd), 0.), 3.));
+    acc = 1. - (1. - acc) * (1. - pc * m * .60);   // screen, like Breathe's layered petals
+    cov = 1. - (1. - cov) * (1. - m * .72);
+  }
+  float bright = (1. + .22 * u_voice * u_speak) * mix(1., .32, sl);
+  vec3 col = acc * bright;
+  float a = cov;
+
+  float E = .5 * u_open + .5;
+  float hd = max(L - E * .92, 0.);
+  float halo = (exp(-hd * 3.6) * .20 + exp(-hd * 11.) * .10) * (1. - .75 * sl) * (1. + .3 * u_voice * u_speak);
+  vec3 hc = mix(u_h2, u_h3, .45);
+
+  vec2 bc = vec2(cos(-.8), sin(-.8)) * (E + .17);  // notice: an amber bud beside him
+  float br = .12 * (1. + .08 * sin(u_t * 2.1));
+  float bl = length(p - bc);
+  float bm = smoothstep(br + aa, br - aa, bl) * u_notice;
+  halo += exp(-max(bl - br, 0.) * 9.) * .25 * u_notice;
+  hc = mix(hc, u_amber, u_notice * smoothstep(.6, 0., bl));
+  col += u_amber * (.85 + .15 * sin(u_t * 2.1)) * bm * (1. - a);
+  a += bm * (1. - a);
+
+  vec3 outc = col + hc * halo * (1. - a);
+  float oa = a + halo * (1. - a);
+  outc += grain() / 255. * oa;
+  o = vec4(outc, clamp(oa, 0., 1.));
+}`;
+
+/* A soft body of light under Murmur's motes. */
+const FS_HALO = COMMON + `
+out vec4 o;
+void main(){
+  vec2 p = (gl_FragCoord.xy - u_c) / u_r;
+  float L = length(p);
+  if (L > 2.7) { o = vec4(0.); return; }
+  float g = exp(-max(L - .55, 0.) * 2.6) * .20 + exp(-L * L * 2.0) * .11;
+  g *= mix(.8, 1., smoothstep(24., 110., u_rcss));
+  g *= (1. - .7 * u_sleep) * (1. + .5 * u_voice * u_speak);
+  vec3 c = mix(u_h2, u_h3, .25 + .35 * clamp(-p.y, 0., 1.));
+  c = mix(c, u_amber, u_notice * .25);
+  o = vec4(c * g, g);
+}`;
+
+/* Murmur — thousands of motes, one body. After starling murmurations. */
+const VS_MURMUR = COMMON + `
+out vec3 v_col; out float v_a;
+float h1(float n){ return fract(sin(n * 91.3458) * 47453.5453); }
+void main(){
+  float i = float(gl_VertexID);
+  float s1 = h1(i * 1.37 + .11), s2 = h1(i * 2.13 + 5.7), s3 = h1(i * 3.71 + 9.1), s4 = h1(i * 4.97 + 13.3);
+  float s5 = h1(i * 6.11 + 17.9);
+  float t = u_t;
+  vec3 P; float fade = 1.;
+  bool inStream = s5 < .66;
+  if (inStream) {
+    float j = floor(s1 * 38.);
+    float a1 = h1(j * 3.1 + 1.), a2 = h1(j * 5.7 + 2.), a3 = h1(j * 7.3 + 3.), a4 = h1(j * 9.9 + 4.);
+    vec3 ax = normalize(vec3(a1, a2, a3) - .5 + vec3(0., .0001, 0.));
+    vec3 U = normalize(cross(ax, abs(ax.y) < .9 ? vec3(0., 1., 0.) : vec3(1., 0., 0.)));
+    vec3 V = cross(ax, U);
+    float hgt = (a4 - .5) * .8, rad = sqrt(1. - hgt * hgt);
+    float u = fract(s2 + u_spin * (1.2 + 1.6 * a1));
+    float ph = a3 * 6.283 + u * (.8 + 1.1 * a2);
+    P = ax * hgt + (U * cos(ph) + V * sin(ph)) * rad;
+    P += (vec3(s3, h1(i * .77), h1(i * 1.91)) - .5) * .04;
+    fade = sin(3.14159 * u);
+  } else {
+    float k = (i + .5) / u_n;
+    float y = 1. - 2. * k, rr = sqrt(max(0., 1. - y * y)), th = 2.39996323 * i;
+    P = vec3(rr * cos(th), y, rr * sin(th)) * (1. - .22 * pow(s1, 2.));
+  }
+
+  P.xz = rot(u_phase + u_band * sin(P.y * 4.2)) * P.xz;          // thinking: bands at different speeds
+  vec3 drift = vec3(sin(t * .53 + s1 * 6.283 + P.y * 2.7), sin(t * .47 + s2 * 6.283 + P.z * 2.9), sin(t * .61 + s3 * 6.283 + P.x * 2.3));
+  P += drift * (.028 + .02 * u_think) * (1. - .7 * u_sleep);
+  P *= 1. + .022 * u_breath;
+  P *= 1. + u_listen * u_voice * .05 * sin(P.y * 6. - t * 6.);    // your voice ripples him
+  P *= 1. + u_speak * u_voice * (.05 + .12 * s2);                 // his own puffs him out
+
+  vec3 G = normalize(vec3(u_gaze * 1.1, .85));                    // regard: gathers on the side he attends to
+  float face = dot(normalize(P), G);
+  P += G * .07 * max(face, 0.) * (1. - u_sleep);
+  P = mix(P, vec3(P.x * .78, -.5 + P.y * .3, P.z * .78), u_sleep);  // asleep: settles low
+
+  P.yz = rot(.28) * P.yz;
+  float z = P.z;
+  float persp = 1. / (1. - z * .16);
+  vec2 sp = P.xy * persp;
+
+  float ws = 0.;                                                  // working: a stream goes to the job and back
+  if (s4 < .08 && u_work > .001) {
+    float Lt = max(length(u_task), 1e-3);
+    vec2 dir = u_task / Lt, nrm = vec2(-dir.y, dir.x);
+    vec2 A = dir * .8, B = u_task - dir * .1;
+    float e = fract(s1 * 1.7 + t * .22);
+    vec2 M = (A + B) * .5 + nrm * Lt * .12;
+    vec2 q = mix(mix(A, M, e), mix(M, B, e), e);
+    q += nrm * (s2 - .5) * .06 * sin(3.14159 * e);
+    ws = clamp(u_work * 1.5 - s3 * .5, 0., 1.);
+    sp = mix(sp, q, ws);
+    fade = mix(fade, sin(3.14159 * e), ws);
+  }
+  float ns = 0.;                                                  // notice: an amber satellite he holds for you
+  if (s4 > .978 && u_notice > .001) {
+    float an = t * .32 + (s1 - .5) * .12;
+    vec3 S = vec3(cos(an) * 1.42, .02, sin(an) * 1.42) + (vec3(s1, s2, s3) - .5) * vec3(.08, .12, .08);
+    S.yz = rot(.28) * S.yz;
+    ns = u_notice;
+    sp = mix(sp, S.xy / (1. - S.z * .16), ns);
+    z = mix(z, S.z, ns);
+  }
+  vec2 dv = sp - u_ptr; float dl = length(dv);                    // touch: they part round your hand
+  if (u_near > .001 && dl < .4) sp += dv / max(dl, 1e-3) * (.4 - dl) * .75 * u_near;
+
+  float depth = clamp(z * .5 + .5, 0., 1.);
+  float low = clamp(.5 - sp.y * .5, 0., 1.);
+  float x = .16 + depth * .40 + low * .26 + max(face, 0.) * .26 + u_speak * u_voice * .2 + (s3 - .5) * .16 - u_sleep * .25;
+  vec3 col = ramp(x);
+  col = mix(col, u_you, u_listen * (.12 + .45 * u_voice) * pow(max(face, 0.), 3.));
+  col = mix(col, ramp(.8), ws * .4);
+  col = mix(col, u_amber, ns);
+  float a = (.30 + .70 * depth) * mix(1., .35, u_sleep) * (inStream || ws > 0. ? fade * 1.15 : .55);
+  a *= 1. - u_sleep * .6 * step(s2, .5);
+  a = mix(a, .55 * fade, ws);
+  a = mix(a, .30, ns);
+  a *= u_cov * mix(1.9, 1., smoothstep(24., 110., u_rcss));   // small: fewer pixels, so each mote glows more
+  float size = u_r * .025 * mix(1.5, 1., smoothstep(24., 110., u_rcss)) * persp * (inStream ? .7 + .6 * fade : .45 + .5 * s2) * mix(1., .8, u_sleep) * (1. + ws * .3 + ns * .6);
+  gl_PointSize = clamp(size, 1.2, 22. * u_dpr);
+  vec2 scr = u_c + sp * u_r;
+  gl_Position = vec4(scr / u_cv * 2. - 1., 0., 1.);
+  v_col = col; v_a = a;
+}`;
+
+const FS_POINT = `#version 300 es
+precision mediump float;
+in vec3 v_col; in float v_a; out vec4 o;
+void main(){
+  vec2 d = gl_PointCoord - .5; float r2 = dot(d, d) * 4.;
+  if (r2 > 1.) discard;
+  float g = exp(-r2 * 3.2) * (1. - r2) * v_a;
+  o = vec4(v_col * g, g);
+}`;
+
+/* ════════════════════════════ setup ════════════════════════════ */
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const mix = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const params = new URLSearchParams(location.search);
+
+const cv = $('#gl');
+const gl = cv.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: false });
+if (!gl) { $('#nogl').hidden = false; return; }
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s) + '\n' + src.split('\n').map((l, i) => (i + 1) + ': ' + l).join('\n'));
+    throw new Error('shader compile failed');
+  }
+  return s;
+}
+function program(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const cache = {};
+  return { p, u: n => (n in cache ? cache[n] : (cache[n] = gl.getUniformLocation(p, n))) };
+}
+const PR = {
+  clouds: program(VS_QUAD, FS_SKY),
+  horizon: program(VS_QUAD, FS_HORIZON),
+  aurora: program(VS_QUAD, FS_AURORA),
+  bloom: program(VS_QUAD, FS_BLOOM),
+  halo: program(VS_QUAD, FS_HALO),
+  murmur: program(VS_MURMUR, FS_POINT),
+};
+gl.bindVertexArray(gl.createVertexArray());
+gl.enable(gl.BLEND);
+
+let dpr = 1, W = 0, H = 0;
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const R = Math.round(clamp(Math.min(W, H) * 0.19, 92, 172));
+  document.documentElement.style.setProperty('--R', R + 'px');
+}
+addEventListener('resize', resize);
+resize();
+
+/* ── palette: the hour's heat bands, eased on change ── */
+const PKEYS = ['heat-1', 'heat-2', 'heat-3', 'heat-4', 'amber', 'ink'];
+const hex = s => { s = s.trim(); const n = parseInt(s.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+const readPal = () => { const cs = getComputedStyle(document.documentElement); return PKEYS.map(k => hex(cs.getPropertyValue('--' + k))); };
+let palGoal = readPal(), pal = palGoal.map(c => c.slice());
+
+/* ════════════════════════════ forms ════════════════════════════ */
+
+const ORDER = ['horizon', 'aurora', 'clouds', 'murmur', 'bloom'];
+const FORMS = {
+  horizon: { text: 'The hour’s sky over still water, split by one line of light. He listens and speaks along it.', ref: 'after Rothko’s colour fields · Sugimoto’s Seascapes' },
+  aurora: { text: 'Dark glass with the hour’s lights moving inside it.', ref: 'after the northern lights' },
+  clouds: { text: 'Clouds in a sphere — too close to ChatGPT Voice’s orb. Kept here to compare.', ref: 'after ChatGPT Voice’s orb · the ElevenLabs Orb' },
+  murmur: { text: 'Thousands of soft motes moving as one body — your Swarm, redrawn.', ref: 'after starling murmurations' },
+  bloom: { text: 'Six petals that breathe, open toward you, and reach for the work.', ref: 'after Apple Watch · Breathe' },
+};
+const askedForm = params.get('form') === 'sky' ? 'clouds' : params.get('form');
+let form = ORDER.includes(askedForm) ? askedForm : 'horizon';
+function setForm(f) {
+  form = f;
+  $$('#forms button').forEach(b => b.classList.toggle('on', b.dataset.form === f));
+  $('#aboutText').textContent = FORMS[f].text;
+  $('#aboutRef').textContent = FORMS[f].ref;
+  const u = new URL(location); u.searchParams.set('form', f); history.replaceState(null, '', u);
+}
+function setHour(h) {
+  document.documentElement.dataset.hour = h;
+  $$('#hours button').forEach(b => b.classList.toggle('on', b.dataset.hour === h));
+  palGoal = readPal();
+}
+
+/* ════════════════════════════ slots ════════════════════════════ */
+// Every place he appears is a slot: an element whose box he is drawn into.
+
+const slots = [];
+const W0 = () => ({ listen: 0, think: 0, speak: 0, work: 0, notice: 0, sleep: 0 });
+function addSlot(el, o = {}) {
+  const s = {
+    el, fixed: o.state || null, stage: !!o.stage, vo: o.vo || 0, visible: o.visible || (() => true),
+    w: W0(), phase: Math.random() * 6.28, band: 0, spin: Math.random() * 20, bph: Math.random() * 6.28,
+    breath: 0, gaze: [0, -0.22], gv: [0, 0], voice: 0, near: 0, ptr: [9, 9], scale: 1, open: 0.7,
+    cx: 0, cy: 0, R: 0,
+  };
+  if (s.fixed) Object.assign(s.w, targets(s.fixed, s.fixed === 'notice'));
+  slots.push(s);
+  return s;
+}
+function targets(st, notice) {
+  return { listen: +(st === 'listen'), think: +(st === 'think'), speak: +(st === 'speak'), work: +(st === 'work'), sleep: +(st === 'sleep'), notice: +notice };
+}
+
+const gridView = () => document.body.classList.contains('gridview');
+const stageSlot = addSlot($('#stage'), { stage: true, visible: () => !gridView() });
+['brand', 'menubar', 'talk', 'widget'].forEach(k => addSlot($(`[data-slot="${k}"]`)));
+
+const CELLS = [
+  ['rest', 'Rest', 'breathes; turns to your hand'],
+  ['listen', 'Listening', 'leans in; takes on your light'],
+  ['think', 'Thinking', 'turns it over'],
+  ['speak', 'Speaking', 'swells with each word'],
+  ['work', 'Working', 'attends to the job'],
+  ['notice', 'Notice', 'holds something for you'],
+  ['sleep', 'Asleep', 'settles, but stays'],
+];
+const grid = $('#grid');
+CELLS.forEach(([st, name, note], i) => {
+  const c = document.createElement('div');
+  c.className = 'cell';
+  c.innerHTML = `<span class="slot"></span><b>${name}</b><small>${note}</small>`;
+  grid.appendChild(c);
+  addSlot($('.slot', c), { state: st, vo: i * 3.7, visible: gridView });
+});
+
+/* ════════════════════════════ world ════════════════════════════ */
+
+const S = { state: 'rest', notice: false, voiceOn: false, mic: null, micWanted: false, task: null };
+const ptr = { x: -1e4, y: -1e4, last: -1e9, in: false };
+const now = () => performance.now() / 1000;
+
+// A speech-like level: syllables ~4/s, words, pauses.
+function vnoise(x) {
+  const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f);
+  const h = n => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+  return mix(h(i), h(i + 1), u);
+}
+function voiceAt(t) {
+  const syl = Math.max(0, Math.sin(t * 2 * Math.PI * 4.1 + 1.6 * Math.sin(t * 1.3)));
+  return Math.pow(syl, 1.3) * (0.35 + 0.65 * vnoise(t * 2.3)) * (0.2 + 0.8 * smooth(0.28, 0.5, vnoise(t * 0.9 + 40)));
+}
+async function micOn() {
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ac = new AudioContext(), an = ac.createAnalyser();
+    an.fftSize = 1024; ac.createMediaStreamSource(st).connect(an);
+    S.mic = { an, buf: new Float32Array(an.fftSize) };
+    return true;
+  } catch (e) { S.micWanted = false; updateMicBtn(); return false; }
+}
+function micLevel() {
+  const m = S.mic; m.an.getFloatTimeDomainData(m.buf);
+  let s = 0; for (const v of m.buf) s += v * v;
+  return clamp((Math.sqrt(s / m.buf.length) - 0.008) * 10, 0, 1);
+}
+
+const RATE = { listen: 7, think: 4, speak: 7, work: 3, notice: 2.5, sleep: 1.4 };
+function update(s, dt, t) {
+  const r = s.el.getBoundingClientRect();
+  s.cx = r.left + r.width / 2; s.cy = r.top + r.height / 2; s.R = r.width / 2;
+  const st = s.fixed || S.state;
+  const tg = targets(st, s.fixed ? st === 'notice' : S.notice);
+  for (const k in tg) s.w[k] += (tg[k] - s.w[k]) * (1 - Math.exp(-RATE[k] * dt));
+  const w = s.w;
+
+  let vt = 0;
+  if (s.fixed) { if (st === 'listen' || st === 'speak') vt = voiceAt(t + s.vo); }
+  else if (S.voiceOn) vt = (S.state === 'listen' && S.mic) ? micLevel() : voiceAt(t);
+  s.voice += (vt - s.voice) * (vt > s.voice ? 0.55 : 0.18);
+
+  const act = 1 - 0.85 * w.sleep;
+  s.phase += dt * (0.09 + 0.55 * w.think + 0.10 * w.work + 0.06 * w.speak) * act;
+  s.band += dt * w.think * 1.25;
+  s.spin += dt * ((0.035 + 0.22 * w.think + 0.30 * w.speak * s.voice + 0.06 * w.listen) * act + 0.008);
+  s.bph += dt * 2 * Math.PI / (4.8 + 3.2 * w.sleep);
+  s.breath = Math.sin(s.bph);
+
+  // regard: where he is attending
+  let g = [0, -0.22];
+  const taskOn = $('#task').classList.contains('on') && !gridView();
+  if (s.fixed) {
+    g = [0.28 * Math.sin(t * 0.31 + s.vo), -0.18 + 0.12 * Math.sin(t * 0.23 + s.vo * 1.7)];
+    if (st === 'work') g = [0.85, 0.1];
+    if (st === 'listen') g = [0, -0.42];
+  } else if (w.work > 0.3 && taskOn) {
+    const tr = $('#task').getBoundingClientRect();
+    const dx = tr.left - s.cx, dy = -(tr.top + tr.height / 2 - s.cy), l = Math.hypot(dx, dy) || 1;
+    g = [dx / l * 0.9, dy / l * 0.9];
+  } else if (S.state === 'listen') {
+    g = [0, -0.42];
+  } else if (ptr.in && t - ptr.last < 2.2 && S.state !== 'sleep') {
+    const dx = ptr.x - s.cx, dy = -(ptr.y - s.cy), l = Math.hypot(dx, dy) || 1;
+    const m = clamp(l / (s.R * 4 + 40), 0.2, 0.85);
+    g = [dx / l * m, dy / l * m];
+  }
+  for (let i = 0; i < 2; i++) { s.gv[i] += ((g[i] - s.gaze[i]) * 38 - s.gv[i] * 8.5) * dt; s.gaze[i] += s.gv[i] * dt; }
+
+  // touch: only the big one answers your hand
+  if (s.stage) {
+    const dx = ptr.x - s.cx, dy = ptr.y - s.cy, l = Math.hypot(dx, dy);
+    const nt = ptr.in && S.state !== 'sleep' ? smooth(s.R * 2.6, s.R * 1.1, l) : 0;
+    s.near += (nt - s.near) * (1 - Math.exp(-6 * dt));
+    s.ptr = [dx / s.R, -dy / s.R];
+  }
+
+  // where the job is, for reaching and streaming
+  if (s.fixed) s.task = [1.9, 0.2];
+  else if (taskOn) {
+    const tr = $('#task').getBoundingClientRect();
+    s.task = [(tr.left - 6 - s.cx) / s.R, -(tr.top + tr.height / 2 - s.cy) / s.R];
+  } else s.task = [2.4, 0.2];
+
+  s.scale = 1 + 0.016 * s.breath * (1 - 0.6 * w.think) + 0.05 * w.speak * s.voice + 0.035 * w.listen
+          - 0.045 * w.think - 0.2 * w.sleep + 0.025 * s.near;
+
+  let o = 0.70 + 0.07 * s.breath;
+  o = mix(o, 0.95 + 0.02 * s.breath, w.listen);
+  o = mix(o, 0.42, w.think);
+  o = mix(o, 0.66, w.speak);
+  o = mix(o, 0.60, w.work);
+  o = mix(o, 0.12 + 0.03 * s.breath, w.sleep);
+  s.open = o;
+}
+
+function uniforms(pr, s, t, cx, cy, R) {
+  const u = pr.u, w = s.w;
+  gl.uniform2f(u('u_cv'), cv.width, cv.height);
+  gl.uniform2f(u('u_c'), cx, cy);
+  gl.uniform1f(u('u_r'), R);
+  gl.uniform1f(u('u_rcss'), s.R * s.scale);
+  gl.uniform1f(u('u_dpr'), dpr);
+  gl.uniform1f(u('u_t'), t);
+  for (const k in w) gl.uniform1f(u('u_' + k), w[k]);
+  gl.uniform1f(u('u_voice'), s.voice);
+  gl.uniform1f(u('u_breath'), s.breath);
+  gl.uniform1f(u('u_phase'), form === 'bloom' ? s.phase * 0.6 + s.open * 0.7 : s.phase);
+  gl.uniform1f(u('u_band'), s.band);
+  gl.uniform1f(u('u_spin'), s.spin);
+  gl.uniform1f(u('u_near'), s.near);
+  gl.uniform1f(u('u_open'), s.open);
+  gl.uniform2f(u('u_gaze'), s.gaze[0], s.gaze[1]);
+  gl.uniform2f(u('u_task'), s.task[0], s.task[1]);
+  gl.uniform2f(u('u_ptr'), s.ptr[0], s.ptr[1]);
+  ['u_h1', 'u_h2', 'u_h3', 'u_h4', 'u_amber', 'u_ink'].forEach((n, i) => gl.uniform3fv(u(n), pal[i]));
+  gl.uniform3f(u('u_you'), 0.97, 0.97, 1.0);
+}
+
+function draw(s, t) {
+  const R = s.R * s.scale * dpr;
+  const cx = (s.cx + s.gaze[0] * s.R * 0.05) * dpr;
+  const cy = (H - s.cy + s.gaze[1] * s.R * 0.05) * dpr;
+  const pad = Math.ceil(R * 2.75 + 4);
+  const quad = pr => {
+    gl.useProgram(pr.p);
+    uniforms(pr, s, t, cx, cy, R);
+    gl.viewport(Math.floor(cx - pad), Math.floor(cy - pad), pad * 2, pad * 2);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  };
+  if (form === 'murmur') {
+    quad(PR.halo);
+    const pr = PR.murmur;
+    const n = Math.round(clamp(s.R * 36, 320, 6500));
+    const ptCss = Math.max(s.R * 0.026, 0.6 / dpr);
+    const cov = clamp(0.95 * Math.PI * s.R * s.R / (n * ptCss * ptCss * 0.9), 0.06, 1);
+    gl.useProgram(pr.p);
+    uniforms(pr, s, t, cx, cy, R);
+    gl.uniform1f(pr.u('u_n'), n);
+    gl.uniform1f(pr.u('u_cov'), cov);
+    gl.viewport(0, 0, cv.width, cv.height);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.drawArrays(gl.POINTS, 0, n);
+  } else {
+    quad(PR[form]);
+  }
+}
+
+/* ════════════════════════════ loop ════════════════════════════ */
+
+let last = now(), skew = 0;   // skew: debug time travel (see alfredDebug below)
+const clock = () => now() + skew;
+function frame() {
+  const t = clock(), dt = Math.min(0.05, t - last); last = t;
+  render(t, dt);
+  requestAnimationFrame(frame);
+}
+function render(t, dt) {
+  for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) pal[i][j] += (palGoal[i][j] - pal[i][j]) * (1 - Math.exp(-4 * dt));
+  if (S.task && !S.task.done) {
+    S.task.p = S.task.loop ? (S.task.p + dt / S.task.dur) % 1 : Math.min(1, S.task.p + dt / S.task.dur);
+    $('#taskBar').style.width = (S.task.p * 100).toFixed(1) + '%';
+  }
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  for (const s of slots) {
+    if (!s.visible()) continue;
+    update(s, dt, t);
+    if (s.R >= 1) draw(s, t);   // a slot hidden by the layout has no box
+  }
+}
+// For checking states in a throttled preview: alfredDebug.advance(2) runs two seconds of updates now.
+window.alfredDebug = {
+  advance(sec) {
+    const steps = Math.round(sec * 60);
+    for (let i = 0; i < steps; i++) { skew += 1 / 60; const t = clock(); render(t, 1 / 60); last = t; }
+  },
+};
+
+/* ════════════════════════════ script ════════════════════════════ */
+
+const cap = $('#caption');
+let capTimer = null, run = 0;
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+function caption(text, who, rate) {
+  clearInterval(capTimer);
+  cap.className = 'caption ' + who;
+  cap.innerHTML = (who === 'you' ? '<span class="who">You</span>' : '') +
+    text.split(' ').map(w => `<span class="w">${esc(w)}</span>`).join(' ');
+  const ws = $$('.w', cap); let i = 0;
+  return new Promise(res => {
+    const step = () => { if (i < ws.length) ws[i++].classList.add('on'); else { clearInterval(capTimer); res(); } };
+    step();
+    capTimer = setInterval(step, 1000 / rate);
+  });
+}
+function capOut() { clearInterval(capTimer); cap.classList.add('out'); }
+function capAway() { clearInterval(capTimer); cap.className = 'caption away'; cap.textContent = 'away'; }
+
+const STATUS = { rest: 'with you', listen: 'listening', think: 'thinking', speak: 'speaking', work: 'working on it', sleep: 'resting' };
+function setState(st) {
+  S.state = st;
+  S.voiceOn = st === 'listen' || st === 'speak';
+  $$('#states button').forEach(b => b.classList.toggle('on', b.dataset.s === st));
+  $('#wstate').textContent = S.notice && st === 'rest' ? 'something’s ready' : STATUS[st];
+}
+function setNotice(on) {
+  S.notice = on;
+  $('#noticeBtn').classList.toggle('on', on);
+  setState(S.state);
+}
+function cancel() { run++; clearInterval(capTimer); }
+
+async function say(text, id) {
+  setState('speak');
+  await caption(text, 'alfred', 3.0);
+  await wait(380);
+  if (id !== run) return false;
+  setState('rest');
+  return true;
+}
+async function hear(text, id) {
+  setState('listen');
+  await caption(text, 'you', 2.7);
+  await wait(320);
+  return id === run;
+}
+
+const taskEl = $('#task');
+function startTask(label, dur, loop = false) {
+  S.task = { p: 0, dur, done: false, loop };
+  $('#taskT').textContent = label;
+  $('#taskS').textContent = 'working · 3 sources';
+  taskEl.classList.remove('done');
+  taskEl.classList.add('on');
+}
+function finishTask() {
+  if (!S.task) return;
+  S.task.done = true;
+  $('#taskT').textContent = '3 options compared';
+  $('#taskS').textContent = 'ready when you are';
+  taskEl.classList.add('done');
+  setNotice(true);
+}
+function hideTask() { S.task = null; taskEl.classList.remove('on', 'done'); }
+
+async function scene() {
+  cancel(); const id = run;
+  setGrid(false); hideTask(); setNotice(false);
+  setState('sleep'); capAway();
+  await wait(2600); if (id !== run) return;
+  setState('rest'); capOut();
+  await wait(800); if (id !== run) return;
+  if (!await say('Welcome back, Bruce.', id)) return;
+  await wait(900); if (id !== run) return;
+  if (!await hear('Anything I should know about?', id)) return;
+  setState('think'); cap.classList.add('dim');
+  await wait(1500); if (id !== run) return;
+  if (!await say('Just one thing. The speech-to-text comparison is still running — I’ll keep at it.', id)) return;
+  await wait(500); if (id !== run) return;
+  capOut(); startTask('Comparing local speech-to-text', 5200); setState('work');
+  await wait(5600); if (id !== run) return;
+  finishTask(); setState('rest');
+}
+
+taskEl.addEventListener('click', async () => {
+  if (!taskEl.classList.contains('done')) return;
+  cancel(); const id = run;
+  hideTask(); setNotice(false);
+  await say('Whisper turbo is the one. Fast enough, and it never leaves your Mac.', id);
+});
+
+// hold to talk
+const PAIRS = [
+  ['Can you move standup to four?', 'Done. Standup’s at four, and I’ve told Mira.'],
+  ['What does my morning look like?', 'Clear until two. Want me to keep it that way?'],
+  ['Look into local speech-to-text for me.', 'On it. I’ll come back when there’s something worth hearing.'],
+];
+let holding = false, pair = 0;
+async function holdStart() {
+  if (holding) return;
+  holding = true; cancel();
+  setGrid(false);
+  setState('listen');
+  if (S.micWanted && !S.mic) await micOn();
+  if (!holding) return;
+  if (S.mic) { cap.className = 'caption you'; cap.innerHTML = '<span class="who">You</span>…'; }
+  else caption(PAIRS[pair][0], 'you', 2.6);
+}
+async function holdEnd() {
+  if (!holding) return;
+  holding = false; cancel(); const id = run;
+  setState('think'); clearInterval(capTimer); cap.classList.add('dim');
+  await wait(1150); if (id !== run) return;
+  await say(PAIRS[pair][1], id);
+  pair = (pair + 1) % PAIRS.length;
+}
+
+// manual states: each one holds until you pick another
+const SAMPLE = {
+  listen: ['Can you look into local speech-to-text for me?', 'you'],
+  speak: ['Clear until two. Want me to keep it that way?', 'alfred'],
+};
+function manual(st) {
+  cancel(); setGrid(false);
+  if (st !== 'work') hideTask();
+  setState(st);
+  if (SAMPLE[st]) caption(SAMPLE[st][0], SAMPLE[st][1], 2.8);
+  else if (st === 'sleep') capAway();
+  else capOut();
+  if (st === 'think') { /* nothing to say yet */ }
+  if (st === 'work') startTask('Comparing local speech-to-text', 6, true);
+}
+
+function setGrid(on) {
+  document.body.classList.toggle('gridview', on);
+  $('#gridBtn').classList.toggle('on', on);
+}
+function updateMicBtn() { $('#micBtn').textContent = S.micWanted ? 'Mic on' : 'Mic off'; $('#micBtn').classList.toggle('on', S.micWanted); }
+
+/* ════════════════════════════ input ════════════════════════════ */
+
+$$('#forms button').forEach(b => b.addEventListener('click', () => setForm(b.dataset.form)));
+$$('#hours button').forEach(b => b.addEventListener('click', () => setHour(b.dataset.hour)));
+$$('#states button').forEach(b => b.addEventListener('click', () => manual(b.dataset.s)));
+$('#noticeBtn').addEventListener('click', () => {
+  const on = !S.notice;
+  setNotice(on);
+  if (on && !S.task) { startTask('Comparing local speech-to-text', 1); finishTask(); }
+  if (!on) hideTask();
+});
+$('#playBtn').addEventListener('click', scene);
+$('#gridBtn').addEventListener('click', () => setGrid(!gridView()));
+$('#micBtn').addEventListener('click', () => { S.micWanted = !S.micWanted; updateMicBtn(); });
+
+addEventListener('pointermove', e => { ptr.x = e.clientX; ptr.y = e.clientY; ptr.last = clock(); ptr.in = true; });
+document.documentElement.addEventListener('pointerleave', () => { ptr.in = false; });
+$('#stage').addEventListener('pointerdown', e => { e.preventDefault(); holdStart(); });
+addEventListener('pointerup', holdEnd);
+addEventListener('pointercancel', holdEnd);
+addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('input, textarea')) return;
+  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) holdStart(); return; }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    const i = ORDER.indexOf(form) + (e.key === 'ArrowRight' ? 1 : -1);
+    setForm(ORDER[(i + ORDER.length) % ORDER.length]);
+  }
+  const n = parseInt(e.key, 10);
+  const order = ['rest', 'listen', 'think', 'speak', 'work', 'sleep'];
+  if (n >= 1 && n <= 6) manual(order[n - 1]);
+  if (e.key === 'n' || e.key === 'N') $('#noticeBtn').click();
+  if (e.key === 'p' || e.key === 'P') scene();
+  if (e.key === 'g' || e.key === 'G') setGrid(!gridView());
+});
+addEventListener('keyup', e => { if (e.code === 'Space') holdEnd(); });
+
+/* ════════════════════════════ go ════════════════════════════ */
+
+setForm(form);
+setHour(['dawn', 'day', 'dusk', 'night'].includes(params.get('hour')) ? params.get('hour') : 'dusk');
+pal = palGoal.map(c => c.slice());
+setState('rest');
+if (params.get('grid') === '1') setGrid(true);
+if (params.get('state')) manual(params.get('state'));
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

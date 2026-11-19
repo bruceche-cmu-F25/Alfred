@@ -153,6 +153,10 @@ queued → running ⇄ waiting_permission / waiting_input
 | 对外不可逆 | 发邮件、付款、永久删除 | 每次明确确认，授权只绑定这一次操作 |
 
 - 权限检查在**领域操作里**，不在引擎里。所以换任何引擎，世界都能自己把关。
+- **【已实现】提议**（2026-11-18）：任务可以把改动准备好，不马上做，留给用户在通知页决定，可以放好几天。
+  - 接受时只执行预览过的那几步，只执行一次。
+  - 期间它碰到的东西变了，就过期不执行。
+  - 详见 `docs/design/workspace-architecture.md` 第 5.1 节和 W3。
 - 引擎自带的工具（shell、改文件）由能力档加引擎的拦截点管。已核实（Pi 1.2.0 文档）：Pi 的扩展可以在工具调用前拦截并阻止，拦截器出错时默认阻止。
 - 语音确认只转达用户**当轮明确说的**决定。模型不能自己造一个同意。
 - 工具白名单不是系统沙箱，文档里要如实写明。
@@ -480,7 +484,7 @@ LangGraph、向量库、微服务、多用户、原生手机 App、设备间双�
 
 - `docs/SESSION-HANDOFF.md`：背景、Robin 的可借鉴实现和已知约束。
 - `docs/research/full-duplex-voice.md`：语音模型、同类项目、两份源码的要点。
-- `prototype/app/README.md`：形象的状态和三种布局。
+- `archive/design/prototype/app/README.md`：早期形象和三种布局（历史参考）；当前设计见 [设计主线](design/README.md)。
 - Qwen Audio Agent 的架构文档：https://github.com/QwenAudio/qwen-audio-agent/blob/main/docs/architecture/deep-dive.md
 - Hermes Agent 的 GPT-Live 接法：https://github.com/NousResearch/hermes-agent/blob/main/tools/voice_live.py
 - pi-web-robin 的 `docs/alfred-core.md`：已经在 Robin 里跑起来的事件、任务、通知、在场和定时。

@@ -4,6 +4,8 @@ An open-source personal agent. One home node on your computer holds your world: 
 
 **Status: step 2 of 5, plus conversations and general tools.** Alfred has a home node, a todo module, conversations (each with its own warm agent session, model choice, and the ability to add to a run while it works), MCP servers and skills behind a permission gate, and a Mac app. Memory and scheduling, multi-device access, voice and more modules come next.
 
+**Design:** [Current views, chosen identity and screenshot](docs/design/README.md).
+
 ## The Mac app
 
 ```bash
@@ -91,7 +93,8 @@ packages/protocol    the public client protocol types
 packages/ui          the interface every device opens (React + Vite), and the figure's page
 packages/desktop     the Mac app (Electron): launchd home node, figure, menu bar, hotkey, notifications, presence
 modules/todo         todos, moved from Robin's todo domain, with a read-only Robin importer
-prototype/           interaction and entity prototypes, kept for reference
+prototype/           chosen tesseract identity, its state sheet, and the workspace layout study
+archive/design/      earlier interaction, layout and identity studies
 ```
 
 ```bash

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Alfred · prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+    // same rule as bruce-portfolio/lib/hours.ts, before first paint
+    try { var h = new Date().getHours(); document.documentElement.dataset.hour = h >= 4 && h < 10 ? 'dawn' : h >= 10 && h < 16 ? 'day' : h >= 16 && h < 21 ? 'dusk' : 'night' } catch (e) {}
+  </script>
+</head>
+<body data-view="sleep">
+  <!-- one canvas, one 9px grid: the entity, its links, panel build-ins and the cursor trail all land on it -->
+  <canvas id="stage" aria-hidden="true"></canvas>
+
+  <!-- ── home ─────────────────────────────────────────────── -->
+  <main id="home" class="home" aria-label="Alfred">
+    <div class="entity-hit" id="entityHit" title="Alfred"></div>
+
+    <div class="wake" id="wake">
+      <div class="wake-name">ALFRED</div>
+      <div class="wake-hint"><span class="blink">●</span> 轻触任意处唤醒</div>
+    </div>
+
+    <!-- present: Alfred glides aside and lays one big sheet out on the other side -->
+    <section class="sheet" id="sheet" aria-label="Alfred 给你的结果">
+      <header class="sheet-head" id="sheetHead">
+        <span class="sheet-kicker mono" id="sheetKicker"></span>
+        <span class="sheet-title" id="sheetTitle"></span>
+        <span class="sheet-meta mono" id="sheetMeta"></span>
+      </header>
+      <div class="sheet-grid" id="panels"></div>
+    </section>
+
+    <!-- idle: the island under Alfred. Workspaces are tabs; the body previews one -->
+    <nav class="deck" id="deck" aria-label="工作区">
+      <div class="deck-tabs" id="deckTabs" role="tablist"></div>
+      <div class="deck-body" id="deckBody" role="tabpanel"></div>
+    </nav>
+  </main>
+
+  <!-- ── workspace (Pi-style chat) ────────────────────────── -->
+  <section id="work" class="work" aria-label="工作台" hidden>
+    <aside class="work-side">
+      <button class="dock" id="dock" aria-label="回到 Alfred 首页"><span class="dock-dot" id="dockDot"></span></button>
+      <div class="work-crumb"><span class="mono faint">ALFRED /</span> <span id="wsName">Pi</span></div>
+      <button class="btn ghost new-session" id="newSession">＋ 新会话</button>
+      <div class="sessions" id="sessions"></div>
+    </aside>
+    <div class="work-main">
+      <header class="work-head">
+        <button class="btn ghost only-narrow" id="sideToggle" aria-label="会话列表">☰</button>
+        <div>
+          <div class="work-title" id="sessionTitle"></div>
+          <div class="mono faint small" id="sessionMeta"></div>
+        </div>
+        <button class="btn ghost only-narrow" id="backHome">⌂</button>
+      </header>
+      <div class="thread" id="thread"></div>
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="composer-box" id="composerBox">
+          <div class="draft-wrap">
+            <textarea id="draft" rows="1" placeholder="给 Pi 发消息，或按麦克风听写…"></textarea>
+            <div class="interim" id="interim" aria-hidden="true"></div>
+          </div>
+          <div class="composer-row">
+            <button type="button" class="chip" id="langChip" title="听写语言">中</button>
+            <canvas class="levels" id="levels" width="120" height="18" aria-hidden="true"></canvas>
+            <span class="mono faint small" id="dictMetric"></span>
+            <span class="grow"></span>
+            <button type="button" class="mic" id="dictBtn" aria-label="听写">
+              <svg viewBox="0 0 8 10" shape-rendering="crispEdges"><path d="M3 0h2v1h1v4h-1v1h-2v-1h-1v-4h1zM1 4h1v1h1v1h2v-1h1v-1h1v2h-1v1h-1v1h1v1h-4v-1h1v-1h-1v-1h-1z" fill="currentColor"/></svg>
+            </button>
+            <button type="submit" class="send" id="sendBtn" aria-label="发送">↵</button>
+          </div>
+        </div>
+      </form>
+    </div>
+    <aside class="work-ctx" id="ctx"></aside>
+  </section>
+
+  <!-- ── talk bar (home) ─────────────────────────────────── -->
+  <form class="talk" id="talk" autocomplete="off">
+    <button type="button" class="mic big" id="talkMic" aria-label="按住说话">
+      <svg viewBox="0 0 8 10" shape-rendering="crispEdges"><path d="M3 0h2v1h1v4h-1v1h-2v-1h-1v-4h1zM1 4h1v1h1v1h2v-1h1v-1h1v2h-1v1h-1v1h1v1h-4v-1h1v-1h-1v-1h-1z" fill="currentColor"/></svg>
+    </button>
+    <input id="talkInput" placeholder="和 Alfred 说…  （按住空格说话）" />
+    <span class="kbd">↵</span>
+  </form>
+
+  <!-- what Alfred says / what you're saying: shared by home and workspace -->
+  <div class="caption" id="caption" aria-live="polite">
+    <div class="caption-meta" id="captionMeta"></div>
+    <div class="caption-text" id="captionText"></div>
+    <div class="caption-actions" id="captionActions"></div>
+  </div>
+  <div class="status-line" id="statusLine"></div>
+
+  <!-- quiet notices: they appear, they never speak first -->
+  <div class="notices" id="notices" aria-live="polite"></div>
+
+  <!-- prototype controls -->
+  <button class="proto-chip" id="protoChip">PROTOTYPE</button>
+  <div class="proto" id="proto" hidden>
+    <div class="proto-row"><span>场景</span>
+      <button data-scn="morning">早晨</button><button data-scn="afternoon">下午回来</button><button data-scn="evening">晚上</button></div>
+    <div class="proto-row"><span>形象</span>
+      <button data-entity="rings">环</button><button data-entity="swarm">点阵球</button></div>
+    <div class="proto-row"><span>色调</span>
+      <button data-hour="dawn">dawn</button><button data-hour="day">day</button><button data-hour="dusk">dusk</button><button data-hour="night">night</button></div>
+    <div class="proto-row"><span>事件</span>
+      <button data-ev="research">调查完成</button><button data-ev="pi">Pi 会话结束</button><button data-ev="ddl">DDL 提醒</button></div>
+    <div class="proto-row"><span>状态</span>
+      <button data-ev="idle">进入 idle</button><button data-ev="sound" id="soundBtn">声音：开</button><button data-ev="reset">重置</button></div>
+    <div class="proto-row tips">试着说：「计划今天」「把站会改到四点」「Stripe 那个做完了」「自动任务怎么样了」「帮我调查本地语音转写」「明早早报加上英伟达」</div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

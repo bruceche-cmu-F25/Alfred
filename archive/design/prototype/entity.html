@@ -1,0 +1,633 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Delete or absorb once the question is answered.
+
+  Question: leaving the pixel grid behind — what is he? Three radically different
+  answers on one page, switchable (?variant=A|B|C, or ← →). All three are smooth,
+  drawn fresh each frame; none of them is an orb with a changing surface.
+
+  Each one is a different answer to "where does the feeling of someone come from?"
+
+    A  Thread   from what he DOES. He is one line. It listens (your voice rides it),
+                turns a thought over (a figure-eight), speaks (it opens like a mouth
+                of sound), and reaches out to mark what he is working on: it ties a
+                thread to the card and draws round it.
+    B  Drop     from having a BODY. He is one soft mass. It breathes, stretches up to
+                listen, reaches toward your hand, pools flat when it rests, and sends
+                a part of itself to do a job, which comes back and rejoins him.
+    C  Disc     from being REGARDED. He is a face with no features: a disc that turns
+                to face you, turns to face what he is reading, nods, turns away to
+                think, and lies down to rest. Work in progress is an arc on his rim.
+
+  The same script runs under all three, so only the body differs:
+    - hold him, or space, to talk (no mic needed: a sample line plays); or type
+    - "brief" walks him through the three cards; "task" sends a job off and has
+      him bring it back and hold it until you tap him
+    - "away" rests him; any movement brings him back with "Welcome back, Bruce."
+    - size: stage / dock (head of the line you talk on) / dot (by his name)
+
+  Everything around him is stubbed sample data — nothing here talks to a real service.
+  Run: serve the folder and open /entity.html
+-->
+<html lang="en" data-hour="dusk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred — three bodies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #08060e; --panel: #100b19; --panel-up: #181024;
+    --ink: #f3ecf8; --body: #cbc0d8; --mute: #9d90b3; --faint: #7a6f92;
+    --rule: rgba(205, 180, 232, 0.17); --rule-soft: rgba(205, 180, 232, 0.08);
+    --accent: 255 61 127; --amber: #e8b877;
+    --heat-1: #4c25a6; --heat-2: #9c48ff; --heat-3: #ff4f93; --heat-4: #ffd56e;
+  }
+  :root[data-hour='night'] {
+    --bg: #04060e; --panel: #090e1b; --panel-up: #10182a;
+    --ink: #e8edff; --body: #c0c9e1; --mute: #919fbe; --faint: #7283a3;
+    --rule: rgba(168, 189, 231, 0.17); --rule-soft: rgba(168, 189, 231, 0.08);
+    --accent: 122 142 255; --amber: #e3c08a;
+    --heat-1: #2c43a6; --heat-2: #4f7dff; --heat-3: #97b6ff; --heat-4: #fff4c0;
+  }
+  :root[data-hour='dawn'] {
+    --bg: #0b080d; --panel: #140e17; --panel-up: #1d1420;
+    --ink: #f6e9df; --body: #d3c1c5; --mute: #aa929c; --faint: #927b87;
+    --rule: rgba(221, 186, 183, 0.17); --rule-soft: rgba(221, 186, 183, 0.08);
+    --accent: 247 157 116; --amber: #f0cf86;
+    --heat-1: #6c2a60; --heat-2: #e4527f; --heat-3: #ffa77b; --heat-4: #ffecb2;
+  }
+  :root[data-hour='day'] {
+    --bg: #0a1016; --panel: #111922; --panel-up: #18222d;
+    --ink: #eef4f8; --body: #c5d0da; --mute: #97a6b4; --faint: #7a8a9b;
+    --rule: rgba(176, 200, 220, 0.17); --rule-soft: rgba(176, 200, 220, 0.08);
+    --accent: 84 170 214; --amber: #f0b45c;
+    --heat-1: #17647e; --heat-2: #3aa8e8; --heat-3: #62d696; --heat-4: #ffe074;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 400 14px/1.5 var(--sans);
+    overflow: hidden; transition: background 1.1s;
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+  }
+  input { user-select: text; -webkit-user-select: text; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #goo { filter: url(#gooey); }
+  .defs { position: absolute; width: 0; height: 0; }
+
+  .top {
+    position: fixed; inset: 0 0 auto 0; z-index: 2;
+    display: flex; justify-content: space-between; gap: 16px; padding: 15px 18px;
+    font: 400 10.5px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint);
+  }
+  .top b { color: var(--ink); font-weight: 500; margin-right: 12px; }
+  .top .why { text-align: right; text-transform: none; letter-spacing: 0.02em; color: var(--mute); }
+  .top .why b { margin: 0 8px 0 0; text-transform: uppercase; letter-spacing: 0.09em; }
+
+  .say {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(620px, 100% - 32px); text-align: center; pointer-events: none;
+    transition: top 0.6s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 1.2s;
+  }
+  .you { font: 400 11.5px/1.6 var(--mono); color: var(--mute); min-height: 18px; }
+  .alf { font: 400 15px/1.6 var(--mono); color: var(--ink); min-height: 48px; text-wrap: balance; }
+  .alf[data-live]::after { content: '▍'; color: rgb(var(--accent)); animation: caret 0.9s steps(2) infinite; }
+  @keyframes caret { 50% { opacity: 0; } }
+
+  /* the desk: three things of yours he can work on */
+  .desk {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(760px, 100% - 32px); display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+    transition: top 0.6s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 1.2s;
+  }
+  .card { padding: 12px 14px 13px; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); transition: border-color 0.4s, background 0.4s, opacity 0.4s; min-width: 0; }
+  .desk[data-on] .card { opacity: 0.5; }
+  .desk[data-on] .card[data-on] { opacity: 1; border-color: rgb(var(--accent) / 0.55); background: var(--panel-up); }
+  .card h2 { font: 500 10.5px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute); padding-bottom: 9px; }
+  .card p { font-size: 12.5px; line-height: 1.45; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .bar { height: 2px; margin-top: 9px; background: var(--rule-soft); }
+  .card .bar i { display: block; height: 100%; width: 0; background: rgb(var(--accent)); }
+  .card[data-done] .bar i { background: var(--amber); }
+
+  #stack { position: fixed; inset: auto 0 0 0; z-index: 2; padding: 0 16px 56px; display: flex; flex-direction: column; align-items: center; transition: opacity 1.2s; }
+  .line { width: min(620px, 100%); }
+  .line form { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--rule); transition: margin 0.4s; }
+  .line form:focus-within { border-bottom-color: rgb(var(--accent) / 0.7); }
+  body[data-size='dock'] .line form { margin-left: 58px; }
+  .line input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--ink); font: 400 13px/1.4 var(--mono); }
+  .line input::placeholder { color: var(--faint); }
+  .line kbd { font: 400 10px/1 var(--mono); color: var(--faint); border: 1px solid var(--rule); border-radius: 4px; padding: 4px 6px; white-space: nowrap; }
+  body[data-held] .line kbd { color: var(--bg); background: rgb(var(--accent)); border-color: transparent; }
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+  .chips button { font: 400 10.5px/1 var(--mono); color: var(--faint); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 9px; }
+  .chips button:hover { color: var(--ink); border-color: rgb(var(--accent) / 0.6); }
+
+  body[data-away] :is(.say, .desk, #stack) { opacity: 0.16; }
+
+  /* prototype switcher — deliberately not in the design's language */
+  .proto {
+    position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 9;
+    display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px;
+    max-width: calc(100% - 16px); overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+    background: #f4f1ea; color: #15131a; font: 500 10.5px/1 ui-monospace, Menlo, monospace;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  }
+  .proto button, .proto a { padding: 6px 7px; border-radius: 999px; color: inherit; text-decoration: none; }
+  .proto button:hover, .proto a:hover { background: #dedad0; }
+  .proto button[aria-pressed='true'] { background: #15131a; color: #f4f1ea; }
+  .proto .lab { padding: 0 4px 0 8px; color: #86808f; }
+  .proto .sep { width: 1px; height: 14px; background: #cfcabd; margin: 0 4px; flex: none; }
+
+  @media (max-width: 700px) { .top .why span { display: none; } .chips { display: none; } .desk { gap: 8px; } .card { padding: 10px; } }
+  @media (max-height: 720px) { .chips { display: none; } }
+</style>
+</head>
+<body data-size="stage" data-away>
+<canvas id="goo"></canvas>
+<canvas id="fx"></canvas>
+<svg class="defs" aria-hidden="true"><filter id="gooey" color-interpolation-filters="sRGB"><feGaussianBlur id="gooblur" in="SourceGraphic" stdDeviation="8"/><feColorMatrix mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -9"/></filter></svg>
+
+<header class="top">
+  <span><b>Alfred</b><span id="st">resting</span></span>
+  <span class="why" id="why"></span>
+</header>
+
+<div class="say" id="say">
+  <p class="you" id="you"></p>
+  <p class="alf" id="alf"></p>
+</div>
+
+<section class="desk" id="desk">
+  <div class="card" id="c-inbox"><h2>Inbox</h2><p>2 need a yes or no</p><div class="bar"></div></div>
+  <div class="card" id="c-today"><h2>Today</h2><p>Standup 09:30 · 3 blocks</p><div class="bar"></div></div>
+  <div class="card" id="c-research"><h2>Research</h2><p>Nothing running</p><div class="bar"><i></i></div></div>
+</section>
+
+<div id="stack">
+  <div class="line">
+    <form id="line"><input id="in" autocomplete="off" placeholder="Say something, or type it"><kbd>hold space</kbd></form>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
+<div class="proto" id="proto"></div>
+
+<script>
+/* ── helpers ─────────────────────────────────────────────────────────── */
+const $ = s => document.querySelector(s)
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (a, b, v) => { const k = clamp((v - a) / (b - a), 0, 1); return k * k * (3 - 2 * k) }
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const TAU = Math.PI * 2
+const wrap = a => Math.atan2(Math.sin(a), Math.cos(a))
+const spring = (o, key, target, dt, k, z) => { const v = 'v_' + key; o[v] += (k * (target - o[key]) - 2 * z * Math.sqrt(k) * o[v]) * dt; o[key] += o[v] * dt }
+const params = new URLSearchParams(location.search)
+
+/* ── palette ─────────────────────────────────────────────────────────── */
+const HOURS = ['dusk', 'night', 'dawn', 'day']
+let ACC = '255 61 127', HEAT = [], INK = '#fff', AMBER = '#e8b877', PANEL = '#100b19'
+function setHour(h) {
+  document.documentElement.dataset.hour = h
+  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim()
+  ACC = v('--accent').replace(/ /g, ','); HEAT = [1, 2, 3, 4].map(n => v('--heat-' + n)); INK = v('--ink'); AMBER = v('--amber'); PANEL = v('--panel')
+}
+const acc = a => `rgba(${ACC},${a})`
+
+/* ── the model: everything about him that is not his body ────────────── */
+const goo = $('#goo'), fx = $('#fx'), gg = goo.getContext('2d'), g = fx.getContext('2d')
+let W = 0, VH = 0, dpr = 1
+const E = { x: 0, y: 0, r: 60, v_x: 0, v_y: 0, v_r: 0 }, base = { x: 0, y: 0, r: 60 }   // where he is and how big; his station
+const w = { idle: 1, listen: 0, think: 0, speak: 0 }                                 // eased weight of what he is doing
+const gaze = { x: 0, y: 0, v_x: 0, v_y: 0 }                                          // where his attention is, as a direction; 0,0 is you
+const ptr = { x: -999, y: -999, vx: 0, vy: 0, on: false, at: 0 }                     // your hand
+const gest = { at: 0, ms: 1, depth: 0, kind: 'nod' }                                 // a nod or a shake, in progress
+let form = 'A', size = 'stage', state = 'idle', forced = null
+let away = true, rest = 1, amp = 0, reach = 0
+let attend = null, att = 0, lastCard = null          // the card he is working on, how fully he has turned to it, and the last one (to let go of)
+let job = null, carried = false, carry = 0           // a job out, and whether he is holding its result for you
+let held = null, heldAt = 0, lastKey = 0, sampleAt = 0
+
+function resize() {
+  W = innerWidth; VH = innerHeight; dpr = Math.min(2, devicePixelRatio || 1)
+  fx.width = W * dpr; fx.height = VH * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0)
+  goo.width = W; goo.height = VH
+  layout(true)
+}
+// His station at each size: centre stage; the head of the line you talk on; a dot by his name.
+function layout(snap) {
+  const line = $('#line').getBoundingClientRect(), lineTop = $('.line').getBoundingClientRect().top
+  if (size === 'stage') { base.r = clamp(Math.min(W, VH) * 0.115, 54, 104); base.x = W / 2; base.y = Math.max(96 + base.r * 1.2, VH * 0.29) }
+  else if (size === 'dock') { base.r = 20; base.x = Math.max(34, line.left - 38); base.y = line.top + line.height / 2 }
+  else { base.r = 7; base.x = 178; base.y = 20 }
+  const sayTop = size === 'stage' ? base.y + base.r * 1.55 + 12 : lineTop - 96
+  $('#say').style.top = sayTop + 'px'
+  $('#desk').style.top = (size === 'stage' ? sayTop + 88 : clamp(VH * 0.22, 96, lineTop - 220)) + 'px'
+  if (snap) { E.x = base.x; E.y = base.y; E.r = base.r; E.v_x = E.v_y = E.v_r = 0 }
+}
+const rect = id => { const b = $('#' + id).getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height } }
+const nod = (depth = 0.7, ms = 520) => { gest.at = performance.now(); gest.ms = ms; gest.depth = depth; gest.kind = 'nod' }
+const shake = () => { gest.at = performance.now(); gest.ms = 700; gest.depth = 1; gest.kind = 'shake' }
+
+/* ── A · Thread ──────────────────────────────────────────────────────────
+   One closed line. What it is doing is its shape:
+     with you   a loop, a little uneven like something drawn; egg-shaped toward what he attends to
+     listening  wider and thinner, and your voice runs along it
+     thinking   a figure-eight, with a bead of light travelling it
+     speaking   it flattens and opens like a mouth of sound, as wide as his voice
+     resting    a line
+   It reaches the near side out to your hand. To work on something it ties a thread to
+   the card and draws round it; a job in progress is a stroke running round that card. */
+const trace = P => { g.beginPath(); g.moveTo(P[0], P[1]); for (let i = 2; i < P.length; i += 2) g.lineTo(P[i], P[i + 1]); g.closePath() }
+function thread(m) {
+  const { x, y, R, t } = m, M = 180, P = []
+  const k8 = m.wt, flat = m.ws, slp = m.rest
+  const ga = Math.atan2(m.gy, m.gx), gm = Math.hypot(m.gx, m.gy)
+  const rot = Math.sin(t * 0.5) * 0.3 * k8, cr = Math.cos(rot), sr = Math.sin(rot)
+  const open = 0.05 + 0.5 * m.amp
+  for (let i = 0; i < M; i++) {
+    const th = i / M * TAU, c = Math.cos(th), s = Math.sin(th)
+    let rr = 1 + 0.025 * m.beat + 0.03 * Math.sin(2 * th + t * 0.5) + 0.018 * Math.sin(3 * th - t * 0.37)
+    rr += 0.15 * gm * Math.cos(th - ga)                                                    // leans toward what he attends to
+    rr += 0.34 * m.reach * Math.exp(-(wrap(th - m.pa) ** 2) / 0.16)                        // the near side reaches for your hand
+    rr += m.wl * (0.07 + m.amp * 0.11 * Math.sin(th * 9 + t * 7) * Math.sin(th * 2 - t * 1.7))   // your voice, on the line
+    let px = c * rr, py = s * rr
+    const d = 1 + s * s
+    px = lerp(px, 1.4 * c / d, k8); py = lerp(py, 1.4 * s * c / d, k8)                      // a thought, turned over
+    px = lerp(px, 1.35 * c, flat); py = lerp(py, s * (open + m.amp * 0.22 * Math.abs(Math.sin(c * 5.5 + t * 8))), flat)   // his voice
+    px = lerp(px, c * (0.7 + 0.03 * m.beat), slp); py = lerp(py, s * 0.012, slp)           // at rest
+    P.push(x + (px * cr - py * sr) * R + m.gx * R * 0.08 + m.shake * R * 0.16, y + (px * sr + py * cr) * R + m.nod * R * 0.24)
+  }
+  const lw = Math.max(1.3, R * 0.04) * (1 - 0.22 * m.wl)
+  const grad = g.createLinearGradient(x - R, y - R, x + R, y + R)
+  grad.addColorStop(0, HEAT[2]); grad.addColorStop(0.5, m.carry > 0.5 ? AMBER : HEAT[3]); grad.addColorStop(1, HEAT[1])
+  g.lineJoin = g.lineCap = 'round'
+  trace(P); g.globalAlpha = 0.95 - 0.55 * slp; g.shadowColor = acc(0.9); g.shadowBlur = R * 0.4 * dpr
+  g.strokeStyle = grad; g.lineWidth = lw; g.stroke()
+  g.shadowBlur = 0; g.globalAlpha = 0.5 * (1 - slp); g.strokeStyle = INK; g.lineWidth = lw * 0.3; g.stroke(); g.globalAlpha = 1
+  // the bead: where he is facing; when he thinks, it runs the line
+  const at = a => { const i = (((Math.round(a / TAU * M) % M) + M) % M) * 2; return [P[i], P[i + 1]] }
+  const [bx0, by0] = at(Math.atan2(m.gy + 0.3, m.gx)), [bx1, by1] = at((t * 0.42 % 1) * TAU)
+  const bx = lerp(bx0, bx1, k8), by = lerp(by0, by1, k8), br = lw * 2.4 + R * 0.05
+  const bg = g.createRadialGradient(bx, by, 0, bx, by, br * 2.4)
+  bg.addColorStop(0, m.carry > 0.5 ? AMBER : INK); bg.addColorStop(0.25, acc(0.85)); bg.addColorStop(1, acc(0))
+  g.globalAlpha = (1 - flat) * (1 - slp) * (0.75 + 0.25 * k8); g.fillStyle = bg; g.beginPath(); g.arc(bx, by, br * 2.4, 0, TAU); g.fill(); g.globalAlpha = 1
+  // work: a thread tied to the card, and the card drawn round
+  const tie = (c, k, alpha, col) => {
+    const tx = c.x + c.w / 2, ty = c.y - 4
+    let sx = x, sy = y, best = 1e12                          // it leaves him from wherever on the line is nearest
+    for (let i = 0; i < P.length; i += 2) { const d = (P[i] - tx) ** 2 + (P[i + 1] - ty) ** 2; if (d < best) { best = d; sx = P[i]; sy = P[i + 1] } }
+    const len = Math.hypot(tx - sx, ty - sy) * 1.08
+    g.strokeStyle = col; g.lineWidth = Math.max(1, lw * 0.5); g.globalAlpha = alpha
+    g.setLineDash([len * k, len * 2]); g.beginPath(); g.moveTo(sx, sy); g.quadraticCurveTo((sx + tx) / 2 + (ty - sy) * 0.1, (sy + ty) / 2 - 8, tx, ty); g.stroke()
+    g.setLineDash([]); g.globalAlpha = 1
+  }
+  const round = (c, dash, off, alpha, col, wd) => {
+    g.strokeStyle = col; g.lineWidth = wd; g.globalAlpha = alpha; g.setLineDash(dash); g.lineDashOffset = off
+    g.beginPath(); g.roundRect(c.x - 4, c.y - 4, c.w + 8, c.h + 8, 13); g.stroke(); g.setLineDash([]); g.lineDashOffset = 0; g.globalAlpha = 1
+  }
+  if (m.att > 0.01 && m.card) { const per = 2 * (m.card.w + m.card.h); tie(m.card, m.att, 0.7 * m.att, acc(1)); round(m.card, [per * m.att, per * 2], -per * 0.25, 0.85, acc(1), 1.5) }
+  if (m.job) {
+    const c = m.job.card, per = 2 * (c.w + c.h), ph = m.job.ph
+    if (ph !== 'back') tie(c, ph === 'out' ? m.job.u : 1, 0.28, acc(1))
+    if (ph === 'run') round(c, [per * 0.14, per * 0.86], -t * per * 0.4, 0.9, acc(1), 1.5)
+    if (ph === 'back') round(c, [], 0, 1 - m.job.u, AMBER, 1.5)
+  }
+}
+
+/* ── B · Drop ────────────────────────────────────────────────────────────
+   One soft mass, drawn as a few overlapping discs that fuse (a blur and a hard alpha
+   edge on its own canvas). Squash and stretch on a loose spring, so he settles.
+     with you   breathes, sits a little heavy, bulges toward what he attends to
+     listening  draws up tall, and his surface quivers with your voice
+     thinking   pulls in; something inside keeps surfacing and sinking back
+     speaking   swells with each syllable, and rings leave him
+     resting    pools flat
+   He reaches a limb toward your hand. A job is a piece of him: it buds off, sits on the
+   card while it works, and comes back amber to rejoin him. */
+const B = { sx: 1, sy: 1, v_sx: 0, v_sy: 0, pod: 0, sig: 0 }
+function drop(m) {
+  const { x, y, R, t, dt } = m
+  spring(B, 'sx', 1 + 0.03 * m.beat - 0.1 * m.wl - 0.08 * m.wt + 0.06 * m.amp * m.ws + 0.55 * m.rest + 0.1 * m.nod, dt, 90, 0.42)
+  spring(B, 'sy', 1 - 0.03 * m.beat + 0.15 * m.wl - 0.08 * m.wt + 0.08 * m.amp * m.ws - 0.62 * m.rest - 0.2 * m.nod, dt, 90, 0.42)
+  B.pod += (m.reach - B.pod) * (1 - Math.exp(-dt * 7))
+  const sig = clamp(R * 0.11, 1.1, 9); if (Math.abs(sig - B.sig) > 0.15) { B.sig = sig; $('#gooblur').setAttribute('stdDeviation', sig.toFixed(2)) }
+  goo.style.opacity = 1 - 0.5 * m.rest
+  const cx = x + m.shake * R * 0.18, cy = y + m.rest * R * 0.62 + m.nod * R * 0.1, rx = R * B.sx, ry = R * B.sy
+  const fill = gg.createRadialGradient(cx + m.gx * R * 0.3, cy + m.gy * R * 0.26 - R * 0.12, R * 0.05, cx, cy, R * 1.5)
+  fill.addColorStop(0, HEAT[2]); fill.addColorStop(0.5, HEAT[1]); fill.addColorStop(1, HEAT[0])
+  gg.fillStyle = fill
+  const blob = (bx, by, ax, ay) => { gg.beginPath(); gg.ellipse(bx, by, Math.max(0.5, ax), Math.max(0.5, ay), 0, 0, TAU); gg.fill() }
+  blob(cx, cy, rx, ry); blob(cx, cy + ry * 0.16, rx * 0.94, ry * 0.9)                                   // sits heavy
+  blob(cx + m.gx * R * 0.46, cy + m.gy * R * 0.4, R * 0.7 * B.sx, R * 0.7 * B.sy)                        // bulges toward what he attends to
+  const voice = (m.wl + m.ws) * m.amp
+  if (voice > 0.01) for (let k = 0; k < 7; k++) { const a = k / 7 * TAU + t * 0.4, rr = 0.84 + 0.2 * voice * Math.sin(t * 10 + k * 2.1); blob(cx + Math.cos(a) * rx * rr, cy + Math.sin(a) * ry * rr, R * 0.28, R * 0.28) }
+  if (m.wt > 0.01) {                                                                                    // something keeps surfacing
+    blob(cx + Math.sin(t * 0.9) * R * 0.22, cy - ry * (0.7 + 0.62 * Math.abs(Math.sin(t * 1.7))), R * 0.27 * m.wt, R * 0.27 * m.wt)
+    blob(cx + Math.cos(t * 2.2) * rx * 1.42, cy + Math.sin(t * 2.2) * ry * 0.5, R * 0.17 * m.wt, R * 0.17 * m.wt)
+  }
+  if (B.pod > 0.02) { const ca = Math.cos(m.pa), sa = Math.sin(m.pa); for (let k = 1; k <= 4; k++) { const f = k / 4, d = R * (0.72 + 0.8 * f * B.pod), rr = R * (0.44 - 0.075 * k) * Math.min(1, B.pod * 1.6); blob(cx + ca * d * B.sx, cy + sa * d * B.sy, rr, rr) } }
+  // light inside him, on the side he faces; it is amber while he holds something for you
+  const core = g.createRadialGradient(cx + m.gx * R * 0.3, cy + m.gy * R * 0.26, 0, cx + m.gx * R * 0.3, cy + m.gy * R * 0.26, R * 0.95)
+  const hotc = m.carry > 0.5 ? AMBER : HEAT[3]
+  core.addColorStop(0, hotc); core.addColorStop(0.35, m.carry > 0.5 ? AMBER : HEAT[2]); core.addColorStop(1, 'rgba(0,0,0,0)')
+  g.save(); g.beginPath(); g.ellipse(cx, cy + ry * 0.06, rx * 1.02, ry * 1.04, 0, 0, TAU); g.clip()
+  g.globalCompositeOperation = 'lighter'; g.globalAlpha = clamp((0.42 + 0.25 * m.wt + 0.4 * m.amp * m.ws + 0.14 * m.wl + 0.2 * m.carry) * (1 - 0.8 * m.rest), 0, 1)
+  g.fillStyle = core; g.fillRect(cx - R * 2, cy - R * 2, R * 4, R * 4)
+  g.globalAlpha = 0.2 * (1 - m.rest); g.fillStyle = INK; g.beginPath(); g.ellipse(cx - rx * 0.34, cy - ry * 0.44, R * 0.2, R * 0.1, -0.5, 0, TAU); g.fill()
+  g.restore(); g.globalAlpha = 1
+  if (m.ws > 0.02) for (let k = 0; k < 2; k++) { const p = (t * 0.9 + k / 2) % 1; g.globalAlpha = m.ws * m.amp * (1 - p) * 0.4; g.strokeStyle = acc(1); g.lineWidth = 1.2; g.beginPath(); g.ellipse(cx, cy, rx * (1.1 + 0.55 * p), ry * (1.1 + 0.55 * p), 0, 0, TAU); g.stroke() }
+  g.globalAlpha = 1
+  if (m.job && m.job.ph === 'run') {                                                                    // the piece of him that is out working
+    const c = m.job.card, jr = Math.max(4, R * 0.2) * (1 + 0.14 * Math.sin(t * 5))
+    gg.fillStyle = HEAT[1]; gg.beginPath(); gg.arc(c.x + 16, c.y, jr, 0, TAU); gg.fill()
+    g.globalCompositeOperation = 'lighter'; g.globalAlpha = 0.7; g.fillStyle = HEAT[2]; g.beginPath(); g.arc(c.x + 16, c.y, jr * 0.5, 0, TAU); g.fill(); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1
+  }
+}
+
+/* ── C · Disc ────────────────────────────────────────────────────────────
+   A face with no features: a thin disc with a bright rim, in three dimensions. All it
+   has is which way it faces, and that turns out to be most of what a face is for.
+     with you   faces you; follows your hand a little, then comes back to you
+     listening  squares up to you and leans in; your voice crosses his face inward
+     thinking   turns away — over and over, edge-on and round
+     speaking   faces you; his voice crosses his face outward
+     resting    lies down
+   He nods, and shakes his head. To work on something he turns to face it. A job is an
+   arc filling round his rim; when it is done the rim stays amber until you ask. */
+const D = { yaw: 0, pitch: 0, v_yaw: 0, v_pitch: 0, spin: 0 }
+function disc(m) {
+  const { x, y, R, t, dt } = m
+  D.spin += dt * 2.7 * m.wt
+  if (m.wt < 0.03) { const k = Math.round(D.spin / Math.PI) * Math.PI; D.spin += (k - D.spin) * (1 - Math.exp(-dt * 7)) }   // comes back round to face you
+  spring(D, 'yaw', m.gx * 0.85 * (1 - m.rest) + m.shake * 0.55, dt, 70, 0.55)
+  spring(D, 'pitch', m.gy * 0.62 * (1 - m.rest) - m.rest * 1.32 + m.nod * 0.62, dt, 70, 0.55)
+  const yw = D.yaw + D.spin, nx = Math.sin(yw) * Math.cos(D.pitch), ny = Math.sin(D.pitch), nz = Math.cos(yw) * Math.cos(D.pitch)
+  const sq = Math.max(0.03, Math.abs(nz)), ang = Math.atan2(ny, nx), sgn = nz >= 0 ? 1 : -1
+  const sc = 1 + 0.02 * m.beat + 0.06 * m.wl + 0.05 * m.amp * m.ws, Rr = R * sc, T = R * 0.11, lum = 0.25 + 0.75 * nz * nz
+  const cy0 = y + m.rest * R * 0.35
+  const ell = (k, r = Rr) => { const o = sgn * T * (k - 0.5); g.beginPath(); g.ellipse(x + nx * o, cy0 + ny * o, Math.max(0.4, r * sq), r, ang, 0, TAU) }
+  g.fillStyle = HEAT[0]; g.globalAlpha = 0.9 - 0.4 * m.rest
+  for (let i = 0; i < 6; i++) { ell(i / 6); g.fill() }                                                   // his edge
+  const fxc = x + nx * sgn * T * 0.5, fyc = cy0 + ny * sgn * T * 0.5
+  ell(1); g.globalAlpha = 1; g.fillStyle = PANEL; g.fill()
+  g.save(); ell(1); g.clip()
+  // The face is blank on purpose: an even light, a little stronger on the side away from where
+  // he is turned, and no centre. Anything in the middle of a disc makes it an eye.
+  const glow = g.createLinearGradient(fxc - nx * R - R * 0.4, fyc - ny * R - R * 0.9, fxc + nx * R + R * 0.4, fyc + ny * R + R * 0.9)
+  glow.addColorStop(0, m.carry > 0.5 ? AMBER : HEAT[2]); glow.addColorStop(0.6, HEAT[0]); glow.addColorStop(1, 'rgba(0,0,0,0)')
+  g.globalAlpha = clamp((0.34 + 0.2 * m.wl + 0.45 * m.amp * m.ws + 0.2 * m.carry) * lum * (1 - 0.7 * m.rest), 0, 1); g.fillStyle = glow; g.fillRect(x - R * 2, cy0 - R * 2, R * 4, R * 4)
+  g.restore(); g.globalAlpha = 1
+  // voice, in the plane of his face: yours arrives at his rim, his leaves it
+  g.save(); g.translate(fxc, fyc); g.rotate(ang); g.scale(sq * sc, sc); g.lineWidth = Math.max(1, R * 0.016) / sc
+  const ring = (rho, a, col) => { if (a < 0.01) return; g.globalAlpha = Math.min(1, a); g.strokeStyle = col; g.beginPath(); g.arc(0, 0, R * rho, 0, TAU); g.stroke() }
+  for (let k = 0; k < 3; k++) {
+    const p = (t * 0.85 + k / 3) % 1
+    ring(1.06 + 0.5 * p, m.ws * m.amp * (1 - p) * 0.8, acc(1))                                           // out
+    ring(1.56 - 0.5 * p, m.wl * (0.1 + m.amp) * p * 0.8, INK)                                            // in
+  }
+  g.restore(); g.globalAlpha = 1
+  // rim
+  const rim = g.createLinearGradient(x - R, cy0 - R, x + R, cy0 + R); rim.addColorStop(0, HEAT[3]); rim.addColorStop(0.5, HEAT[2]); rim.addColorStop(1, HEAT[1])
+  ell(1); g.shadowColor = m.carry > 0.5 ? AMBER : acc(0.9); g.shadowBlur = R * 0.35 * dpr * lum; g.globalAlpha = (0.45 + 0.55 * lum) * (1 - 0.5 * m.rest)
+  g.strokeStyle = m.carry > 0.5 ? AMBER : rim; g.lineWidth = Math.max(1.2, R * 0.032); g.stroke(); g.shadowBlur = 0; g.globalAlpha = 1
+  if (m.job && m.job.ph === 'run') {                                                                    // a job: an arc filling round his rim
+    g.save(); g.translate(fxc, fyc); g.rotate(ang); g.scale(sq * sc, sc)
+    g.strokeStyle = acc(1); g.lineWidth = Math.max(1.5, R * 0.03); g.lineCap = 'round'
+    g.beginPath(); g.arc(0, 0, R * 1.17 + 2, -Math.PI / 2 - ang, -Math.PI / 2 - ang + m.job.p * TAU); g.stroke(); g.restore()
+  }
+}
+
+const FORMS = {
+  A: { name: 'Thread', why: 'someone, because of what he does — one line that listens, writes and marks', draw: thread },
+  B: { name: 'Drop', why: 'someone, because he has a body — soft, reaching, able to send part of himself', draw: drop },
+  C: { name: 'Disc', why: 'someone, because he regards you — a face with no features that turns to you', draw: disc },
+}
+
+/* ── speech, hearing ─────────────────────────────────────────────────── */
+const you = $('#you'), alf = $('#alf'), st = $('#st'), input = $('#in')
+let run = 0, sp = null
+const LABEL = { idle: 'with you', listen: 'listening', think: 'thinking', speak: 'speaking', rest: 'resting' }
+const label = () => { const s = forced || (away ? 'rest' : state); st.textContent = s === 'idle' && carried ? 'has something for you' : s === 'idle' && job ? 'with you · 1 running' : LABEL[s] }
+function setState(s) { state = s; label() }
+function cancel() { run++; sp = null; attend = null; delete alf.dataset.live }
+function say(text, at = null) {
+  const my = run
+  return new Promise(done => { attend = at; setState('speak'); alf.textContent = ''; alf.dataset.live = ''; sp = { text, start: performance.now(), my, done, shown: 0 } })
+}
+function tickSpeech(now, t) {
+  if (!sp) return 0
+  const i = Math.floor((now - sp.start) / 1000 * 34), n = Math.min(i, sp.text.length)
+  if (n !== sp.shown) { alf.textContent = sp.text.slice(0, n); sp.shown = n }
+  if (i > sp.text.length + 12) { const d = sp.done; sp = null; delete alf.dataset.live; attend = null; setState('idle'); d(); return 0 }
+  if (i >= sp.text.length) return 0
+  return /[a-z0-9]/i.test(sp.text[i]) ? 0.3 + 0.65 * Math.abs(Math.sin(t * 12.3) * Math.sin(t * 4.1 + i)) : 0.06
+}
+
+const SAMPLES = ['Move standup to 3pm', 'Look into vector DBs for me', 'What needs me?', 'Thanks', 'Can you order lunch?']
+const REPORT = "Vector DBs. Six minutes. pgvector covers your scale with no new infra; recall drops past five million rows. I'd stay on Postgres."
+async function hear(text) {
+  cancel(); const my = run
+  you.textContent = '› ' + text; alf.textContent = ''
+  setState('think'); await sleep(1000 + Math.random() * 500); if (my !== run) return
+  const q = text.toLowerCase()
+  if (/move|standup|resched/.test(q)) {
+    attend = 'c-today'; await sleep(500); if (my !== run) return
+    $('#c-today p').textContent = 'Standup 15:00 · 3 blocks'; nod()
+    await say('Moved. Standup is at three.', 'c-today')
+  } else if (/look into|research|find out|investigat/.test(q)) {
+    if (job || carried) await say(carried ? 'I still have the last one for you. Tap me.' : 'One is already out. I will bring it back.')
+    else { await say("On it. I'll come back with it."); if (my === run) startJob() }
+  } else if (/need|brief|morning/.test(q)) return brief()
+  else if (/thank/.test(q)) { nod(); await say('Of course.') }
+  else if (/^(hi|hey|hello)\b|you there/.test(q)) await say('Here.')
+  else if (/night|\bbye\b/.test(q)) { await say('Good night, Bruce.'); if (my === run) { await sleep(400); grace = performance.now() + 2500; leave() } }
+  else if (/order|buy|book/.test(q)) { shake(); await say("Not from here. That one isn't wired up.") }
+  else await say('I heard you. Only a few lines are wired in this prototype — try one below.')
+}
+async function brief() {
+  cancel(); const my = run; you.textContent = ''
+  await say('Two emails need a yes or no.', 'c-inbox'); if (my !== run) return; await sleep(250)
+  await say("Three blocks today. I'd hold two o'clock for the review.", 'c-today'); if (my !== run) return; await sleep(250)
+  await say(job ? 'Research is still out.' : carried ? 'And I have the research for you.' : 'Nothing running in the background.', 'c-research')
+}
+// A job: it goes out, it works, it comes back, and he holds it. He never announces it.
+function startJob() { if (job || carried) return; job = { ph: 'out', u: 0, p: 0 }; delete $('#c-research').dataset.done; label(); sync() }
+function tickJob(dt) {
+  if (!job) return
+  const card = $('#c-research'), bar = card.querySelector('.bar i'), p = card.querySelector('p')
+  if (job.ph === 'out') { job.u += dt / 0.9; p.textContent = 'Vector DBs · starting'; if (job.u >= 1) job.ph = 'run' }
+  else if (job.ph === 'run') { job.p = Math.min(1, job.p + dt / 7); bar.style.width = job.p * 100 + '%'; p.textContent = `Vector DBs · ${Math.round(job.p * 100)}%`; if (job.p >= 1) { job.ph = 'back'; job.u = 0; card.dataset.done = ''; p.textContent = 'Vector DBs · finished' } }
+  else { job.u += dt / 1.1; if (job.u >= 1) { job = null; carried = true; label(); sync() } }
+}
+
+let grace = 0
+function leave() { if (away) return; away = true; cancel(); setState('idle'); alf.textContent = ''; you.textContent = ''; document.body.dataset.away = ''; label() }
+async function back() {
+  if (!away) return
+  away = false; delete document.body.dataset.away; label(); cancel(); const my = run
+  await sleep(1000); if (my !== run) return
+  nod(1, 1000); await say('Welcome back, Bruce.'); if (my !== run) return
+  await sleep(250); await say(carried ? 'I have something for you.' : 'Two things need a yes or no.', carried ? null : 'c-inbox')
+}
+const stir = () => { if (away && performance.now() > grace) back() }
+
+/* ── your side ───────────────────────────────────────────────────────── */
+function holdStart(how) {
+  if (held) return
+  held = how; heldAt = performance.now(); document.body.dataset.held = ''
+  cancel(); setState('listen'); you.textContent = '› …'; alf.textContent = ''
+}
+function holdEnd() {
+  if (!held) return
+  const how = held, dur = performance.now() - heldAt; held = null; delete document.body.dataset.held
+  if (how === 'touch' && dur < 240) { you.textContent = ''; setState('idle'); return tap() }
+  hear(SAMPLES[sampleAt++ % SAMPLES.length])            // no microphone in this prototype: the next sample line plays
+}
+function tap() { if (carried) { carried = false; $('#c-research p').textContent = 'Nothing running'; $('#c-research .bar i').style.width = 0; sync(); you.textContent = ''; say(REPORT) } else { nod(0.6, 420); say('Yes?') } }
+
+const onStage = e => e.target === document.body || e.target === document.documentElement
+addEventListener('pointermove', e => {
+  const now = performance.now()
+  if (ptr.on) { const dt = Math.max(8, now - ptr.at) / 1000; ptr.vx = lerp(ptr.vx, (e.clientX - ptr.x) / dt, 0.5); ptr.vy = lerp(ptr.vy, (e.clientY - ptr.y) / dt, 0.5) }
+  ptr.x = e.clientX; ptr.y = e.clientY; ptr.on = true; ptr.at = now; stir()
+})
+document.documentElement.addEventListener('pointerleave', () => { ptr.on = false })
+addEventListener('pointerdown', e => {
+  ptr.x = e.clientX; ptr.y = e.clientY; ptr.on = true; ptr.at = performance.now()
+  const was = away; stir()
+  if (was || !onStage(e) || e.button) return
+  if (Math.hypot(e.clientX - E.x, e.clientY - E.y) < Math.max(E.r * 1.4, 28)) holdStart('touch')
+})
+addEventListener('pointerup', () => { if (held === 'touch') holdEnd() })
+addEventListener('pointercancel', () => { if (held === 'touch') holdEnd() })
+input.addEventListener('input', () => { lastKey = performance.now(); stir(); if (state !== 'listen') { cancel(); setState('listen') } })
+input.addEventListener('blur', () => { if (state === 'listen' && !input.value && !held) setState('idle') })
+$('#line').addEventListener('submit', e => { e.preventDefault(); const v = input.value.trim(); input.value = ''; input.blur(); if (v) hear(v); else setState('idle') })
+$('#chips').innerHTML = SAMPLES.map(s => `<button type="button">${s}</button>`).join('')
+$('#chips').addEventListener('click', e => { if (e.target.tagName === 'BUTTON') hear(e.target.textContent) })
+addEventListener('keydown', e => {
+  stir()
+  if (e.target.matches?.('input')) { if (e.key === 'Escape') input.blur(); return }
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const order = Object.keys(FORMS)
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') setForm(order[(order.indexOf(form) + (e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length])
+  else if (e.key === 'Escape') { cancel(); setState('idle'); alf.textContent = ''; you.textContent = '' }
+  else if (e.key === '/') { e.preventDefault(); input.focus() }
+  else if (e.code === 'Space') { e.preventDefault(); holdStart('space') }
+})
+addEventListener('keyup', e => { if (e.code === 'Space' && held === 'space') holdEnd() })
+document.addEventListener('visibilitychange', () => { if (document.hidden) leave() })
+
+/* ── prototype switcher ──────────────────────────────────────────────── */
+const proto = $('#proto')
+function setForm(f) { form = f; $('#why').innerHTML = `<b>${f} · ${FORMS[f].name}</b><span>${FORMS[f].why}</span>`; history.replaceState(null, '', '?' + new URLSearchParams({ variant: f, ...(size !== 'stage' && { size }) })); sync() }
+function setSize(s) { size = s; document.body.dataset.size = s; layout(); sync() }
+function sync() {
+  const btn = (act, text, on) => `<button data-act="${act}" aria-pressed="${!!on}">${text}</button>`
+  proto.innerHTML = '<span class="lab">body</span>' + Object.entries(FORMS).map(([k, f]) => btn('f:' + k, `${k} ${f.name}`, form === k)).join('') + '<span class="sep"></span>'
+    + '<span class="lab">state</span>' + btn('s:', 'auto', !forced) + ['idle', 'listen', 'think', 'speak', 'rest'].map(s => btn('s:' + s, s, forced === s)).join('') + '<span class="sep"></span>'
+    + '<span class="lab">size</span>' + ['stage', 'dock', 'dot'].map(s => btn('z:' + s, s, size === s)).join('') + '<span class="sep"></span>'
+    + '<span class="lab">do</span>' + btn('brief', 'brief') + btn('task', carried ? 'holding 1' : job ? 'task out' : 'task', !!job || carried) + btn('nod', 'nod') + btn('shake', 'shake') + btn('away', 'away') + '<span class="sep"></span>'
+    + btn('hour', document.documentElement.dataset.hour)
+}
+proto.addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.act; if (!a) return
+  if (a.startsWith('f:')) return setForm(a.slice(2))
+  if (a.startsWith('z:')) return setSize(a.slice(2))
+  if (a.startsWith('s:')) { forced = a.slice(2) || null; label() }
+  else if (a === 'brief') { if (away) back(); else brief() }
+  else if (a === 'task') startJob()
+  else if (a === 'nod') nod()
+  else if (a === 'shake') shake()
+  else if (a === 'away') { grace = performance.now() + 2000; leave() }
+  else if (a === 'hour') setHour(HOURS[(HOURS.indexOf(document.documentElement.dataset.hour) + 1) % HOURS.length])
+  sync()
+})
+
+/* ── frame ───────────────────────────────────────────────────────────── */
+let last = performance.now(), reachable = false
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000; last = now
+  const ease = r => 1 - Math.exp(-dt * r)
+  const resting = away || forced === 'rest', cur = forced && forced !== 'rest' ? forced : state
+  for (const s in w) w[s] += ((cur === s ? 1 : 0) - w[s]) * ease(8)
+  rest += ((resting ? 1 : 0) - rest) * ease(resting ? 1.6 : 3)
+
+  let target = tickSpeech(now, t)
+  if (cur === 'listen') target = (held || now - lastKey < 240 || forced === 'listen') ? 0.2 + 0.7 * Math.abs(Math.sin(t * 9.3) * Math.sin(t * 2.7 + 1)) : 0.04
+  else if (cur === 'speak' && !sp) target = 0.25 + 0.7 * Math.abs(Math.sin(t * 10) * Math.sin(t * 3.3))
+  else if (cur !== 'speak') target = 0
+  amp += (target - amp) * ease(16)
+  tickJob(dt)
+
+  // what he is working on: he turns to it, and on the stage he goes part of the way over
+  const want = resting ? null : attend
+  if (want) lastCard = want
+  att += ((want ? 1 : 0) - att) * ease(want ? 5 : 3.5)
+  const desk = $('#desk'); desk.toggleAttribute('data-on', !!want)
+  for (const c of desk.children) c.toggleAttribute('data-on', c.id === want)
+  const card = lastCard ? rect(lastCard) : null
+  let tx = base.x, ty = base.y
+  if (want && size === 'stage') { tx = lerp(base.x, card.x + card.w / 2, 0.3); ty = base.y + base.r * 0.12 }
+  const small = base.r < 30 ? 1 : 0, eng = Math.max(w.listen, w.think, w.speak)
+  spring(E, 'x', tx, dt, 34, 0.8); spring(E, 'y', ty, dt, 34, 0.8)
+  spring(E, 'r', base.r * (1 + small * 0.4 * eng * (1 - rest)), dt, 40, 0.7); E.r = Math.max(2, E.r)
+
+  // where his attention is: the card; else your hand if it has just moved; else you
+  let ax = 0, ay = 0
+  const dx = ptr.x - E.x, dy = ptr.y - E.y, dp = Math.hypot(dx, dy) || 1
+  if (want && card) { const cx = card.x + card.w / 2 - E.x, cy = card.y + card.h / 2 - E.y, d = Math.hypot(cx, cy) || 1; ax = cx / d * 0.9; ay = cy / d * 0.9 }
+  else if (!resting && cur !== 'think' && ptr.on && now - ptr.at < (held ? 1e9 : 3500)) { const k = Math.min(1, dp / (E.r * 4 + 60)) * (held ? 0.85 : 0.6); ax = dx / dp * k; ay = dy / dp * k }
+  else if (cur === 'think') { ax = -0.35; ay = -0.4 }                                   // looks away while he thinks
+  else { ax = Math.sin(t * 0.23) * 0.06; ay = Math.sin(t * 0.17) * 0.04 }
+  spring(gaze, 'x', ax, dt, 50, 0.62); spring(gaze, 'y', ay, dt, 50, 0.62)
+  const k = Math.exp(-dt * 9); ptr.vx *= k; ptr.vy *= k
+  reach += ((ptr.on && !resting && cur !== 'think' ? smooth(E.r * 3.4 + 40, E.r * 1.15, dp) * smooth(E.r * 0.45, E.r * 1.05, dp) : 0) - reach)   // toward your hand when it is near; not when it is already on him * ease(9)
+  const near = ptr.on && !resting && dp < Math.max(E.r * 1.4, 28)
+  if (near !== reachable) { reachable = near; document.body.style.cursor = near ? 'grab' : '' }
+  carry += ((carried ? 1 : 0) - carry) * ease(4)
+
+  const gp = (now - gest.at) / gest.ms, live = gp > 0 && gp < 1
+  const sum = w.idle + w.listen + w.think + w.speak || 1
+  const m = {
+    x: E.x, y: E.y, R: E.r, t, dt, beat: Math.sin(t * (1.3 - 0.5 * rest)),
+    wi: w.idle / sum, wl: w.listen / sum, wt: w.think / sum, ws: w.speak / sum, rest, amp,
+    gx: gaze.x, gy: gaze.y, pa: Math.atan2(dy, dx), reach,
+    nod: live && gest.kind === 'nod' ? gest.depth * Math.sin(Math.PI * gp) : 0,
+    shake: live && gest.kind === 'shake' ? Math.sin(gp * TAU * 2.5) * (1 - gp) : 0,
+    att, card, carry, job: job && { ...job, card: rect('c-research') },
+  }
+  g.clearRect(0, 0, W, VH); gg.clearRect(0, 0, W, VH)
+  FORMS[form].draw(m)
+  // a job going out, and coming back: the same in every body — something of his crosses the room
+  if (job && job.ph !== 'run') {
+    const c = m.job.card, ax0 = c.x + (form === 'B' ? 16 : c.w / 2), ay0 = c.y, out = job.ph === 'out', u = out ? job.u : 1 - job.u, e = u * u * (3 - 2 * u)
+    const jx = lerp(E.x, ax0, e), jy = lerp(E.y, ay0, e) - Math.sin(e * Math.PI) * 26, jr = Math.max(3, E.r * 0.13)
+    const jg = g.createRadialGradient(jx, jy, 0, jx, jy, jr * 3); jg.addColorStop(0, out ? INK : AMBER); jg.addColorStop(0.3, out ? acc(0.9) : AMBER); jg.addColorStop(1, 'rgba(0,0,0,0)')
+    g.fillStyle = jg; g.beginPath(); g.arc(jx, jy, jr * 3, 0, TAU); g.fill()
+    if (form === 'B') { gg.fillStyle = out ? HEAT[1] : AMBER; gg.beginPath(); gg.arc(jx, jy, Math.max(4, E.r * 0.2), 0, TAU); gg.fill() }
+  }
+  requestAnimationFrame(frame)
+}
+
+setHour(HOURS.includes(params.get('hour')) ? params.get('hour') : 'dusk')
+if (['stage', 'dock', 'dot'].includes(params.get('size'))) { size = params.get('size'); document.body.dataset.size = size }
+addEventListener('resize', resize)
+resize(); setForm(FORMS[params.get('variant')] ? params.get('variant') : 'A')
+requestAnimationFrame(frame)
+// He is resting until you arrive: your first move wakes him. If you only watch, he wakes anyway.
+if (params.has('quiet')) { away = false; rest = 0; delete document.body.dataset.away; label() }
+else setTimeout(back, 1600)
+</script>
+</body>
+</html>

@@ -1,0 +1,946 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Delete or absorb once the question is answered.
+
+  Question: what should Alfred's entity look like, and how does it behave
+  across idle / listening / thinking / speaking / quiet-notification?
+
+  Three entity forms on one page, switchable with ?variant=B|C|D (or ← →):
+    B  Lantern    — rings stacked into a sphere round a lamp; opens and closes like a concertina
+    C  Swarm      — particles that re-form per state
+    D  Gyroscope  — a lit core, three gyroscope rings and a flat HUD round it
+                    (the first entity from the Alfred app prototype)
+  (A, a dithered sphere, was tried and dropped; so were the first B, a pair of eyes,
+  and the first D, Construct — a core with one heavy ring.)
+  Both draw into the same cell grid with the portfolio's four heat bands
+  and ordered dither. Everything around them (brief, inbox, calendar,
+  deck) is stubbed sample data — nothing here talks to a real service.
+
+  Run: open this file, or serve the folder.
+-->
+<html lang="en" data-hour="dusk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred — entity prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #08060e; --panel: #100b19; --panel-up: #181024;
+    --ink: #f3ecf8; --body: #cbc0d8; --mute: #9d90b3; --faint: #7a6f92;
+    --rule: rgba(205, 180, 232, 0.17); --rule-soft: rgba(205, 180, 232, 0.08);
+    --accent: 255 61 127;
+    --heat-1: #4c25a6; --heat-2: #9c48ff; --heat-3: #ff4f93; --heat-4: #ffd56e;
+  }
+  :root[data-hour='night'] {
+    --bg: #04060e; --panel: #090e1b; --panel-up: #10182a;
+    --ink: #e8edff; --body: #c0c9e1; --mute: #919fbe; --faint: #7283a3;
+    --rule: rgba(168, 189, 231, 0.17); --rule-soft: rgba(168, 189, 231, 0.08);
+    --accent: 122 142 255;
+    --heat-1: #2c43a6; --heat-2: #4f7dff; --heat-3: #97b6ff; --heat-4: #fff4c0;
+  }
+  :root[data-hour='dawn'] {
+    --bg: #0b080d; --panel: #140e17; --panel-up: #1d1420;
+    --ink: #f6e9df; --body: #d3c1c5; --mute: #aa929c; --faint: #927b87;
+    --rule: rgba(221, 186, 183, 0.17); --rule-soft: rgba(221, 186, 183, 0.08);
+    --accent: 247 157 116;
+    --heat-1: #6c2a60; --heat-2: #e4527f; --heat-3: #ffa77b; --heat-4: #ffecb2;
+  }
+  :root[data-hour='day'] {
+    --bg: #0a1016; --panel: #111922; --panel-up: #18222d;
+    --ink: #eef4f8; --body: #c5d0da; --mute: #97a6b4; --faint: #7a8a9b;
+    --rule: rgba(176, 200, 220, 0.17); --rule-soft: rgba(176, 200, 220, 0.08);
+    --accent: 84 170 214;
+    --heat-1: #17647e; --heat-2: #3aa8e8; --heat-3: #62d696; --heat-4: #ffe074;
+  }
+
+  :root[data-hour='gold'] {
+    --bg: #0a0705; --panel: #14100a; --panel-up: #1e170d;
+    --ink: #fbf1dc; --body: #d9c9a8; --mute: #a8946e; --faint: #8a7858;
+    --rule: rgba(230, 200, 140, 0.17); --rule-soft: rgba(230, 200, 140, 0.08);
+    --accent: 255 176 46;
+    --heat-1: #6b3408; --heat-2: #c4700f; --heat-3: #ffac2e; --heat-4: #ffe59a;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 400 14px/1.5 var(--sans);
+    overflow: hidden; transition: background 1.1s;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  #grid { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  .top {
+    position: fixed; inset: 0 0 auto 0; z-index: 2;
+    display: flex; justify-content: space-between; padding: 15px 18px;
+    font: 400 10.5px/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint);
+  }
+  .top b { color: var(--ink); font-weight: 500; margin-right: 12px; }
+  .st::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; background: rgb(var(--accent)); }
+
+  /* what was said: yours above, his below, both under the entity */
+  .say {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(620px, 100% - 32px); text-align: center; pointer-events: none;
+    transition: top 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .you { font: 400 11.5px/1.6 var(--mono); color: var(--mute); min-height: 18px; }
+  .alf { font: 400 15px/1.6 var(--mono); color: var(--ink); min-height: 24px; text-wrap: balance; }
+  .alf[data-live]::after { content: '▍'; color: rgb(var(--accent)); animation: caret 0.9s steps(2) infinite; }
+  @keyframes caret { 50% { opacity: 0; } }
+
+  /* the quiet note: fades in slowly beside the blip, says nothing until answered */
+  .nudge {
+    position: fixed; z-index: 3; display: flex; align-items: center; gap: 10px;
+    padding: 6px 7px 6px 11px; border: 1px dashed var(--rule); background: var(--panel);
+    font: 400 11px/1 var(--mono); color: var(--body); white-space: nowrap;
+    opacity: 0; visibility: hidden; transition: opacity 1.1s, visibility 0s 1.1s;
+  }
+  .nudge[data-on] { opacity: 1; visibility: visible; transition: opacity 1.1s; }
+
+  .yn { display: flex; gap: 6px; flex: none; }
+  .yn button {
+    width: 26px; height: 26px; display: grid; place-items: center;
+    border: 1px solid var(--rule); color: var(--mute); transition: 0.15s;
+  }
+  .yn button:hover { color: var(--ink); background: var(--panel-up); }
+  .yn button[data-y]:hover { border-color: rgb(var(--accent) / 0.8); color: rgb(var(--accent)); }
+  .yn svg, .tile svg { display: block; }
+
+  /* brief: three panels that wipe in under the entity when he has things to show */
+  .brief {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: min(1060px, 100% - 32px);
+    display: grid; grid-template-columns: 0.9fr 1.15fr 1.1fr;
+    border: 1px dashed var(--rule); overflow: auto;
+    opacity: 0; visibility: hidden; clip-path: inset(0 0 100% 0);
+    transition: clip-path 0.45s steps(9), opacity 0.2s, visibility 0s 0.45s;
+  }
+  body[data-scene='brief'] .brief { opacity: 1; visibility: visible; clip-path: inset(0); transition: clip-path 0.6s steps(12), opacity 0.2s; }
+  .panel { padding: 13px 16px 14px; border-right: 1px dashed var(--rule); transition: opacity 0.4s, background 0.4s; min-width: 0; }
+  .panel:last-child { border-right: 0; }
+  .brief[data-reading] .panel { opacity: 0.42; }
+  .brief[data-reading] .panel[data-reading] { opacity: 1; background: rgb(var(--accent) / 0.045); }
+  .panel h2 {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font: 500 10.5px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute);
+    padding-bottom: 10px;
+  }
+  .panel[data-reading] h2 { color: rgb(var(--accent)); }
+  .panel h2 i { font-style: normal; color: var(--faint); letter-spacing: 0.04em; }
+  .row { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 9px 0; border-top: 1px dashed var(--rule-soft); }
+  .row > div:first-child { min-width: 0; }
+  .who { font: 500 12px/1.4 var(--mono); color: var(--ink); }
+  .what { font-size: 12.5px; line-height: 1.5; color: var(--body); }
+  .draft { font: 400 11px/1.5 var(--mono); color: var(--mute); margin-top: 3px; }
+  .draft::before { content: '↳ '; color: rgb(var(--accent)); }
+  .row[data-done] { opacity: 0.5; }
+  .row[data-done] .yn { display: none; }
+  .row .res { display: none; font: 400 10.5px/26px var(--mono); color: var(--mute); white-space: nowrap; }
+  .row[data-done] .res { display: block; }
+  .line-item { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px dashed var(--rule-soft); font-size: 12.5px; color: var(--body); }
+  .line-item span:last-child { font: 400 11.5px/1.6 var(--mono); color: var(--mute); white-space: nowrap; }
+  .line-item[data-new] { color: var(--ink); }
+  .line-item[data-new] span:last-child { color: rgb(var(--accent)); }
+  .fyi { font: 400 11px/1.5 var(--mono); color: var(--faint); padding-top: 9px; border-top: 1px dashed var(--rule-soft); }
+
+  .cal { position: relative; height: 170px; margin-left: 34px; border-left: 1px dashed var(--rule); }
+  .cal time { position: absolute; left: -34px; font: 400 9.5px/1 var(--mono); color: var(--faint); transform: translateY(-4px); }
+  .cal .tick { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--rule-soft); }
+  .blk {
+    position: absolute; left: 6px; right: 0; padding: 0 7px; overflow: hidden;
+    display: flex; align-items: center; gap: 8px;
+    font: 400 11px/1 var(--mono); color: var(--ink); white-space: nowrap;
+    background: rgb(var(--accent) / 0.16); box-shadow: inset 2px 0 0 rgb(var(--accent));
+    transition: top 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), background 0.3s, opacity 0.3s;
+  }
+  .blk i { font-style: normal; color: var(--mute); font-size: 10px; }
+  .blk[data-proposed] { background: transparent; box-shadow: none; outline: 1px dashed rgb(var(--accent) / 0.6); outline-offset: -1px; color: var(--body); }
+  .blk[hidden] { display: none; }
+  .todo { list-style: none; padding: 0; margin-top: 4px; }
+  .todo li { display: flex; gap: 9px; align-items: center; padding: 5px 0; font-size: 12.5px; color: var(--body); }
+  .todo li::before { content: ''; width: 9px; height: 9px; border: 1px solid var(--mute); flex: none; }
+  .todo li[data-done] { color: var(--faint); text-decoration: line-through; }
+  .todo li[data-done]::before { background: rgb(var(--accent)); border-color: rgb(var(--accent)); }
+  .todo em { font: 400 10.5px/1 var(--mono); font-style: normal; color: rgb(var(--accent)); margin-left: auto; }
+
+  /* bottom stack: the deck (idle only), then the line you talk on */
+  #stack {
+    position: fixed; inset: auto 0 0 0; z-index: 2; padding: 0 16px 56px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  .deck { display: none; gap: 0; border: 1px dashed var(--rule); background: var(--panel); max-width: 100%; overflow-x: auto; }
+  body[data-scene='idle'] .deck { display: flex; animation: rise 0.5s steps(8) both; }
+  @keyframes rise { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0); } }
+  .tile {
+    width: 148px; flex: none; padding: 13px 14px 12px; text-align: left;
+    border-right: 1px dashed var(--rule); transition: background 0.2s, transform 0.2s;
+  }
+  .tile:last-child { border-right: 0; }
+  .tile:hover, .tile[aria-current='true'] { background: var(--panel-up); transform: translateY(-4px); box-shadow: 0 4px 0 rgb(var(--accent) / 0.7); }
+  .tile svg { color: rgb(var(--accent)); margin-bottom: 10px; }
+  .tile b { display: block; font: 500 12.5px/1.3 var(--sans); color: var(--ink); }
+  .tile span { display: block; font: 400 10.5px/1.5 var(--mono); color: var(--mute); margin-top: 3px; }
+  .tile kbd { float: right; font: 400 9.5px/1 var(--mono); color: var(--faint); }
+
+  .line { width: min(620px, 100%); }
+  .line form { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px dashed var(--rule); }
+  .line form:focus-within { border-bottom-color: rgb(var(--accent) / 0.7); }
+  .line form::before { content: '›'; font: 400 14px/1 var(--mono); color: rgb(var(--accent)); }
+  .line input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--ink); font: 400 13px/1.4 var(--mono); }
+  .line input::placeholder { color: var(--faint); }
+  .line kbd { font: 400 10px/1 var(--mono); color: var(--faint); border: 1px solid var(--rule); padding: 4px 6px; white-space: nowrap; }
+  body[data-held] .line kbd { color: var(--bg); background: rgb(var(--accent)); border-color: transparent; }
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+  .chips button { font: 400 10.5px/1 var(--mono); color: var(--faint); border: 1px dashed var(--rule); padding: 5px 7px; }
+  .chips button:hover { color: var(--ink); border-color: rgb(var(--accent) / 0.6); }
+
+  /* prototype switcher — deliberately not in the design's language */
+  .proto {
+    position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 9;
+    display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px;
+    max-width: calc(100% - 16px); overflow-x: auto; white-space: nowrap;
+    background: #f4f1ea; color: #15131a; font: 500 10.5px/1 ui-monospace, Menlo, monospace;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  }
+  .proto button { padding: 6px 7px; border-radius: 999px; }
+  .proto button:hover { background: #dedad0; }
+  .proto button[aria-pressed='true'] { background: #15131a; color: #f4f1ea; }
+  .proto .lab { padding: 0 4px 0 8px; color: #86808f; }
+  .proto .name { padding: 0 6px; min-width: 76px; text-align: center; }
+  .proto .sep { width: 1px; height: 14px; background: #cfcabd; margin: 0 4px; flex: none; }
+
+  @media (max-width: 860px) {
+    .brief { grid-template-columns: 1fr; }
+    .panel { border-right: 0; border-bottom: 1px dashed var(--rule); }
+    .chips { display: none; }
+    .tile { width: 128px; }
+  }
+</style>
+</head>
+<body data-scene="arrive">
+<canvas id="grid"></canvas>
+
+<header class="top">
+  <span><b>Alfred</b><span class="st" id="st">waking</span></span>
+  <span id="clock"></span>
+</header>
+
+<div class="say" id="say"><p class="you" id="you"></p><p class="alf" id="alf"></p></div>
+
+<aside class="nudge" id="nudge">
+  <span id="nudge-t">Research · finished</span>
+  <span class="yn"><button data-y aria-label="Hear it"></button><button data-n aria-label="Later"></button></span>
+</aside>
+
+<section class="brief" id="brief">
+  <div class="panel" id="p-brief">
+    <h2>Brief <i id="day"></i></h2>
+    <div class="line-item"><span>Clear, 16° — rain after six</span><span>weather</span></div>
+    <div class="line-item"><span>Markets closed flat</span><span>S&amp;P +0.1%</span></div>
+    <div class="line-item"><span>Chip export rules revised</span><span>news</span></div>
+    <div class="line-item"><span>Watchlist</span><span>AAPL −0.4%</span></div>
+    <div id="tomorrow"></div>
+    <p class="fyi">Written at 06:30 · sample data</p>
+  </div>
+
+  <div class="panel" id="p-inbox">
+    <h2>Inbox <i>5 new · 2 need you</i></h2>
+    <div class="row" data-ask data-yes="Sent. Thursday at ten is on your calendar." data-no="Left it. I'll ask again tomorrow.">
+      <div><p class="who">Northwind Labs · recruiting</p><p class="what">Onsite slots: Thu 10:00 or Fri 14:00.</p><p class="draft">Reply accepting Thu 10:00</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <div class="row" data-ask data-yes="Confirmed." data-no="Skipped. It closes tonight.">
+      <div><p class="who">Course staff · 17-6xx</p><p class="what">Team form needs your confirmation by tonight.</p><p class="draft">Confirm with the current team</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <p class="fyi">3 others — a receipt, a newsletter, a calendar accept. Nothing needed.</p>
+  </div>
+
+  <div class="panel" id="p-today">
+    <h2>Today <i>3 blocks</i></h2>
+    <div class="cal" id="cal"></div>
+    <div class="row" id="r-hold" data-ask data-effect="hold" data-yes="Held. Two to three is yours." data-no="Fine. It's still due Friday.">
+      <div><p class="what">Paper review is due in 2 days.</p><p class="draft">Hold 14:00–15:00 for it</p></div>
+      <span class="yn"><button data-y aria-label="Approve"></button><button data-n aria-label="Decline"></button></span><span class="res"></span>
+    </div>
+    <ul class="todo" id="todo">
+      <li>Send résumé to Northwind</li>
+      <li>Paper review <em>due Fri</em></li>
+      <li>Gym</li>
+    </ul>
+  </div>
+</section>
+
+<div id="stack">
+  <nav class="deck" id="deck" aria-label="Workspaces"></nav>
+  <div class="line">
+    <form id="line"><input id="in" autocomplete="off" placeholder="Say something, or type it"><kbd>hold space</kbd></form>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
+<div class="proto" id="proto"></div>
+
+<script>
+/* ── helpers ─────────────────────────────────────────────────────────── */
+const $ = s => document.querySelector(s)
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16 - 0.5)
+
+// 7×7 glyphs as text rows, emitted as rects — same trick as the portfolio's sprites
+const GLYPHS = {
+  yes: ['.......', '......#', '.....##', '#...##.', '##.##..', '.###...', '..#....'],
+  no: ['#.....#', '##...##', '.##.##.', '..###..', '.##.##.', '##...##', '#.....#'],
+  job: ['..###..', '.#...#.', '#######', '#.....#', '###.###', '#.....#', '#######'],
+  research: ['.###...', '#...#..', '#...#..', '#...#..', '.####..', '....##.', '.....##'],
+  product: ['...#...', '.##.##.', '#..#..#', '#..#..#', '#..#..#', '.##.##.', '...#...'],
+  chat: ['######.', '#.....#', '#.#.#.#', '#.....#', '######.', '.##....', '.#.....'],
+  auto: ['....#..', '...##..', '..##...', '.#####.', '...##..', '..##...', '..#....'],
+}
+const glyph = (name, px = 2) => `<svg width="${7 * px}" height="${7 * px}" viewBox="0 0 7 7" shape-rendering="crispEdges" fill="currentColor">${
+  GLYPHS[name].map((r, y) => [...r].map((c, x) => c === '#' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '').join('')).join('')}</svg>`
+
+/* ── variants, hours ─────────────────────────────────────────────────── */
+const FORMS = [{ key: 'B', name: 'Lantern' }, { key: 'C', name: 'Swarm' }, { key: 'D', name: 'Gyroscope' }]
+const params = new URLSearchParams(location.search)
+let form = (params.get('variant') || 'D').toUpperCase()
+if (!FORMS.some(f => f.key === form)) form = 'D'
+
+const HOURS = ['dusk', 'night', 'dawn', 'day', 'gold']
+let ramp = []
+function setHour(h) {
+  document.documentElement.dataset.hour = h
+  const css = getComputedStyle(document.documentElement)
+  const hex = n => css.getPropertyValue(`--heat-${n}`).trim()
+  const top = hex(4), mix = i => Math.round(parseInt(top.slice(i, i + 2), 16) * 0.45 + 255 * 0.55)
+  ramp = [hex(1), hex(2), hex(3), top, `rgb(${mix(1)},${mix(3)},${mix(5)})`]
+}
+const clockHour = () => { const h = new Date().getHours(); return h >= 5 && h < 8 ? 'dawn' : h < 17 && h >= 8 ? 'day' : h >= 17 && h < 20 ? 'dusk' : 'night' }
+
+/* ── the grid ────────────────────────────────────────────────────────── */
+const cv = $('#grid'), cx = cv.getContext('2d')
+let W = 0, H = 0, CELL = form === 'C' ? 8 : 5, cols = 0, rows = 0, field = new Float32Array(0)
+const E = { x: 0, y: 0, r: 100, tx: 0, ty: 0, tr: 100 }   // where the entity is, and where it is heading
+const w = { idle: 1, listen: 0, think: 0, speak: 0 }       // eased weight of each state
+const look = { x: 0, y: 0, tx: 0, ty: 0 }
+let state = 'idle', forced = null, amp = 0, presence = 0
+let notify = false, deferred = false, notifyV = 0
+
+function resize() {
+  W = innerWidth; H = innerHeight
+  const dpr = Math.min(2, devicePixelRatio || 1)
+  cv.width = W * dpr; cv.height = H * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  cols = Math.ceil(W / CELL); rows = Math.ceil(H / CELL); field = new Float32Array(cols * rows)
+  layout(true)
+}
+
+function layout(snap) {
+  const scene = document.body.dataset.scene
+  const stack = $('#stack').offsetHeight, big = form === 'C' ? 1 : 1.15
+  if (scene === 'brief') {
+    E.tr = clamp(Math.min(W, H) * 0.085, 44, 76) * big; E.tx = W / 2; E.ty = 48 + E.tr * 1.25
+  } else {
+    const free = H - stack - 44
+    E.tr = clamp(Math.min(W * 0.2, free * 0.27), 48, 150) * big; E.tx = W / 2; E.ty = 44 + free * 0.42
+  }
+  const sayTop = E.ty + E.tr * 1.5 + 8
+  $('#say').style.top = sayTop + 'px'
+  const top = sayTop + 58
+  $('#brief').style.top = top + 'px'
+  $('#brief').style.maxHeight = Math.max(160, H - top - stack - 10) + 'px'
+  if (snap) { E.x = E.tx; E.y = E.ty; E.r = E.tr }
+}
+
+/* C — Swarm: one set of particles, four formations, heat left behind in the grid. */
+const N = 560, P = new Float32Array(N * 2), S = Float32Array.from({ length: N }, Math.random)
+const scatter = () => { for (let i = 0; i < N; i++) { P[i * 2] = Math.random() * W; P[i * 2 + 1] = Math.random() * H } }
+function swarm(t, dt) {
+  const decay = Math.pow(0.78, dt * 60)
+  for (let i = 0; i < field.length; i++) field[i] *= decay
+  const R = E.r, pull = (1 - Math.pow(0.84, dt * 60)) * (0.12 + 0.88 * presence)
+  const dep = clamp(0.2 * (R / 130) ** 2, 0.045, 0.26) * (1 - 0.45 * w.idle)
+  const sum = w.idle + w.listen + w.think + w.speak || 1
+  const wi = w.idle / sum, wl = w.listen / sum, wt = w.think / sum, ws = w.speak / sum
+  const tilt = 0.35 + look.y * 0.35, ca = Math.cos(tilt), sa = Math.sin(tilt)
+  for (let i = 0; i < N; i++) {
+    const p = i / N, rnd = S[i]
+    let tx = 0, ty = 0, front = 0
+    if (wi > 0.01) {                                         // a slowly turning globe
+      const yy = 1 - 2 * (i + 0.5) / N, rr = Math.sqrt(1 - yy * yy), ph = i * 2.399963 + t * 0.35 + look.x * 0.7
+      const x3 = rr * Math.cos(ph), z3 = rr * Math.sin(ph), br = 0.95 * (1 + 0.035 * Math.sin(t * 1.3))
+      tx += wi * x3 * br; ty += wi * (yy * ca - z3 * sa) * br; front += wi * (0.5 + 0.5 * (yy * sa + z3 * ca))
+    }
+    if (wl > 0.01) {                                         // a ring that takes the shape of your voice
+      const th = p * 6.2832, rr = 0.95 + (0.04 + 0.34 * amp) * Math.sin(th * 7 + t * 6) * Math.sin(th * 3 - t * 2.2) + (rnd - 0.5) * 0.05
+      tx += wl * rr * Math.cos(th); ty += wl * rr * Math.sin(th); front += wl * 0.8
+    }
+    if (wt > 0.01) {                                         // a knot it keeps running round
+      const th = p * 6.2832 + t * 0.8, r2 = 0.68 + 0.28 * Math.cos(3 * th), a = 2 * th + t * 0.25
+      tx += wt * r2 * Math.cos(a) * 1.08; ty += wt * r2 * Math.sin(a) * 1.08; front += wt * (0.6 + 0.4 * Math.sin(3 * th))
+    }
+    if (ws > 0.01) {                                         // a waveform, flat when it pauses
+      const sx = (p * 2 - 1) * 1.4, env = (0.02 + 0.62 * amp) * Math.pow(Math.cos(sx / 1.4 * 1.5708), 0.6)
+      tx += ws * sx; ty += ws * env * Math.sin(p * 46 + t * 11) * (0.55 + 0.45 * Math.sin(p * 9 - t * 3.1)) * Math.sqrt(rnd); front += ws * 0.85
+    }
+    const X = E.x + (tx + Math.sin(t * 2.3 + rnd * 40) * 0.012) * R, Y = E.y + (ty + Math.cos(t * 2.1 + rnd * 31) * 0.012) * R
+    const px = P[i * 2] += (X - P[i * 2]) * pull, py = P[i * 2 + 1] += (Y - P[i * 2 + 1]) * pull
+    const gx = px / CELL - 0.5, gy = py / CELL - 0.5, c = Math.floor(gx), r = Math.floor(gy)
+    if (c < 0 || r < 0 || c >= cols - 1 || r >= rows - 1) continue
+    const fx = gx - c, fy = gy - r, a = dep * (0.3 + 0.7 * front), k = r * cols + c
+    field[k] += a * (1 - fx) * (1 - fy); field[k + 1] += a * fx * (1 - fy)
+    field[k + cols] += a * (1 - fx) * fy; field[k + cols + 1] += a * fx * fy
+  }
+}
+
+const TAU = Math.PI * 2, frac = x => ((x % 1) + 1) % 1
+/* B — Lantern: rings stacked into a sphere like a paper lantern, a lamp glowing inside.
+   One heavy band at the equator, broken into four arcs; fine dotted latitudes above and
+   below it; the front of every ring bright and whole, the back faint and dotted, so the
+   depth reads at a glance. Every ring turns at its own pace, so front and back slide past
+   each other. The whole stack leans toward what has attention (the panel being read,
+   else your pointer) on a spring, so it overshoots a touch and settles.
+   It moves like a concertina — the stack opens and closes:
+     arrive   it starts folded flat into one disc and springs open, ring by ring
+     idle     a slow turn; the stack breathes, opening and closing a hair
+     listen   takes in: it folds in a little and leans toward you; each ring stretches
+              and brightens with its band of your voice (low at the bottom, high at the
+              top) — a live equaliser in the round
+     think    alternate rings counter-turn, a bright ring scans up and down, it sways
+     speak    gives out: each sound pumps the stack open, a bulge rolls out to the
+              poles and the lamp flashes */
+const LK = 11, LMID = (LK - 1) / 2
+const LN = { yaw: 0, tilt: 0.42, v_yaw: 0, v_tilt: 0, spin: 0, open: 0, spec: new Float32Array(LK), env: 0 }
+const lspring = (key, target, dt, k, z) => {               // a little overshoot, then settle
+  const v = 'v_' + key, a = k * (target - LN[key]) - 2 * z * Math.sqrt(k) * LN[v]
+  LN[v] += a * dt; LN[key] += LN[v] * dt
+}
+const easeBack = p => { p = clamp(p, 0, 1); const s = 1.7; return 1 + (s + 1) * (p - 1) ** 3 + s * (p - 1) ** 2 }
+function lanternTick(t, dt) {
+  let ax = Math.sin(t * 0.23) * 0.25, ay = Math.sin(t * 0.17) * 0.1
+  const read = document.querySelector('.panel[data-reading]')
+  if (read) { const b = read.getBoundingClientRect(); ax = clamp((b.left + b.width / 2 - E.x) / (W * 0.35), -1, 1); ay = clamp((b.top + b.height / 2 - E.y) / (H * 0.35), -1, 1) }
+  else if (Math.hypot(look.x, look.y) > 0.05) { ax = look.x; ay = look.y }
+  lspring('yaw', ax * 0.6 + w.think * 0.08 * Math.sin(t * 1.7), dt, 38, 0.55)
+  lspring('tilt', 0.42 + ay * 0.45 + 0.16 * w.listen + w.think * 0.06 * Math.sin(t * 1.3), dt, 38, 0.55)
+  LN.spin += dt * (0.45 + 2.4 * w.think - 0.3 * w.listen + 0.35 * w.speak)
+  LN.env += ((w.speak > 0.3 ? amp : 0) - LN.env) * (1 - Math.exp(-dt * (amp > LN.env ? 30 : 6)))   // fast attack, slow release
+  for (let i = 0; i < LK; i++) {                             // a band of the voice per ring
+    const tgt = amp * (0.25 + 0.75 * Math.abs(Math.sin(t * 9.1 + i * 1.7) * Math.sin(t * 3.3 + i * 0.6)))
+    LN.spec[i] += (tgt - LN.spec[i]) * (1 - Math.exp(-dt * 18))
+  }
+  // how open the concertina is: unfolds on arrival, breathes, folds in to listen, pumps to speak
+  const unfold = easeBack(presence * 1.25)
+  const breathe = 0.025 * Math.sin(t * 1.1) * w.idle
+  LN.open = unfold * (1 + breathe - 0.1 * w.listen + 0.08 * w.think + LN.env * 0.16 * w.speak)
+}
+function lantern(t) {
+  field.fill(0)
+  const put = (c, r, v) => { if (c < 0 || r < 0 || c >= cols || r >= rows) return; const q = r * cols + c; if (v > field[q]) field[q] = v }
+  const R = E.r * 1.02, born = Math.min(1, presence * 2.5)
+  const ct = Math.cos(LN.tilt), st = Math.sin(LN.tilt), cy = Math.cos(LN.yaw), sy = Math.sin(LN.yaw)
+  const place = (x, y, z) => {                               // body (y up) → tilted → turned → screen
+    const y1 = y * ct - z * st, z1 = y * st + z * ct
+    const x2 = x * cy + z1 * sy, z2 = -x * sy + z1 * cy
+    const s = 1 / (1 - z2 * 0.15)
+    return [E.x + x2 * R * s, E.y - y1 * R * s, z2]
+  }
+
+  // the lamp: a hot centre in a soft round glow; it flashes with each sound, dims to listen
+  const rc = 0.17 * (1 + 0.55 * LN.env * w.speak - 0.12 * w.listen + 0.03 * Math.sin(t * 1.6)) * born
+  const gl = rc * 3
+  const c0 = Math.floor((E.x - gl * R) / CELL), c1 = Math.ceil((E.x + gl * R) / CELL)
+  const r0 = Math.floor((E.y - gl * R) / CELL), r1 = Math.ceil((E.y + gl * R) / CELL)
+  const lamp = (0.85 + 0.4 * LN.env * w.speak - 0.12 * w.listen) * born
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const d = Math.hypot((c + 0.5) * CELL - E.x, (r + 0.5) * CELL - E.y) / R
+    let v
+    if (d < rc) { const q = d / rc; v = 0.5 + 0.55 * (1 - q * q) }         // the lamp itself, hottest in the middle
+    else v = 0.36 * Math.exp(-(((d - rc) / (rc * 0.7)) ** 2))              // its glow, which the dither thins out
+    v *= lamp
+    if (v > 0.02) put(c, r, v)
+  }
+
+  // the rings
+  const roll = frac(t * 1.25), scan = (Math.sin(t * 2.4) * 0.5 + 0.5) * (LK - 1)
+  for (let k = 0; k < LK; k++) {
+    const mid = Math.abs(k - LMID) / LMID                      // 0 at the equator … 1 at the poles
+    const arrive = clamp(presence * 2.2 - mid * 0.7, 0, 1)     // equator first, then outward
+    if (arrive <= 0) continue
+    const phi = -Math.PI / 2 + (k + 0.5) * Math.PI / LK, sp = Math.sin(phi)
+    const yb = sp * LN.open
+    let r = Math.cos(phi)
+    r *= 1 + w.listen * LN.spec[k] * 0.45
+    r *= 1 + w.speak * (0.04 + LN.env * 0.28) * Math.exp(-((Math.abs(sp) - roll) ** 2) / 0.03)
+    const heavy = k === LMID
+    const counter = k % 2 ? 1 : 1 - 2 * w.think              // alternate rings reverse while thinking
+    const pace = (0.55 + 0.12 * (k % 3)) * counter
+    const hl = w.think * 0.45 * Math.exp(-((k - scan) ** 2) / 0.7) + w.listen * LN.spec[k] * 0.35
+    const n = Math.ceil((TAU * r * R) / (CELL * 0.5))
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU, a01 = i / n
+      if (a01 > arrive) continue                               // drawn round on arrival
+      const turned = frac(a01 + LN.spin * pace * 0.05)
+      if (heavy) { const seg = frac(turned * 4); if (seg < 0.06 || seg > 0.8) continue }   // four arcs
+      const [px, py, z] = place(Math.cos(a) * r, yb, Math.sin(a) * r)
+      if (z < 0) { if (i % 3) continue }                       // the far side: faint dots
+      else if (!heavy && i % 2) continue                       // fine latitudes: dotted in front too
+      let v = z >= 0 ? (heavy ? 0.62 : 0.42) + 0.14 * z : (heavy ? 0.24 : 0.16)
+      v += hl + (1 - mid) * 0.05 + w.speak * LN.env * 0.12
+      put(Math.floor(px / CELL), Math.floor(py / CELL), v * born)
+      if (heavy && z >= -0.2) {                                // the band is two cells deep
+        const [qx, qy] = place(Math.cos(a) * r * 1.035, yb, Math.sin(a) * r * 1.035)
+        put(Math.floor(qx / CELL), Math.floor(qy / CELL), v * 0.8 * born)
+      }
+    }
+  }
+  // a finial at each pole: a short stem, so the stack reads as one object
+  for (const s of [-1, 1]) for (let j = 0; j < 3; j++) {
+    const [px, py, z] = place(0, s * (LN.open * (0.97 + j * 0.05)), 0)
+    put(Math.floor(px / CELL), Math.floor(py / CELL), (z >= 0 ? 0.7 : 0.4) * (1 - j * 0.2) * clamp(presence * 2 - 0.6, 0, 1))
+  }
+}
+
+/* D — Gyroscope: a small lit core with a lat/long grid turning on it, three gyroscope
+   rings turning in their own tilted planes (projected, and hidden where they pass behind
+   the core), motes on orbits, a flat HUD round it all — heavy bracket arcs, fine ticks,
+   long ticks every 45°, a dotted rim — and a checkered wedge pointing at whatever has
+   attention: the panel being read, else your pointer. It floats free; no platform.
+   Each state is a set of targets that the live values ease toward:
+   listening takes in — the core draws smaller, the rings lie flat and slow, your voice
+   wraps the core as a waveform and dotted ripples flow inward to it; thinking spins the
+   rings up and runs a scanline down the core; speaking gives out — the core swells and
+   brightens with each sound, the rings widen, and solid ripples flow outward from it. */
+const ghash = (a, b) => {
+  let n = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263)) | 0
+  n = Math.imul(n ^ (n >>> 13), 1274126177)
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296
+}
+const gsmooth = (a, b, v) => { const k = clamp((v - a) / (b - a), 0, 1); return k * k * (3 - 2 * k) }
+const glerp = (a, b, k) => a + (b - a) * k
+const GMOODS = {
+  // listening takes in: smaller core, flat slow rings, your waveform, ripples flowing IN.
+  // speaking gives out: swelling core, wider rings, ripples flowing OUT, no waveform.
+  idle:   { energy: 0.85, spin: 1,    spread: 1,    scan: 0, wave: 0, inward: 0, outward: 0, rings: 1,    motes: 0.8, hud: 0.8, wedge: 0.7, core: 1 },
+  listen: { energy: 1,    spin: 0.35, spread: 0.96, scan: 0, wave: 1, inward: 1, outward: 0, rings: 0.75, motes: 0.5, hud: 1,   wedge: 0.3, core: 0.9 },
+  think:  { energy: 1,    spin: 3.2,  spread: 0.9,  scan: 1, wave: 0, inward: 0, outward: 0, rings: 1,    motes: 1,   hud: 1,   wedge: 1,   core: 0.95 },
+  speak:  { energy: 1,    spin: 1.1,  spread: 1.04, scan: 0, wave: 0, inward: 0, outward: 1, rings: 0.9,  motes: 0.9, hud: 0.9, wedge: 0.5, core: 1.12 },
+}
+const GRINGS = [
+  { r: 0.52, tilt: 1.22, roll: 0.15, speed: 0.55, style: 'solid', bright: 0.5, width: 1 },
+  { r: 0.68, tilt: 1.05, roll: -0.55, speed: -0.38, style: 'dash', bright: 0.46, width: 1 },
+  { r: 0.82, tilt: -0.95, roll: 0.75, speed: 0.24, style: 'arcs', bright: 0.44, width: 2 },
+]
+const GMOTES = Array.from({ length: 22 }, (_, i) => ({
+  r: 0.5 + ghash(i, 3) * 0.62, tilt: (ghash(i, 5) - 0.5) * 2.6, roll: ghash(i, 7) * Math.PI,
+  speed: (0.25 + ghash(i, 11) * 0.6) * (ghash(i, 13) > 0.5 ? 1 : -1), phase: ghash(i, 17) * TAU, hot: ghash(i, 19) > 0.8,
+}))
+function grot(x, y, z, tilt, roll, turn) {                   // turn in the plane, tilt about x, roll about z
+  let c = Math.cos(turn), s = Math.sin(turn)
+  const x1 = x * c - y * s, y1 = x * s + y * c
+  c = Math.cos(tilt); s = Math.sin(tilt)
+  const y2 = y1 * c - z * s, z2 = y1 * s + z * c
+  c = Math.cos(roll); s = Math.sin(roll)
+  return [x1 * c - y2 * s, x1 * s + y2 * c, z2]
+}
+const G = { L: { ...GMOODS.idle }, spin: 0, wedge: -Math.PI / 2, spec: new Float32Array(48) }
+function gyroTick(t, dt) {                                   // once a frame: blend the moods, turn, aim the wedge
+  const sum = w.idle + w.listen + w.think + w.speak || 1
+  for (const k in G.L) G.L[k] = (w.idle * GMOODS.idle[k] + w.listen * GMOODS.listen[k] + w.think * GMOODS.think[k] + w.speak * GMOODS.speak[k]) / sum
+  G.spin += dt * G.L.spin
+  for (let i = 0; i < 48; i++) {                             // a voice-like spectrum from the amplitude
+    const tgt = (0.25 + 0.75 * Math.abs(Math.sin(t * 7 + i * 0.8) * Math.sin(t * 3.1 + i * 0.33))) * amp
+    G.spec[i] += (tgt - G.spec[i]) * 0.3
+  }
+  let aim = -Math.PI / 2 + Math.sin(t * 0.3) * 0.4
+  const read = document.querySelector('.panel[data-reading]')
+  if (read) { const b = read.getBoundingClientRect(); aim = Math.atan2(b.top + b.height / 2 - E.y, b.left + b.width / 2 - E.x) }
+  else if (Math.hypot(look.x, look.y) > 0.08) aim = Math.atan2(look.y * H, look.x * W)
+  G.wedge += Math.atan2(Math.sin(aim - G.wedge), Math.cos(aim - G.wedge)) * (1 - Math.exp(-dt * 4))
+}
+function gyro(t) {
+  field.fill(0)
+  const put = (c, r, v) => { if (c < 0 || r < 0 || c >= cols || r >= rows) return; const k = r * cols + c; if (v > field[k]) field[k] = v }
+  const L = G.L, R = E.r, cx0 = E.x, cy0 = E.y
+  const boot = presence, bootCore = gsmooth(0, 0.35, boot), bootRings = gsmooth(0.2, 0.8, boot), bootHud = gsmooth(0.45, 1, boot)
+  const ext = R * 1.32
+  const c0 = Math.max(0, Math.floor((cx0 - ext) / CELL)), c1 = Math.min(cols - 1, Math.ceil((cx0 + ext) / CELL))
+  const r0 = Math.max(0, Math.floor((cy0 - ext) / CELL)), r1 = Math.min(rows - 1, Math.ceil((cy0 + ext) / CELL))
+  const breathe = 1 + Math.sin(t * 1.1) * 0.025 * L.energy + amp * (0.03 * L.wave + 0.16 * L.outward)
+  const rc = 0.21 * L.core * breathe * (0.4 + 0.6 * bootCore)
+  const la = t * 0.35, lx = Math.cos(la) * 0.55, ly = -0.55, lz = 0.62
+  const Wd = c1 - c0 + 1, depth = new Float32Array(Wd * (r1 - r0 + 1)).fill(-9)
+
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const u = ((c + 0.5) * CELL - cx0) / R, v = ((r + 0.5) * CELL - cy0) / R, d = Math.hypot(u, v)
+    let val = 0
+    if (d < rc) {                                            // the core: a lit ball with a turning grid
+      const z = Math.sqrt(rc * rc - d * d), nx = u / rc, ny = v / rc, nz = z / rc
+      depth[(r - r0) * Wd + (c - c0)] = z
+      const lam = Math.max(0, nx * lx + ny * ly + nz * lz), rim = Math.pow(1 - nz, 2.2)
+      const [sx, sy, sz] = grot(nx, ny, nz, 0.35, 0, 0)
+      const lon = Math.atan2(sx, sz) + G.spin * 0.6, lat = Math.asin(clamp(sy, -1, 1))
+      const gl = Math.abs(frac(lon * 6 / Math.PI) - 0.5) > 0.42 || Math.abs(frac(lat * 6 / Math.PI) - 0.5) > 0.44
+      val = 0.16 + 0.48 * lam + rim * 0.32 + (gl ? 0.16 : 0) + amp * 0.3 * L.outward
+      if (L.scan > 0.01) { const band = ((t * 0.9) % 1.6) - 0.3; val += L.scan * 0.5 * Math.exp(-(((v / rc + 1) / 2 - band) ** 2) / 0.006) }
+      val *= (0.55 + 0.45 * L.energy) * bootCore
+      if (nz > 0.9) val = Math.max(val, 0.92 * bootCore * L.energy)
+    } else {
+      const hd = d - rc                                      // halo hugging the core
+      val = Math.exp(-(hd * hd) / 0.0006) * 0.5 * bootCore * L.energy
+      val = Math.max(val, (ghash(c, r) < 0.28 ? 1 : 0) * gsmooth(0.17, 0, hd) * 0.3 * L.energy * bootCore)
+      const ang = Math.atan2(v, u), a01 = frac(ang / TAU)
+      if (L.wave > 0.02) {                                   // the voice, wrapped round the core
+        const fi = a01 * 48, i0 = Math.floor(fi) % 48, i1 = (i0 + 1) % 48
+        const am = glerp(G.spec[i0], G.spec[i1], fi - Math.floor(fi)), rw = rc + 0.1 + am * 0.2 * L.wave
+        if (Math.abs(d - rw) < 0.011 + am * 0.01) val = Math.max(val, (0.45 + am * 0.55) * L.wave)
+        if (d > rc + 0.1 && d < rw && ghash(c, r * 3) < 0.12) val = Math.max(val, 0.28 * L.wave)
+      }
+      const hair = CELL / R * 0.55
+      if (L.inward > 0.02) for (let k = 0; k < 3; k++) {   // listening: dotted ripples flowing in, brightening as they arrive
+        const p = frac(t * 0.7 + k / 3), rr = 1 - p * (0.9 - rc)
+        if (Math.abs(d - rr) < hair && (c + r) % 2 === 0) val = Math.max(val, L.inward * (0.2 + amp * 0.6) * (0.35 + 0.65 * p))
+      }
+      if (L.outward > 0.02) for (let k = 0; k < 3; k++) {  // speaking: solid ripples flowing out, fading as they spread
+        const p = frac(t * 0.55 + k / 3), rr = rc + 0.05 + p * (1.1 - rc)
+        if (Math.abs(d - rr) < hair) val = Math.max(val, L.outward * (0.16 + amp * 0.8) * (1 - p))
+      }
+      const hud = L.hud * bootHud
+      if (hud > 0.01) {                                      // the HUD, flat to the screen
+        const rot = t * 0.05 * L.spin
+        if (Math.abs(d - 0.95) < 0.022) { const seg = frac((a01 + rot * 0.3) * 4); if (seg > 0.08 && seg < 0.86) val = Math.max(val, 0.56 * hud) }
+        if (Math.abs(d - 1.06) < 0.011 && frac((a01 - rot) * 90) < 0.4) val = Math.max(val, 0.34 * hud)
+        if (d > 1.06 && d < 1.15) { const tk = frac((a01 - rot) * 8); if (tk < 0.012 || tk > 0.988) val = Math.max(val, 0.6 * hud) }
+        if (Math.abs(d - 1.22) < 0.009 && frac(a01 * 220) < 0.3) val = Math.max(val, 0.26 * hud)
+        if (L.wedge > 0.01 && d > 0.36 && d < 0.88) {        // the wedge: where attention is
+          const da = Math.atan2(Math.sin(ang - G.wedge), Math.cos(ang - G.wedge))
+          if (Math.abs(da) < 0.36 && (c + r) % 2 === 0) val = Math.max(val, (0.26 + 0.14 * (1 - Math.abs(da) / 0.36)) * L.wedge * hud)
+          if (Math.abs(Math.abs(da) - 0.36) < 0.02) val = Math.max(val, 0.42 * L.wedge * hud)
+        }
+      }
+    }
+    if (val > 0) put(c, r, val)
+  }
+
+  // 3D: the rings and motes, projected, dimmed where they pass behind the core
+  const proj = (x, y, z) => { const s = 1 / (1 - z * 0.14); return [cx0 + x * R * s, cy0 + y * R * s] }
+  const plot = (x, y, z, val) => {
+    const [px, py] = proj(x, y, z), c = Math.floor(px / CELL), r = Math.floor(py / CELL)
+    if (c < c0 || c > c1 || r < r0 || r > r1) return
+    const dz = depth[(r - r0) * Wd + (c - c0)]
+    put(c, r, dz > -9 && z < dz ? val * 0.18 : val)
+  }
+  const ringVis = L.rings * bootRings
+  if (ringVis > 0.01) GRINGS.forEach((g, k) => {
+    const rr = g.r * L.spread * (1 + 0.04 * Math.sin(t * 0.7 + k) + 0.06 * amp * L.outward), turn = G.spin * g.speed
+    const tilt = g.tilt * (1 - 0.35 * L.wave) + Math.sin(t * 0.2 + k) * 0.05
+    const n = Math.ceil((TAU * rr * R) / (CELL * 0.45))
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU
+      if (g.style === 'dash' && frac((a / TAU) * 36) > 0.55) continue
+      if (g.style === 'arcs' && frac((a / TAU) * 3) > 0.62) continue
+      for (let wd = 0; wd < g.width; wd += 0.8) {
+        const rad = rr + (wd - (g.width - 1) / 2) * (CELL / R) * 0.9
+        const [x, y, z] = grot(Math.cos(a) * rad, Math.sin(a) * rad, 0, tilt, g.roll, turn)
+        plot(x, y, z, g.bright * (0.62 + 0.38 * (z / rr + 1) / 2 * 1.2) * ringVis * L.energy)
+      }
+    }
+    const [bx, by, bz] = grot(rr, 0, 0, tilt, g.roll, turn * 2.2 + k * 2)   // a bead on each ring
+    plot(bx, by, bz, ringVis)
+  })
+  const moteVis = L.motes * bootRings
+  if (moteVis > 0.01) GMOTES.forEach((m, i) => {
+    const a = m.phase + G.spin * m.speed * 0.8, rr = m.r * L.spread * (L.scan > 0.5 ? 0.82 : 1)
+    const [x, y, z] = grot(Math.cos(a) * rr, Math.sin(a) * rr, 0, m.tilt, m.roll, 0)
+    plot(x, y, z, (m.hot ? 0.98 : 0.62) * moteVis * (0.7 + 0.3 * Math.sin(t * 3 + i)))
+  })
+
+}
+
+const buckets = [[], [], [], [], []]
+function draw(t) {
+  cx.clearRect(0, 0, W, H)
+  for (const b of buckets) b.length = 0
+  const reach = E.r * ({ B: 1.6, C: 2.3, D: 1.45 })[form], whole = form === 'C'
+  const c0 = whole ? 0 : Math.max(0, Math.floor((E.x - reach) / CELL)), c1 = whole ? cols - 1 : Math.min(cols - 1, Math.ceil((E.x + reach) / CELL))
+  const r0 = whole ? 0 : Math.max(0, Math.floor((E.y - reach) / CELL)), r1 = whole ? rows - 1 : Math.min(rows - 1, Math.ceil((E.y + reach) / CELL))
+  // the blip: a few cells off his shoulder, pulsing slowly — the whole notification
+  const ba = -0.62 + 0.05 * Math.sin(t * 0.8), bx = E.x + E.r * 1.5 * Math.cos(ba), by = E.y + E.r * 1.5 * Math.sin(ba)
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const x = (c + 0.5) * CELL, y = (r + 0.5) * CELL
+    let v = form === 'C' ? Math.min(1, field[r * cols + c]) : field[r * cols + c]
+    if (notifyV > 0.01) { const d2 = ((x - bx) ** 2 + (y - by) ** 2) / (CELL * 1.25) ** 2; if (d2 < 9) v = Math.max(v, notifyV * Math.exp(-d2) * (0.78 + 0.22 * Math.sin(t * 2.2))) }
+    if (v < 0.03) continue
+    const level = v * 5 + BAYER[(r & 3) * 4 + (c & 3)] * 0.9
+    if (form !== 'C') { if (level >= 0.55) buckets[Math.min(4, level | 0)].push(c, r); continue }   // B and D band like the app: faint heat still shows
+    const band = level | 0
+    if (band >= 1) buckets[Math.min(5, band) - 1].push(c, r)
+  }
+  buckets.forEach((b, i) => {
+    cx.fillStyle = ramp[i]
+    for (let k = 0; k < b.length; k += 2) cx.fillRect(b[k] * CELL + 1, b[k + 1] * CELL + 1, CELL - 2, CELL - 2)
+  })
+  const n = $('#nudge')
+  if (n.dataset.on !== undefined) { n.style.left = Math.min(bx + 18, W - n.offsetWidth - 10) + 'px'; n.style.top = by - 19 + 'px' }
+}
+
+/* ── speech, hearing ─────────────────────────────────────────────────── */
+const you = $('#you'), alf = $('#alf'), st = $('#st')
+let run = 0, job = null, voice = false, held = false, lastKey = 0, mic = null, rec = null, recText = ''
+const LABEL = { idle: 'idle', listen: 'listening', think: 'thinking', speak: 'speaking' }
+function setState(s) { state = s; st.textContent = LABEL[forced || s] }
+function cancel() { run++; job = null; delete alf.dataset.live; try { speechSynthesis.cancel() } catch {} }
+function mark(sel) {
+  document.querySelectorAll('.panel[data-reading]').forEach(p => delete p.dataset.reading)
+  if (sel) { $(sel).dataset.reading = ''; $('#brief').dataset.reading = '' } else delete $('#brief').dataset.reading
+}
+// He types his line as he says it; the entity's amplitude follows the letters.
+function say(text, opts = {}) {
+  const my = run
+  return new Promise(done => {
+    if ('read' in opts) mark(opts.read)
+    setState('speak'); alf.textContent = ''; alf.dataset.live = ''
+    job = { text, start: performance.now(), my, done, spoken: !voice }
+    if (voice) try {
+      const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.onend = u.onerror = () => { if (job && job.my === my) job.spoken = true }
+      speechSynthesis.speak(u); setTimeout(() => { if (job && job.my === my) job.spoken = true }, 9000)
+    } catch { job.spoken = true }
+  })
+}
+function tickSpeech(now, t) {
+  if (!job) return 0
+  const i = Math.floor((now - job.start) / 1000 * 34)
+  if (i <= job.text.length + 12) alf.textContent = job.text.slice(0, i)
+  if (i > job.text.length + 12 && job.spoken) { const d = job.done; job = null; delete alf.dataset.live; setState('idle'); d(); return 0 }
+  if (i >= job.text.length) return 0
+  return /[a-z0-9]/i.test(job.text[i]) ? 0.3 + 0.65 * Math.abs(Math.sin(t * 12.3) * Math.sin(t * 4.1 + i)) : 0.06
+}
+
+const SAMPLES = ['Move standup to 3pm', 'I finished the résumé', 'How are my auto tasks?', 'Is my pi session done?', 'Look into vector DBs for me', 'Plan my afternoon', "Add NVDA to tomorrow's brief"]
+let sampleAt = 0
+async function hear(text) {
+  cancel(); const my = run
+  you.textContent = '› ' + text; alf.textContent = ''
+  setState('think'); await sleep(750 + Math.random() * 500)
+  if (my !== run) return
+  const q = text.toLowerCase()
+  if (/move|resched|push|改/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    place('b-standup', 15, 0.5, '15:00'); await say('Moved. Standup is at three.', { read: '#p-today' })
+  } else if (/finish|done with|complete|完成/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    const li = $('#todo li:not([data-done])'); if (li) li.dataset.done = ''
+    const left = document.querySelectorAll('#todo li:not([data-done])').length
+    await say(`Marked. ${['Nothing', 'One', 'Two', 'Three'][left]} left today.`, { read: '#p-today' })
+  } else if (/auto|task|cron|自动/.test(q)) {
+    await say('Three ran overnight. Two clean. The job scraper failed at 2:14 — a retry is queued.')
+  } else if (/\bpi\b|session/.test(q)) {
+    await say("Still running. Step six of nine, about four minutes left. I'll leave a note when it lands.")
+    later(9000, 'pi session · finished', 'Pi session finished. All nine steps passed. One warning: the migration ran twice, harmlessly. The diff is in Product.')
+  } else if (/look into|research|investigat|find out|调查|查/.test(q)) {
+    await say("On it. I'll leave a note.")
+    later(7000, 'Research · finished', "Vector DBs. Took six minutes. Good: pgvector covers your scale with no new infra. Bad: recall drops past five million rows. I'd stay on Postgres. Notes are in Research.")
+  } else if (/plan|计划/.test(q)) {
+    scene('brief'); await sleep(500); if (my !== run) return
+    for (const id of ['b-resume', 'b-gym']) $('#' + id).hidden = false
+    const r = $('#r-plan') || addPlanRow(); r.hidden = false
+    await say('Two open hours. Draft: résumé at one, gym at five-thirty. Keep it?', { read: '#p-today' })
+  } else if (/brief|tomorrow|stock|早报|明天/.test(q)) {
+    const tick = (text.match(/\b[A-Z]{2,5}\b/) || ['NVDA'])[0]
+    scene('brief'); await sleep(500); if (my !== run) return
+    $('#tomorrow').insertAdjacentHTML('beforeend', `<div class="line-item" data-new><span>${tick} prior-day close</span><span>+ tomorrow</span></div>`)
+    await say(`Noted. ${tick} is in tomorrow's brief.`, { read: '#p-brief' })
+  } else await say("That one isn't wired in this prototype. Try a line below.")
+  if (my === run) mark(null)
+}
+
+// Work finishing in the background never interrupts: a blip and a tag, nothing spoken.
+let report = ''
+function later(ms, label, text) { setTimeout(() => { report = text; $('#nudge-t').textContent = label; notify = true; deferred = false; $('#nudge').dataset.on = '' }, ms) }
+
+/* ── scenes ──────────────────────────────────────────────────────────── */
+function scene(name) { if (document.body.dataset.scene === name) return; document.body.dataset.scene = name; layout(); syncProto() }
+const pending = () => document.querySelectorAll('.brief .row[data-ask]:not([data-done]):not([hidden])').length
+
+async function arrive() {
+  cancel(); const my = run
+  scene('arrive'); you.textContent = ''; alf.textContent = ''; mark(null)
+  presence = 0; scatter(); setState('idle'); st.textContent = 'waking'
+  await sleep(1700); if (my !== run) return
+  await say(new Date().getHours() < 12 ? 'Good morning, Bruce.' : 'Welcome back, Bruce.'); if (my !== run) return
+  await sleep(350); await say('Your brief is ready. Two things need you.'); if (my !== run) return
+  await sleep(450); if (my === run) brief()
+}
+async function brief() {
+  cancel(); const my = run
+  scene('brief'); await sleep(800); if (my !== run) return
+  await say('Quiet night. Markets flat, rain after six.', { read: '#p-brief' }); if (my !== run) return
+  await sleep(250); await say('Five new emails. Two need a yes or no.', { read: '#p-inbox' }); if (my !== run) return
+  await sleep(250); await say("Three blocks today. Paper review is due Friday — I'd hold two o'clock for it.", { read: '#p-today' })
+  if (my === run) mark(null)
+}
+function idle() { cancel(); mark(null); scene('idle'); setState('idle'); alf.textContent = ''; you.textContent = '' }
+
+async function decide(row, yes) {
+  cancel(); const my = run
+  row.dataset.done = ''; row.querySelector('.res').textContent = yes ? 'approved' : 'declined'
+  if (row.dataset.effect === 'hold') { if (yes) delete $('#b-review').dataset.proposed; else $('#b-review').hidden = true }
+  if (row.dataset.effect === 'plan') for (const id of ['b-resume', 'b-gym']) { if (yes) delete $('#' + id).dataset.proposed; else $('#' + id).hidden = true }
+  await say(yes ? row.dataset.yes : row.dataset.no, { read: null }); if (my !== run) return
+  if (pending() === 0) { await sleep(300); await say("That's everything."); if (my !== run) return; await sleep(1300); if (my === run) idle() }
+}
+function addPlanRow() {
+  $('#r-hold').insertAdjacentHTML('afterend', `<div class="row" id="r-plan" data-ask data-effect="plan" data-yes="Booked. Both are on the calendar." data-no="Dropped. The afternoon stays open."><div><p class="what">Afternoon draft</p><p class="draft">13:00 résumé · 17:30 gym</p></div><span class="yn"><button data-y aria-label="Approve">${glyph('yes')}</button><button data-n aria-label="Decline">${glyph('no')}</button></span><span class="res"></span></div>`)
+  return $('#r-plan')
+}
+
+/* ── calendar, deck, chips, switcher ─────────────────────────────────── */
+const DAY0 = 9, PXH = 17
+function place(id, start, dur, label) { const b = $('#' + id); b.style.top = (start - DAY0) * PXH + 'px'; b.style.height = Math.max(13, dur * PXH - 2) + 'px'; if (label) b.querySelector('i').textContent = label }
+$('#cal').innerHTML = [9, 11, 13, 15, 17, 19].map(h => `<time style="top:${(h - DAY0) * PXH}px">${h}:00</time><span class="tick" style="top:${(h - DAY0) * PXH}px"></span>`).join('') + [
+  ['b-standup', 9.5, 0.5, '09:30', 'Standup'], ['b-deep', 10.5, 2, '10:30', 'Deep work · Alfred'],
+  ['b-resume', 13, 1, '13:00', 'Résumé → Northwind', 1, 1], ['b-review', 14, 1, '14:00', 'Paper review', 1],
+  ['b-prep', 16, 1, '16:00', 'Interview prep'], ['b-gym', 17.5, 1, '17:30', 'Gym', 1, 1],
+].map(([id, , , at, name, prop, hid]) => `<div class="blk" id="${id}"${prop ? ' data-proposed' : ''}${hid ? ' hidden' : ''}><i>${at}</i>${name}</div>`).join('')
+;[['b-standup', 9.5, 0.5], ['b-deep', 10.5, 2], ['b-resume', 13, 1], ['b-review', 14, 1], ['b-prep', 16, 1], ['b-gym', 17.5, 1]].forEach(a => place(...a))
+
+const DECK = [
+  ['job', 'Job hunt', '2 replies · onsite Thu', 'Job hunt. Two replies since yesterday. Northwind wants Thursday.'],
+  ['research', 'Research', '1 run finished', 'Research. One run finished, nothing in flight.'],
+  ['product', 'Product', 'Alfred · 3 open', 'Product. Three open on Alfred. The entity is the one you are looking at.'],
+  ['chat', 'Chat', 'pi · 1 session live', 'Chat. One pi session is live, step six of nine.'],
+  ['auto', 'Automations', '3 ran · 1 failed', 'Automations. Three ran, one failed. The retry is queued.'],
+]
+$('#deck').innerHTML = DECK.map(([g, name, sub], i) => `<button class="tile" data-i="${i}"><kbd>${i + 1}</kbd>${glyph(g)}<b>${name}</b><span>${sub}</span></button>`).join('')
+function openTile(i) {
+  if (document.body.dataset.scene !== 'idle') return
+  document.querySelectorAll('.tile').forEach((t, k) => t.setAttribute('aria-current', k === i))
+  cancel(); you.textContent = ''; say(DECK[i][3])
+}
+$('#deck').addEventListener('click', e => { const t = e.target.closest('.tile'); if (t) openTile(+t.dataset.i) })
+
+$('#chips').innerHTML = SAMPLES.map(s => `<button type="button">${s}</button>`).join('')
+$('#chips').addEventListener('click', e => { if (e.target.tagName === 'BUTTON') hear(e.target.textContent) })
+document.querySelectorAll('.yn [data-y]').forEach(b => b.innerHTML = glyph('yes'))
+document.querySelectorAll('.yn [data-n]').forEach(b => b.innerHTML = glyph('no'))
+
+$('#brief').addEventListener('click', e => { const b = e.target.closest('.yn button'); if (b) decide(b.closest('.row'), 'y' in b.dataset) })
+$('#nudge').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return
+  delete $('#nudge').dataset.on
+  if ('y' in b.dataset) { notify = false; cancel(); you.textContent = ''; say(report) } else deferred = true   // later: the blip stays, dimmer
+})
+// Giving him your attention is a click on him. If something is waiting, that is when it comes back.
+addEventListener('click', e => {
+  if (e.target !== document.body && e.target !== cv && e.target !== document.documentElement) return
+  if (Math.hypot(e.clientX - E.x, e.clientY - E.y) > E.r * 1.7) return
+  if (notify && deferred) { deferred = false; $('#nudge').dataset.on = '' } else if (!job) { cancel(); say('Yes?') }
+})
+
+const input = $('#in')
+input.addEventListener('input', () => { lastKey = performance.now(); if (state !== 'listen') { cancel(); setState('listen') } })
+input.addEventListener('blur', () => { if (state === 'listen' && !input.value) setState('idle') })
+$('#line').addEventListener('submit', e => { e.preventDefault(); const v = input.value.trim(); input.value = ''; input.blur(); if (v) hear(v); else setState('idle') })
+
+function cycle(d) { const i = FORMS.findIndex(f => f.key === form); pick(FORMS[(i + d + FORMS.length) % FORMS.length].key) }
+function pick(k) { form = k; presence = k === 'C' ? 0.25 : 0; CELL = k === 'C' ? 8 : 5; resize(); params.set('variant', k); history.replaceState(null, '', '?' + params); syncProto() }
+const typing = e => e.target.matches('input, textarea, [contenteditable]')
+addEventListener('keydown', e => {
+  if (typing(e)) { if (e.key === 'Escape') input.blur(); return }
+  if (e.key === 'ArrowLeft') cycle(-1)
+  else if (e.key === 'ArrowRight') cycle(1)
+  else if (e.key === 'Escape') idle()
+  else if (/^[1-5]$/.test(e.key)) openTile(+e.key - 1)
+  else if (e.code === 'Space') {
+    e.preventDefault(); if (held) return
+    held = true; document.body.dataset.held = ''; cancel(); setState('listen'); you.textContent = '› …'; alf.textContent = ''
+    recText = ''; if (rec) try { rec.start() } catch {}
+  }
+})
+addEventListener('keyup', async e => {
+  if (e.code !== 'Space' || !held) return
+  held = false; delete document.body.dataset.held
+  if (rec) { try { rec.stop() } catch {} await sleep(450) }
+  hear(recText.trim() || SAMPLES[sampleAt++ % SAMPLES.length])   // no microphone: play the next sample line
+})
+addEventListener('pointermove', e => { look.tx = clamp((e.clientX - E.x) / (W * 0.4), -1, 1); look.ty = clamp((e.clientY - E.y) / (H * 0.4), -1, 1) })
+
+async function toggleMic() {
+  if (mic) { mic.stream.getTracks().forEach(t => t.stop()); mic.ac.close(); mic = rec = null; return syncProto() }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 512; ac.createMediaStreamSource(stream).connect(an)
+    mic = { stream, ac, an, buf: new Uint8Array(512) }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (SR) { rec = new SR(); rec.interimResults = true; rec.onresult = ev => { recText = [...ev.results].map(r => r[0].transcript).join(''); if (held) you.textContent = '› ' + recText } }
+  } catch { mic = null }
+  syncProto()
+}
+const micLevel = () => { mic.an.getByteTimeDomainData(mic.buf); let s = 0; for (const b of mic.buf) s += ((b - 128) / 128) ** 2; return Math.min(1, Math.sqrt(s / 512) * 6) }
+
+const proto = $('#proto')
+function syncProto() {
+  const f = FORMS.find(x => x.key === form), sc = document.body.dataset.scene, hr = document.documentElement.dataset.hour
+  const btn = (act, label, on) => `<button data-act="${act}" aria-pressed="${!!on}">${label}</button>`
+  proto.innerHTML = btn('prev', '←') + `<span class="name">${f.key} — ${f.name}</span>` + btn('next', '→') + '<span class="sep"></span>'
+    + '<span class="lab">state</span>' + btn('s:', 'auto', !forced) + ['idle', 'listen', 'think', 'speak'].map(s => btn('s:' + s, s, forced === s)).join('')
+    + btn('notify', '+ note', notify) + '<span class="sep"></span>'
+    + '<span class="lab">scene</span>' + ['arrive', 'brief', 'idle'].map(s => btn('g:' + s, s, sc === s)).join('') + '<span class="sep"></span>'
+    + btn('hour', hr) + btn('cell', CELL + 'px') + btn('voice', 'voice ' + (voice ? 'on' : 'off'), voice) + btn('mic', 'mic ' + (mic ? 'on' : 'off'), !!mic)
+}
+proto.addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.act; if (!a) return
+  if (a === 'prev') cycle(-1)
+  else if (a === 'next') cycle(1)
+  else if (a.startsWith('s:')) { forced = a.slice(2) || null; st.textContent = LABEL[forced || state] }
+  else if (a === 'notify') { if (notify) { notify = false; delete $('#nudge').dataset.on } else later(0, 'Research · finished', "Vector DBs. Took six minutes. Good: pgvector covers your scale with no new infra. Bad: recall drops past five million rows. I'd stay on Postgres. Notes are in Research.") }
+  else if (a === 'g:arrive') arrive()
+  else if (a === 'g:brief') brief()
+  else if (a === 'g:idle') idle()
+  else if (a === 'hour') setHour(HOURS[(HOURS.indexOf(document.documentElement.dataset.hour) + 1) % HOURS.length])
+  else if (a === 'cell') { CELL = { 4: 5, 5: 6, 6: 8, 8: 10, 10: 4 }[CELL] || 6; resize() }  else if (a === 'voice') voice = !voice
+  else if (a === 'mic') return toggleMic()
+  setTimeout(syncProto)
+})
+
+/* ── frame ───────────────────────────────────────────────────────────── */
+let last = performance.now()
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000; last = now
+  const ease = r => 1 - Math.exp(-dt * r)
+  const cur = forced || state
+  for (const s in w) w[s] += ((cur === s ? 1 : 0) - w[s]) * ease(7)
+  let target = tickSpeech(now, t)
+  if (cur === 'listen') target = mic ? micLevel() : (held || now - lastKey < 240 || forced === 'listen') ? 0.2 + 0.7 * Math.abs(Math.sin(t * 9.3) * Math.sin(t * 2.7 + 1)) : 0.05
+  else if (cur === 'speak' && !job) target = 0.25 + 0.7 * Math.abs(Math.sin(t * 10) * Math.sin(t * 3.3))
+  else if (cur !== 'speak') target = 0
+  amp += (target - amp) * ease(16)
+  E.x += (E.tx - E.x) * ease(5); E.y += (E.ty - E.y) * ease(5); E.r += (E.tr - E.r) * ease(5)
+  look.x += (look.tx - look.x) * ease(4); look.y += (look.ty - look.y) * ease(4)
+  notifyV += ((notify ? (deferred ? 0.5 : 1) : 0) - notifyV) * ease(1.4)
+  presence = Math.min(1, presence + dt / (form === 'C' ? 1.3 : 2.2))
+  if (form === 'B') { lanternTick(t, dt); lantern(t) } else if (form === 'C') swarm(t, dt); else { gyroTick(t, dt); gyro(t) }
+  draw(t)
+  requestAnimationFrame(frame)
+}
+
+const now = new Date()
+$('#day').textContent = now.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })
+const tickClock = () => $('#clock').textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + ' · sample data'
+tickClock(); setInterval(tickClock, 20000)
+setHour(HOURS.includes(params.get('hour')) ? params.get('hour') : clockHour())
+addEventListener('resize', resize)
+resize(); syncProto(); scatter()
+requestAnimationFrame(frame)
+if (params.get('scene') === 'idle') { presence = 1; idle() } else if (params.get('scene') === 'brief') { presence = 1; brief() } else arrive()
+</script>
+</body>
+</html>

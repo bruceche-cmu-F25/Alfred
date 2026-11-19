@@ -1,0 +1,1522 @@
+<!doctype html>
+<!--
+  Alfred workspace: layout prototype. It has no build step and uses sample data only.
+  Each workspace is one full page: 通知 / 日程 / 待办 / 邮件 / 调研 / 自动任务.
+  Alfred is the panel on the right. It knows which page you are on, and you can expand it or fold it away.
+  The sidebar has two states: full with labels (A), or folded into an icon rail with hover summaries (C).
+  Fold it with the button, with ⌘\, or by dragging its edge inward.
+  Drag the line between the page and Alfred to share the space; double-click it to reset. Widths are remembered.
+  Under 760px wide it becomes the phone layout: a bottom dock, with Alfred as a sheet.
+  The styling is a neutral placeholder; the visual language is still open.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alfred 工作台</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+/* Colours come from tokens.css. The theme and scheme are set on <html> by the script. */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+}
+
+/* 雾 mist: the sidebar is frosted glass floating over the desktop, after macOS Tahoe. */
+:root[data-theme="mist"] body { background: linear-gradient(140deg, oklch(.88 .05 250), oklch(.92 .035 205) 45%, oklch(.9 .045 300)); }
+:root[data-theme="mist"][data-scheme="dark"] body { background: linear-gradient(140deg, oklch(.26 .06 262), oklch(.22 .04 220) 45%, oklch(.25 .06 300)); }
+:root[data-theme="mist"] .page { background: var(--bg); }
+:root[data-theme="mist"] .side { margin: 8px 0 8px 8px; border: 0; border-radius: 14px; background: color-mix(in oklch, var(--paper) 55%, transparent); backdrop-filter: blur(28px) saturate(1.6); -webkit-backdrop-filter: blur(28px) saturate(1.6); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--raise) 45%, transparent), 0 8px 30px oklch(0 0 0 / .08); }
+:root[data-theme="mist"] .find { background: color-mix(in oklch, var(--raise) 60%, transparent); }
+:root[data-theme="mist"] .nav-item:hover, :root[data-theme="mist"] .nav-item[aria-current="page"] { background: color-mix(in oklch, var(--ink) 8%, transparent); }
+
+/* Theme switcher (prototype only) */
+.swatch-bar { position: fixed; top: 10px; left: 50%; z-index: 50; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; background: var(--raise); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-soft); font-size: 12px; }
+.swatch-bar b { padding: 0 8px; color: var(--muted); font-weight: 500; }
+.swatch-bar i { width: 1px; height: 16px; margin: 0 4px; background: var(--line); }
+.swatch-bar button { height: 26px; padding: 0 10px; border-radius: 8px; color: var(--copy); }
+.swatch-bar button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+html[data-bare] .swatch-bar { display: none; }
+@media (max-width: 760px) { .swatch-bar { display: none; } }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; }
+h1, h2, h3, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+.muted { color: var(--muted); }
+
+/* ── Shell: navigation | page | Alfred ───────────────────── */
+.app {
+  position: relative; height: 100dvh; display: grid;
+  /* JS sets --nav-px and --alf-px from the dragged widths */
+  --nav: var(--nav-px, 200px); --pg: minmax(0, 1fr); --alf-w: var(--alf-px, 400px);
+  grid-template-columns: var(--nav) var(--pg) var(--alf-w);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "nav page alf";
+}
+body[data-nav="rail"] .app { --nav: 56px; }
+body[data-alfred="closed"] .app { --alf-w: 0px; }
+body[data-alfred="closed"] .alfred { display: none; }
+body[data-alfred="wide"] .app { --pg: 0px; --alf-w: minmax(0, 1fr); }
+body[data-alfred="wide"] .page { display: none; }
+
+.lights { display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: var(--line); }
+
+/* Draggable dividers */
+.resizer { position: absolute; top: 0; bottom: 0; z-index: 8; width: 9px; cursor: col-resize; touch-action: none; }
+.resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; transition: background-color 150ms; }
+.resizer:hover::after, .resizer.active::after { left: 3px; width: 3px; background: var(--alf); }
+#rz-nav { left: calc(var(--nav) - 5px); }
+#rz-alf { right: calc(var(--alf-w) - 5px); }
+body[data-alfred="closed"] #rz-alf, body[data-alfred="wide"] #rz-alf { display: none; }
+body.resizing { cursor: col-resize; user-select: none; }
+
+/* Sidebar, full (A) */
+.side { grid-area: nav; min-width: 0; min-height: 0; position: relative; z-index: 5; display: flex; flex-direction: column; gap: 1px; padding: 10px 8px 12px; background: var(--paper); border-right: 1px solid var(--line-soft); }
+.side-top { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 12px 6px; }
+.find { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 9px; margin-bottom: 10px; border-radius: 8px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); color: var(--muted); font-size: 13px; white-space: nowrap; }
+.find:hover { color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
+.find kbd { margin-left: auto; font: 11px var(--mono); }
+.nav-label { padding: 12px 9px 4px; color: var(--muted); font-size: 12px; }
+.nav-sep { display: none; }
+.nav-item { position: relative; width: 100%; height: 30px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border-radius: 8px; color: var(--copy); font-size: 13.5px; text-align: left; white-space: nowrap; }
+.nav-item:hover { background: var(--wash); }
+.nav-item[aria-current="page"] { background: var(--wash); color: var(--ink); font-weight: 500; }
+.nav-item .count { margin-left: auto; }
+.nav-item svg { color: var(--k-solid, currentColor); }
+.nav-item .count.pill { color: #fff; font-family: var(--sans); }
+.nav-spacer { flex: 1; min-height: 12px; }
+/* Conversations, at the bottom of the sidebar */
+.conv-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 2px 4px 9px; color: var(--muted); font-size: 12px; }
+.conv-head .icon-btn { width: 24px; height: 24px; }
+.conv-head .icon-btn svg { width: 15px; height: 15px; }
+.conv-list { display: flex; flex-direction: column; gap: 1px; margin-bottom: 8px; }
+.conv { width: 100%; height: 30px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border-radius: 8px; color: var(--copy); font-size: 13px; text-align: left; }
+.conv:hover { background: var(--wash); }
+.conv[aria-current="true"] { background: var(--wash); color: var(--ink); }
+.conv .st { flex: none; width: 18px; display: grid; place-items: center; }
+.conv .ct { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.conv .time { flex: none; color: var(--muted); font: 11px var(--mono); }
+.conv-rail { display: none !important; }
+body[data-nav="rail"] .conv-head, body[data-nav="rail"] .conv-list { display: none; }
+body[data-nav="rail"] .conv-rail { display: flex !important; }
+.sheet-label { padding: 12px 14px 4px; color: var(--muted); font-size: 12px; }
+.more-sheet .conv { height: 44px; font-size: 15px; }
+.thread-title { display: flex; justify-content: space-between; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
+.thread-title span { font-family: var(--mono); }
+.count { font: 12px var(--mono); color: var(--muted); }
+.count.hot { color: var(--warm); }
+.peek { display: none; }
+
+/* Sidebar, folded into an icon rail (C), with a summary on hover */
+body[data-nav="rail"] .side { align-items: center; padding: 10px 6px 12px; }
+body[data-nav="rail"] .side-top { flex-direction: column; gap: 12px; padding: 4px 0 12px; }
+body[data-nav="rail"] .lights { gap: 5px; }
+body[data-nav="rail"] .lights i { width: 9px; height: 9px; }
+body[data-nav="rail"] .find { width: 40px; height: 34px; justify-content: center; padding: 0; }
+body[data-nav="rail"] .find span, body[data-nav="rail"] .find kbd, body[data-nav="rail"] .nav-label, body[data-nav="rail"] .nav-item .label { display: none; }
+body[data-nav="rail"] .nav-sep { display: block; width: 22px; height: 1px; margin: 10px 0; background: var(--line); }
+body[data-nav="rail"] .nav-item { width: 40px; height: 40px; justify-content: center; padding: 0; border-radius: 10px; }
+body[data-nav="rail"] .nav-item svg { width: 20px; height: 20px; }
+body[data-nav="rail"] .nav-item .count { position: absolute; top: 3px; right: 1px; min-width: 16px; height: 16px; padding: 0 4px; margin: 0; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: #fff; font-size: 10px; }
+body[data-nav="rail"] .nav-item .count:empty { display: none; }
+body[data-nav="rail"] .nav-item:hover .peek { display: flex; }
+.peek { position: absolute; left: 48px; top: 50%; transform: translateY(-50%); z-index: 20; flex-direction: column; gap: 1px; min-width: 210px; padding: 10px 14px; border-radius: 12px; background: var(--raise); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-soft); white-space: nowrap; text-align: left; pointer-events: none; }
+.peek b { color: var(--ink); font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+.peek span { color: var(--copy); font-size: 13px; }
+
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
+.icon-btn:hover { background: var(--wash); color: var(--ink); }
+.icon-btn[aria-pressed="true"] { color: var(--ink); }
+
+/* ── Page ─────────────────────────────────────────────────── */
+.page { grid-area: page; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.page-in { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.enter-fade { animation: fade 220ms var(--ease); }
+@keyframes fade { from { opacity: 0; transform: translateY(6px); } }
+
+.page-head { flex: none; padding: 40px 40px 18px; }
+.page-head h1 { display: flex; align-items: center; gap: 12px; font-size: 30px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+.page-head h1 svg { width: 28px; height: 28px; color: var(--k-solid); stroke-width: 1.9; }
+
+/* ── Colour components (see tokens.css for the roles) ──
+   Emphasis ladder: 0 quiet (muted, no colour) · 1 mark (a dot or icon) · 2 tint (fill + coloured text) · 3 solid (one per view). */
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 6px; background: var(--k-fill); color: var(--k-text); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.tag.dot-tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--k-solid); }
+.mark { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--k-solid); }
+.avatar { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: var(--k-fill); color: var(--k-text); font-size: 13px; font-weight: 650; }
+.pill { min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; border-radius: 10px; background: var(--k-solid); color: #fff; font: 600 11px var(--sans); }
+.chip .mark { width: 7px; height: 7px; }
+.chip[aria-pressed="false"].off { opacity: .45; text-decoration: line-through; }
+.page-sub { margin-top: 6px; color: var(--muted); font-size: 14px; }
+.chips { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 40px 18px; }
+.chip { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 13px; border-radius: 999px; color: var(--copy); font-size: 13px; box-shadow: inset 0 0 0 1px var(--line); }
+.chip:hover { color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.chip .count { color: inherit; opacity: .6; }
+.body-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 40px 80px; }
+
+.btn { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 16px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 13px; font-weight: 500; }
+.btn.ghost { background: none; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); font-weight: 400; }
+.btn.ghost:hover { color: var(--ink); }
+.btn.alf { background: var(--alf); color: #fff; }
+.btn.small { min-height: 28px; padding: 0 11px; font-size: 12px; }
+.link { color: var(--alf); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--alf) 35%, transparent); text-underline-offset: 3px; text-align: left; }
+
+/* list | detail */
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); border-top: 1px solid var(--line-soft); }
+.split.narrow { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); }
+.list { overflow-y: auto; padding: 8px 10px 80px; border-right: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 2px; }
+.row { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 12px; border-radius: 10px; text-align: left; color: var(--copy); }
+.row:hover { background: var(--wash); }
+.row[aria-current="true"] { background: var(--wash); }
+.row .dot { grid-row: span 2; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; }
+.row .t { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink); font-weight: 500; }
+.row .time { font: 11px/24px var(--mono); color: var(--muted); }
+.row .s { grid-column: 2 / 4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 13px; }
+.row[data-done] .t { color: var(--muted); font-weight: 400; }
+.row[data-unread] .t { font-weight: 650; }
+.dot { background: var(--k-solid, var(--muted)); }
+.dot.done, .dot.read { background: none; box-shadow: inset 0 0 0 1.5px var(--line); }
+.detail { overflow-y: auto; padding: 36px 48px 96px; }
+.detail-in { max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.kind { color: var(--muted); font-size: 13px; }
+.kind.decide { color: var(--warm); }
+.detail h2 { font-size: 24px; line-height: 1.35; font-weight: 650; letter-spacing: -.005em; }
+.detail p { color: var(--copy); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+.done-line { color: var(--ok) !important; }
+.card { padding: 16px 18px; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: 14px; }
+.card-label { margin-bottom: 6px; color: var(--alf); font-size: 12px; font-weight: 500; }
+.card pre { margin: 0; white-space: pre-wrap; font: inherit; }
+.back { display: none !important; }
+
+/* Calendar */
+.suggest { flex: none; display: flex; align-items: center; gap: 12px; margin: 0 40px 18px; padding: 10px 12px 10px 14px; border-radius: 14px; background: var(--alf-soft); font-size: 14px; }
+.suggest p { flex: 1; }
+.cal-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 28px 80px 20px; }
+.week { display: flex; }
+.gutter { width: 52px; flex: none; padding-top: 64px; }
+.gutter div { height: 52px; padding-right: 10px; transform: translateY(-8px); text-align: right; color: var(--muted); font: 11px var(--mono); }
+.day { flex: 1; min-width: 0; border-left: 1px solid var(--line-soft); }
+.day-head { position: sticky; top: 0; z-index: 3; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; background: var(--bg); color: var(--muted); font-size: 12px; }
+.day-head b { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: var(--ink); font-size: 17px; font-weight: 500; }
+.day.today .day-head b { background: var(--now); color: #fff; }
+.day-body { position: relative; height: calc(12 * 52px); background: repeating-linear-gradient(to bottom, var(--line-soft) 0 1px, transparent 1px 52px); }
+.day.weekend .day-body { background-color: color-mix(in srgb, var(--paper) 60%, transparent); }
+/* Events: tinted fill, a solid stripe, title in the area's text colour (emphasis level 2). */
+.ev { position: absolute; left: 3px; right: 4px; overflow: hidden; padding: 4px 8px 4px 10px; border-radius: 7px; background: var(--k-fill); box-shadow: inset 3px 0 0 var(--k-solid); color: var(--k-text); font-size: 12px; font-weight: 600; line-height: 1.35; }
+.ev small { display: block; color: var(--k-text); opacity: .75; font: 400 10px/1.5 var(--mono); }
+/* Alfred placed it: same area colour, dashed edge, and Alfred's mark. */
+.ev.by-alfred { box-shadow: none; outline: 1.5px dashed var(--k-solid); outline-offset: -1.5px; }
+.ev.by-alfred small::before { content: "● "; color: var(--alf); }
+.ev.past { opacity: .45; }
+.ev[hidden] { display: none; }
+.day.today .day-body { background-color: color-mix(in oklch, var(--alf) 4%, transparent); }
+.day.today .day-head { color: var(--now); font-weight: 600; }
+.legend { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 40px 16px; }
+.legend .chip[aria-pressed="true"] { background: none; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.legend .chip.off { opacity: .4; }
+.ev.flash { animation: flash 1.4s var(--ease); }
+@keyframes flash { 0% { box-shadow: 0 0 0 3px var(--alf); } }
+.now { position: absolute; left: -1px; right: 0; z-index: 2; height: 2px; background: var(--now); }
+.now::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--now); }
+
+/* Todos */
+.todo-col { max-width: 760px; }
+.add { margin-bottom: 6px; }
+.add input { width: 100%; height: 44px; padding: 0 16px; border: 0; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); outline: none; }
+.add input:focus { box-shadow: inset 0 0 0 1.5px var(--ink); }
+.add input::placeholder { color: var(--muted); }
+.group { padding-top: 20px; }
+.group h3 { display: flex; gap: 8px; padding: 4px 12px 6px; color: var(--muted); font-size: 13px; font-weight: 500; }
+.group h3.late { color: var(--warm); }
+.todo { display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 6px 8px 6px 12px; border-radius: 10px; }
+.todo:hover { background: var(--wash); }
+.todo[data-fresh] { animation: flash 1.4s var(--ease); }
+/* The ring takes the area's colour (a mark); done fills it. */
+.check { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--k-solid, var(--line)); color: transparent; }
+.check:hover { background: var(--k-fill); }
+.check svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.todo[data-done] .check { background: var(--k-solid); box-shadow: none; color: #fff; opacity: .55; }
+.todo-body { flex: 1; min-width: 0; }
+.todo[data-done] .todo-title { color: var(--muted); text-decoration: line-through; }
+.todo-meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 12px; }
+.todo-meta:empty { display: none; }
+.todo-meta .late { color: var(--warm); }
+.doing { display: inline-flex; align-items: center; gap: 7px; color: var(--alf); font-size: 12px; }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--alf); animation: breathe 1.6s ease-in-out infinite; }
+.todo .hand { opacity: 0; }
+.todo:hover .hand, .hand:focus-visible { opacity: 1; }
+@media (hover: none) { .todo .hand { opacity: 1; } }
+
+/* Mail / research */
+.row.mail { grid-template-columns: auto minmax(0, 1fr) auto; }
+.row .note { grid-column: 2 / 4; color: var(--alf); font-size: 12px; }
+.row .avatar { grid-row: span 2; margin-top: 2px; }
+.kind-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+button.tag { cursor: pointer; }
+button.tag:hover { box-shadow: inset 0 0 0 1px var(--k-line); }
+.mail-body { white-space: pre-wrap; color: var(--copy); line-height: 1.75; }
+.article { max-width: 680px; display: flex; flex-direction: column; gap: 16px; color: var(--copy); }
+.article h2 { color: var(--ink); }
+.article h3 { margin-top: 10px; color: var(--ink); font-size: 15px; font-weight: 600; }
+.lead { color: var(--ink) !important; font-size: 17px; line-height: 1.75; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.steps li { padding: 3px 0; color: var(--muted); }
+.steps li.ok { color: var(--copy); }
+.steps li.ok::before { content: "✓  "; color: var(--ok); }
+.steps li.now { color: var(--ink); }
+.steps li.now::before { content: "●  "; color: var(--alf); }
+.steps li.todo-step::before { content: "○  "; }
+.progress { height: 4px; border-radius: 2px; background: var(--wash); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--alf); }
+
+/* Automations */
+.auto-list { max-width: 940px; border-top: 1px solid var(--line-soft); }
+.auto-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.3fr) auto; gap: 16px; align-items: center; padding: 16px 4px; border-bottom: 1px solid var(--line-soft); }
+.auto-row .n { display: flex; align-items: center; gap: 12px; color: var(--ink); font-weight: 500; }
+.auto-row .n i { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--k-fill); color: var(--k-solid); font-style: normal; }
+.auto-row .n i svg { width: 16px; height: 16px; }
+.auto-row .w, .auto-row .l { color: var(--muted); font-size: 13px; }
+.auto-row .l::before { content: "● "; color: var(--ok); }
+.switch { position: relative; width: 38px; height: 22px; border-radius: 11px; background: var(--line); }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; transition: transform 200ms var(--ease); }
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); }
+
+/* ── Alfred ───────────────────────────────────────────────── */
+.alfred { grid-area: alf; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--raise); border-left: 1px solid var(--line-soft); }
+.alf-head { flex: none; display: flex; align-items: flex-start; gap: 12px; padding: 18px 12px 16px 20px; }
+/* Alfred's figure: the tesseract and its state figures, from figure.js (shared with the Mac app). */
+.fig { flex: none; display: block; width: 36px; height: 36px; overflow: visible; }
+.alf-who { flex: 1; min-width: 0; }
+.alf-name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.ctx { padding: 1px 8px; border-radius: 999px; background: var(--wash); color: var(--muted); font-size: 12px; font-weight: 400; }
+.alf-line { margin-top: 4px; color: var(--copy); font-size: 14px; line-height: 1.5; }
+.alf-tools { display: flex; gap: 2px; }
+.thread { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 20px 12px; border-top: 1px solid var(--line-soft); }
+.thread-in { display: flex; flex-direction: column; gap: 22px; padding-top: 14px; }
+body[data-alfred="wide"] .thread-in { max-width: 720px; margin: 0 auto; }
+.msg { font-size: 14.5px; }
+.msg.me { align-self: flex-end; max-width: 88%; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.msg.me .bubble { padding: 8px 13px; border-radius: 16px 16px 4px 16px; background: var(--wash); color: var(--ink); white-space: pre-wrap; }
+.from-page { color: var(--muted); font-size: 11px; }
+.msg.al { display: flex; flex-direction: column; gap: 8px; color: var(--ink); }
+.stamp { color: var(--muted); font-size: 12px; }
+.brief { display: flex; flex-direction: column; gap: 6px; }
+.brief li { display: flex; gap: 8px; }
+.brief li::before { content: "·"; color: var(--muted); }
+.receipts { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px; border-radius: 10px; background: var(--alf-soft); color: var(--copy); font-size: 13px; }
+.receipts li::before { content: "✓  "; color: var(--alf); }
+.working { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.alf-chips { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; }
+.composer { flex: none; display: flex; flex-direction: column; gap: 2px; margin: 0 14px 14px; padding: 8px; border-radius: 16px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+.composer:focus-within { box-shadow: inset 0 0 0 1.5px var(--ink); }
+body[data-alfred="wide"] .alf-chips, body[data-alfred="wide"] .composer { width: min(760px, calc(100% - 28px)); margin-left: auto; margin-right: auto; }
+.composer textarea { width: 100%; min-height: 44px; max-height: 30vh; padding: 4px 6px; resize: none; border: 0; background: none; outline: none; line-height: 1.5; }
+.composer textarea::placeholder { color: var(--muted); }
+.comp-row { display: flex; align-items: center; gap: 4px; }
+.comp-row .ctx { margin-right: auto; }
+.send { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: var(--ink); color: var(--bg); }
+.send svg { width: 16px; height: 16px; }
+
+.fab { position: fixed; right: 20px; bottom: 20px; z-index: 20; display: none; align-items: center; gap: 10px; max-width: 360px; padding: 7px 18px 7px 7px; border-radius: 999px; background: var(--raise); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: 13px; text-align: left; }
+.fab .fig { width: 30px; height: 30px; }
+.fab span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+body[data-alfred="closed"] .fab { display: flex; }
+
+/* ⌘K */
+.palette { position: fixed; inset: 0; z-index: 40; display: none; align-items: flex-start; justify-content: center; padding-top: 14vh; background: #00000040; }
+.palette[data-open] { display: flex; }
+.pal { width: min(580px, 92vw); overflow: hidden; border-radius: 16px; background: var(--raise); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-soft); }
+.pal input { width: 100%; height: 56px; padding: 0 20px; border: 0; border-bottom: 1px solid var(--line-soft); background: none; outline: none; font-size: 16px; }
+.pal ul { max-height: 50vh; overflow: auto; padding: 6px; }
+.pal li button { width: 100%; height: 42px; display: flex; align-items: center; gap: 12px; padding: 0 14px; border-radius: 10px; color: var(--copy); text-align: left; }
+.pal li button[aria-selected="true"] { background: var(--wash); color: var(--ink); }
+.pal kbd { margin-left: auto; color: var(--muted); font: 11px var(--mono); }
+
+.dock, .more { display: none; }
+
+/* ── Phone ────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  .app, body[data-nav] .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "page"; }
+  .side, .resizer, .fab, body[data-alfred="closed"] .fab { display: none; }
+  body[data-alfred="wide"] .page { display: flex; }
+  .page { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .alfred { position: fixed; inset: 0; z-index: 30; border: 0; padding-top: env(safe-area-inset-top); }
+  .wide-btn { display: none !important; }
+  .page-head { padding: 22px 18px 12px; }
+  .page-head h1 { font-size: 26px; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; padding: 0 18px 12px; }
+  .chip { flex: none; }
+  .body-scroll { padding: 0 14px 24px; }
+  .split, .split.narrow { grid-template-columns: minmax(0, 1fr); }
+  .split .detail { display: none; }
+  .split[data-open] .list { display: none; }
+  .split[data-open] .detail { display: block; }
+  .list { border-right: 0; padding-bottom: 24px; }
+  .detail { padding: 14px 18px 32px; }
+  .back { display: inline-flex !important; align-self: flex-start; }
+  .suggest { margin: 0 14px 12px; }
+  .legend { flex-wrap: nowrap; overflow-x: auto; padding: 0 18px 12px; }
+  .legend .chip { flex: none; }
+  .cal-scroll { padding: 0 14px 24px 4px; }
+  .day:not(.today) { display: none; }
+  .auto-row { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .auto-row .n, .auto-row .w, .auto-row .l { grid-column: 1; }
+  .auto-row .switch { grid-column: 2; grid-row: 1 / span 3; }
+  .dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; height: calc(64px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: flex; background: var(--paper); border-top: 1px solid var(--line-soft); }
+  .dock button { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-size: 11px; }
+  .dock button[aria-current="page"] { color: var(--ink); }
+  .dock svg { width: 22px; height: 22px; }
+  .dock .count { position: absolute; top: 7px; left: calc(50% + 8px); min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: #fff; font-size: 10px; }
+  .dock .count:empty { display: none; }
+  .more { position: fixed; inset: 0; z-index: 35; align-items: flex-end; background: #00000040; }
+  .more[data-open] { display: flex; }
+  .more-sheet { width: 100%; padding: 10px 10px calc(18px + env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; background: var(--raise); }
+  .more-sheet button { width: 100%; height: 50px; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-radius: 12px; color: var(--copy); }
+}
+
+/* ── Settings ─────────────────────────────────────────────── */
+.set-nav .sec-label { padding: 14px 12px 4px; color: var(--muted); font-size: 12px; }
+.set-nav .sec-label:first-child { padding-top: 4px; }
+.set-nav .row { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; padding: 9px 12px; }
+.set-nav .row svg { color: var(--k-solid); }
+.set-nav .row .st { font-size: 12px; color: var(--muted); }
+.set-nav .row .st.need { color: var(--warm); }
+.set-in { max-width: 680px; display: flex; flex-direction: column; gap: 30px; }
+.set-in > header h2 { font-size: 22px; }
+.set-in > header p { margin-top: 4px; color: var(--muted); font-size: 14px; }
+.set-group h3 { margin-bottom: 4px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.set-group .hint { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.set-rows { border-top: 1px solid var(--line-soft); }
+.set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 14px; align-items: center; padding: 13px 2px; border-bottom: 1px solid var(--line-soft); }
+.set-row .n { grid-column: 1; grid-row: 1; color: var(--ink); font-weight: 500; }
+.set-row .d { grid-column: 1; grid-row: 2; color: var(--muted); font-size: 13px; }
+.set-row .end { grid-column: 2; grid-row: 1 / 3; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.set-row.has-logo { grid-template-columns: auto minmax(0, 1fr) auto; }
+.set-row.has-logo .n, .set-row.has-logo .d { grid-column: 2; }
+.set-row.has-logo .end { grid-column: 3; }
+.set-row .logo, .hero .logo { grid-column: 1; grid-row: 1 / 3; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--k-fill); color: var(--k-text); font-size: 13px; font-weight: 650; }
+.set-row.sub { padding-left: 46px; }
+.set-row.muted-row .n { color: var(--muted); font-weight: 400; }
+.set-row .flow { grid-column: 1 / -1; grid-row: 3; margin-top: 12px; }
+.status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.status.on { color: var(--ok); }
+.status.on::before { background: var(--ok); }
+.status.need { color: var(--warm); }
+.status.need::before { background: var(--warm); }
+.scope { font: 11px/1 var(--mono); color: var(--muted); }
+.flow { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px; background: var(--alf-soft); color: var(--copy); font-size: 14px; }
+.flow-h { display: flex; align-items: center; gap: 10px; }
+.flow .code { font: 600 24px/1.2 var(--mono); letter-spacing: .14em; color: var(--ink); }
+.flow .small, .hero .small { font-size: 12px; }
+.flow .actions { padding-top: 0; }
+.field { display: flex; flex-wrap: wrap; gap: 8px; }
+.input { flex: 1; min-width: 0; min-height: 34px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-size: 13px; }
+select.input { flex: none; max-width: 260px; padding-right: 6px; }
+.input:focus { outline: 2px solid var(--alf); outline-offset: 0; }
+.hero { display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; border-radius: 16px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.hero-h { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 14px; align-items: center; }
+.hero-h b { color: var(--ink); font-size: 16px; font-weight: 600; }
+.hero-h p { grid-column: 2; color: var(--muted); font-size: 13px; }
+.hero .chips { padding: 0; }
+.banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 14px; border-radius: 14px; background: var(--alf-soft); font-size: 14px; }
+.banner p { flex: 1 1 260px; }
+.adv summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.adv[open] summary { margin-bottom: 10px; }
+.adv p { margin-bottom: 10px; color: var(--muted); font-size: 13px; }
+.leaves li { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 6px 0; font-size: 14px; }
+.leaves li b { color: var(--ink); font-weight: 500; }
+.path { font: 12px/1.6 var(--mono); color: var(--copy); word-break: break-all; }
+@media (max-width: 760px) {
+  .set-row.sub { padding-left: 0; }
+  .set-row .end { flex-wrap: wrap; }
+  .leaves li { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+
+@keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body data-nav="full" data-alfred="open">
+
+<div class="app" id="app">
+  <nav class="side" id="side" aria-label="工作台"></nav>
+  <main class="page" id="page"></main>
+  <div class="resizer" id="rz-nav" data-resize="nav" title="拖动调整宽度，往里拖到底收成图标；双击切换"></div>
+  <div class="resizer" id="rz-alf" data-resize="alf" title="拖动调整页面和 Alfred 的宽度；双击复原"></div>
+  <aside class="alfred" id="alfred" aria-label="Alfred">
+    <header class="alf-head" id="alf-head"></header>
+    <div class="thread" id="thread"><div class="thread-in" id="thread-in"></div></div>
+    <div class="alf-chips" id="alf-chips"></div>
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" placeholder="跟 Alfred 说…"></textarea>
+      <div class="comp-row">
+        <span class="ctx" id="comp-ctx"></span>
+        <button type="button" class="icon-btn" id="mic" aria-label="说话"></button>
+        <button type="submit" class="send" id="send" aria-label="发送"></button>
+      </div>
+    </form>
+  </aside>
+</div>
+
+<button class="fab" id="fab" data-act="alf-open"></button>
+<nav class="dock" id="dock" aria-label="工作台"></nav>
+<div class="more" id="more" data-act="more-close"><div class="more-sheet" id="more-sheet"></div></div>
+<div class="swatch-bar" id="swatch-bar"></div>
+<div class="palette" id="palette" data-act="pal-close"><div class="pal"><input id="pal-input" placeholder="去哪一页，或者直接问 Alfred" autocomplete="off"><ul id="pal-list" role="listbox"></ul></div></div>
+
+<script type="module">
+/* Alfred's figure lives in packages/ui/src/entity/tesseract.js (linked here as figure.js), shared with the Mac app. */
+import { createFigure, drawMark } from "./figure.js";
+const isDark = () => document.documentElement.dataset.scheme === "dark";
+/* One live figure per place (panel head, floating button, phone dock). Renders rebuild the HTML around them, so each
+   figure is a persistent <svg> moved into its slot after every render, and keeps animating across renders. */
+const FIG = {};
+const FIG_SIZES = { head: [36, 5.5], fab: [30, 6], dock: [34, 5.8] };
+for (const [key, [size, width]] of Object.entries(FIG_SIZES)) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 120 120"); svg.setAttribute("class", "fig"); svg.setAttribute("aria-hidden", "true");
+  svg.style.width = svg.style.height = `${size}px`;
+  FIG[key] = { svg, fig: createFigure(svg, { width, small: true }) };
+}
+const figSlot = (key) => `<span data-fig="${key}"></span>`;
+function placeFigs() {
+  document.querySelectorAll("span[data-fig]").forEach((slot) => { const f = FIG[slot.dataset.fig]; slot.replaceWith(f.svg); f.fig.setDark(isDark()); });
+  syncFig();
+}
+/* What the figure shows: a moment (greeting, listening, thinking, speaking), else the open conversation's state. */
+function figState() {
+  if (S.greeting) return "hello";
+  if (S.listening) return "listen";
+  if (S.busy) return "think";
+  if (S.speaking) return "speak";
+  const c = conv();
+  return c.state === "working" ? "work" : c.state === "needs" ? "notice" : "rest";
+}
+function syncFig() { const st = figState(); for (const f of Object.values(FIG)) f.fig.setState(st); }
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+const ICON = {
+  inbox: '<path d="M4 13.5h4l1.5 2.5h5l1.5-2.5h4"/><path d="M6.2 5h11.6l2.7 8.5V19H3.5v-5.5z"/>',
+  cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  todo: '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.6-5"/>',
+  mail: '<rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="m4 7.5 8 5.5 8-5.5"/>',
+  doc: '<path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5v4h4M10 12h5M10 15.5h5"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  gear: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/>',
+  wide: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  narrow: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>',
+  panel: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M15 4.5v15"/>',
+  sidebar: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/>',
+  chat: '<path d="M5 19V7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v6a2.5 2.5 0 0 1-2.5 2.5H9z"/>',
+  plus: '<path d="M12 5.5v13M5.5 12h13"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  back: '<path d="m15 6-6 6 6 6"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>',
+  send: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  more: '<circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/>',
+  spark: '<path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>',
+  model: '<rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M10 10h4v4h-4zM9.5 3v3M14.5 3v3M9.5 18v3M14.5 18v3M3 9.5h3M3 14.5h3M18 9.5h3M18 14.5h3"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  plug: '<path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0zM12 16.5V21"/>',
+  bell: '<path d="M18 10a6 6 0 0 0-12 0c0 5.5-2.5 7-2.5 7h17S18 15.5 18 10M10 20.5h4"/>',
+  device: '<rect x="3" y="5" width="13" height="10" rx="2"/><path d="M7 19h5M9.5 15v4"/><rect x="17.5" y="9" width="4" height="10" rx="1.2"/>',
+  shield: '<path d="M12 3.5 19 6v6c0 4.5-7 8.5-7 8.5S5 16.5 5 12V6z"/><path d="m9 12 2 2 4-4"/>',
+};
+const ic = (n) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
+
+/* Theme (prototype): ?theme=paper|graphite|mist|night, ?scheme=auto|light|dark, ?bare hides the switcher. */
+const THEMES = [["paper", "纸"], ["graphite", "石"], ["mist", "雾"], ["night", "夜"]];
+const SCHEMES = [["auto", "跟随系统"], ["light", "浅"], ["dark", "深"]];
+const darkMQ = matchMedia("(prefers-color-scheme: dark)");
+const T = (() => {
+  const p = new URLSearchParams(location.search);
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem("alfred.theme")) || {}; } catch {}
+  return { theme: p.get("theme") || s.theme || "paper", scheme: p.get("scheme") || s.scheme || "auto", bare: p.has("bare") };
+})();
+function applyTheme() {
+  const root = document.documentElement;
+  root.dataset.theme = T.theme;
+  root.dataset.scheme = T.scheme === "auto" ? (darkMQ.matches ? "dark" : "light") : T.scheme;
+  if (T.bare) root.dataset.bare = "";
+  for (const f of Object.values(FIG)) f.fig.setDark(isDark());
+  document.querySelectorAll("svg[data-mark]").forEach((svg) => drawMark(svg, { width: 7, dark: isDark() }));
+  $("#swatch-bar").innerHTML = `<b>配色</b>${THEMES.map(([k, l]) => `<button data-act="theme" data-id="${k}" aria-pressed="${T.theme === k}">${l}</button>`).join("")}<i></i>${SCHEMES.map(([k, l]) => `<button data-act="scheme" data-id="${k}" aria-pressed="${T.scheme === k}">${l}</button>`).join("")}`;
+}
+function saveTheme() { if (!T.bare) try { localStorage.setItem("alfred.theme", JSON.stringify({ theme: T.theme, scheme: T.scheme })); } catch {} }
+darkMQ.addEventListener("change", applyTheme);
+applyTheme();
+
+const PAGES = [
+  { id: "inbox", name: "通知", icon: "inbox", group: "work", k: "warm" },
+  { id: "cal", name: "日程", icon: "cal", group: "work", k: "now" },
+  { id: "todo", name: "待办", icon: "todo", group: "work", k: "blue" },
+  { id: "mail", name: "邮件", icon: "mail", group: "mod", k: "teal" },
+  { id: "research", name: "调研", icon: "doc", group: "mod", k: "violet" },
+  { id: "auto", name: "自动任务", icon: "clock", group: "mod", k: "green" },
+  { id: "settings", name: "设置", icon: "gear", group: "sys", k: "gray" },
+];
+const pageK = (id) => PAGES.find((p) => p.id === id).k;
+
+/* Areas: one colour each, shared by calendars, todos and anything else that belongs to an area. Order = the validated hue order. */
+const AREAS = {
+  work: { name: "工作", k: "blue" }, life: { name: "生活", k: "green" }, learn: { name: "学习", k: "violet" },
+  travel: { name: "出行", k: "orange" }, health: { name: "健康", k: "teal" }, money: { name: "财务", k: "yellow" }, people: { name: "家人朋友", k: "pink" },
+};
+const areaTag = (a) => `<span class="tag" data-k="${AREAS[a].k}">${AREAS[a].name}</span>`;
+const pageName = (id) => PAGES.find((p) => p.id === id).name;
+const pageIdx = (id) => PAGES.findIndex((p) => p.id === id);
+
+/* ── Sample data: Wednesday 18 November, 8:50 a.m. ──────────── */
+const NOW = { d: 2, h: 8 + 50 / 60 };
+const KIND = { decide: "等你决定", result: "结果", away: "你不在时", remind: "提醒" };
+const KIND_K = { decide: "warm", result: "alfred", away: "gray", remind: "teal" };
+
+const NOTES = [
+  { id: "n1", kind: "decide", src: "mail", t: "08:41", title: "回复 Stripe 的续约邮件",
+    sum: "他们问续约要不要改成年付，年付便宜 15%。我起草了回复：同意年付，但发票抬头换成新公司。",
+    acts: ["发送草稿", "改一下", "不用回"] },
+  { id: "n2", kind: "decide", src: "cal", t: "08:32", title: "把今天的站会挪到 16:00？",
+    sum: "Mia 早上要去医院，9:30 赶不上，问能不能改到下午四点。挪了以后，你上午 9 点到 12 点是一整块。",
+    acts: ["好，挪吧", "不了"] },
+  { id: "n3", kind: "result", src: "research", t: "07:55", title: "本地语音转写的调研写完了",
+    sum: "对比了三个方案。结论：先用 whisper.cpp 跑 small 模型，离线，约 300ms 出字。",
+    acts: ["打开报告"] },
+  { id: "n4", kind: "decide", src: "todo", t: "昨天", title: "「整理报销」逾期两天了",
+    sum: "我可以从邮箱里把 6 张发票找出来，填好报销单给你过目，你只需要签字。",
+    acts: ["交给 Alfred", "今晚我自己做"] },
+  { id: "n5", kind: "away", src: "auto", t: "夜里", title: "你不在时跑完了 3 个自动任务",
+    sum: "早报、账单整理、仓库备份都成功了。账单比上月多 ¥86，主要是云服务器。",
+    acts: ["去看看"] },
+  { id: "n6", kind: "result", src: "mail", t: "夜里", title: "归档了 12 封订阅邮件",
+    sum: "都是 30 天没打开过的 newsletter，按你上周定的规则。",
+    acts: ["好", "撤销"] },
+  { id: "n7", kind: "remind", src: "cal", t: "07:30", title: "明天 10:00 看牙医",
+    sum: "路上大约 25 分钟，我会在 9:20 提醒你出门。",
+    acts: ["好", "改成 9:00 提醒"] },
+];
+NOTES[0].extra = () => `<div class="card"><div class="card-label">Alfred 的草稿 · 第 ${mail("m1").v} 版</div><pre>${esc(mail("m1").draft)}</pre></div>`;
+NOTES[1].extra = () => `<div class="card"><div class="card-label">挪了以后的今天</div>09:00 – 12:00　整块空着<br>12:00　和 Mia 吃午饭<br>14:00 – 16:00　写布局方案（Alfred 排的）<br>16:00　站会</div>`;
+NOTES[4].extra = () => `<div class="card">✓ 早报　07:30<br>✓ 账单整理　03:10　多了 ¥86<br>✓ 仓库备份　03:00</div>`;
+
+const EVENTS = [
+  { id: "e1", d: 0, s: 9.5, e: 10, title: "站会", a: "work" }, { id: "e2", d: 0, s: 10.5, e: 11.5, title: "周会", a: "work" }, { id: "e3", d: 0, s: 15, e: 16, title: "设计评审", a: "work" },
+  { id: "e3b", d: 0, s: 18.5, e: 19.5, title: "游泳", a: "health" },
+  { id: "e4", d: 1, s: 9.5, e: 10, title: "站会", a: "work" }, { id: "e5", d: 1, s: 14, e: 15, title: "和 Leo 1:1", a: "work" }, { id: "e6", d: 1, s: 19, e: 20, title: "日语课", a: "learn" },
+  { id: "e7", d: 2, s: 9.5, e: 10, title: "站会", a: "work" }, { id: "e8", d: 2, s: 12, e: 13, title: "和 Mia 吃午饭", a: "people" },
+  { id: "e9", d: 2, s: 14, e: 16, title: "写布局方案", a: "work", by: "Alfred 排的" }, { id: "e9b", d: 2, s: 18.5, e: 19.5, title: "跑步", a: "health" },
+  { id: "e10", d: 3, s: 9.5, e: 10, title: "站会", a: "work" }, { id: "e11", d: 3, s: 10, e: 11, title: "看牙医", a: "health" }, { id: "e12", d: 3, s: 15, e: 16, title: "设计评审", a: "work" },
+  { id: "e12b", d: 3, s: 19, e: 19.5, title: "和爸妈视频", a: "people" },
+  { id: "e13", d: 4, s: 9.5, e: 10, title: "站会", a: "work" }, { id: "e13b", d: 4, s: 12, e: 12.5, title: "还信用卡", a: "money", by: "Alfred 提醒" }, { id: "e14", d: 4, s: 16.5, e: 17, title: "周报草稿", a: "work", by: "Alfred 写" },
+  { id: "e15", d: 5, s: 9, e: 12, title: "爬山", a: "life" }, { id: "e15b", d: 5, s: 15, e: 16.5, title: "去机场接爸妈", a: "travel" },
+  { id: "e16", d: 6, s: 10, e: 11.5, title: "读书会", a: "learn" }, { id: "e17", d: 6, s: 17, e: 18, title: "买菜", a: "life" },
+];
+
+const TODOS = [
+  { id: "t1", title: "整理报销", due: "11月16日", g: "late", a: "money", can: true },
+  { id: "t2", title: "回 Stripe 续约邮件", due: "11月17日", g: "late", a: "work", note: "草稿已备好" },
+  { id: "t3", title: "写 Alfred 布局方案", due: "今天", g: "today", a: "work", note: "排在 14:00 – 16:00" },
+  { id: "t4", title: "看完语音转写调研", due: "今天", g: "today", a: "learn" },
+  { id: "t5", title: "给妈妈打电话", due: "今天", g: "today", a: "people" },
+  { id: "t6", title: "预约续签护照", due: "明天", g: "tomorrow", a: "travel", can: true },
+  { id: "t7", title: "准备周五设计评审", due: "周五", g: "week", a: "work" },
+  { id: "t8", title: "买猫粮", due: "", g: "later", a: "life", can: true },
+  { id: "t9", title: "试试菜单栏里的快捷问答", due: "", g: "later", a: "learn" },
+];
+
+const DRAFTS = [
+  "Hi Stripe team,\n\nAnnual billing works for us. One change: from the next cycle, please issue invoices to our new entity (details attached).\n\nThanks,\nBruce",
+  "Hi Stripe team,\n\nThanks for reaching out — annual billing sounds great. If possible, could invoices from the next cycle go to our new entity? I've attached the details.\n\nMany thanks,\nBruce",
+];
+const MAILS = [
+  { id: "m1", from: "Stripe", k: "violet", subj: "Your plan renews on Dec 1 — switch to annual?", t: "08:30", unread: true, note: "Alfred 起草了回复", v: 1, draft: DRAFTS[0],
+    body: "Hi Bruce,\n\nYour plan renews on December 1. Switching to annual billing saves 15% compared to monthly.\n\nReply to this email if you'd like to switch, or if anything about your billing details has changed.\n\n— Stripe Billing" },
+  { id: "m2", from: "Mia", k: "pink", subj: "站会能改到下午吗？", t: "08:28", unread: true, note: "Alfred 在通知里问你了", body: "早上要去趟医院，9:30 赶不上。下午四点可以吗？" },
+  { id: "m3", from: "GitHub", k: "gray", subj: "[alfred] 3 new issues", t: "07:10", unread: true, body: "#41  MCP config: support env vars\n#42  Pair a second phone\n#43  Todo: recurring items" },
+  { id: "m4", from: "信用卡中心", k: "yellow", subj: "11 月账单已出", t: "昨天", note: "Alfred 记进了账单整理", body: "本期应还 ¥3,482.16，最后还款日 12 月 8 日。" },
+  { id: "m5", from: "Leo", k: "green", subj: "Re: 周二 1:1 议程", t: "昨天", body: "下周二想聊两件事：Q1 计划，还有要不要把 Alfred 开源的时间提前。你有想加的吗？" },
+];
+
+const REPORTS = [
+  { id: "r1", title: "本地语音转写：三个方案", t: "今天 07:55", status: "写完了" },
+  { id: "r2", title: "个人 agent 的 app 布局", t: "今天 08:20 开始", status: "在做 · 60%" },
+  { id: "r3", title: "Mac 菜单栏常驻窗口的做法", t: "11月12日", status: "写完了" },
+];
+const REPORT_BODY = {
+  r1: `<div class="kind">调研 · 今天 07:55 · 用了 38 分钟 · 看了 14 个来源</div>
+    <h2>本地语音转写：三个方案</h2>
+    <p class="lead">先用 whisper.cpp 跑 small 模型：完全离线，一句话说完约 300ms 出字，不花钱。等要做实时打断，再换流式方案。</p>
+    <h3>对比</h3>
+    <table><tr><th>方案</th><th>出字延迟</th><th>中文</th><th>离线</th><th>成本</th></tr>
+    <tr><td>whisper.cpp · small</td><td>~300ms</td><td>好</td><td>是</td><td>0</td></tr>
+    <tr><td>系统自带听写</td><td>~150ms</td><td>一般</td><td>部分</td><td>0</td></tr>
+    <tr><td>云端流式 API</td><td>~200ms</td><td>很好</td><td>否</td><td>按分钟</td></tr></table>
+    <h3>下一步</h3>
+    <p>在 home 节点上起一个转写服务，手机和 Mac 都走它。模型文件约 466MB，第一次启动时下载。</p>
+    <div class="actions"><button class="btn" data-act="ask" data-text="把结论加进待办">把结论加进待办</button><button class="btn ghost" data-act="ask" data-text="讲 30 秒版本">讲 30 秒版本</button></div>`,
+  r2: `<div class="kind">调研 · 今天 08:20 开始</div>
+    <h2>个人 agent 的 app 布局</h2>
+    <div class="progress"><i style="width:60%"></i></div>
+    <ul class="steps"><li class="ok">读了 Robin 的代码和截图</li><li class="ok">找了 10 个参考：Linear、Sunsama、ChatGPT Pulse…</li><li class="now">把选中的方案做成可点的原型</li><li class="todo-step">等你挑一个</li></ul>
+    <p class="muted">做完了会在通知里告诉你，不会打断你。</p>`,
+  r3: `<div class="kind">调研 · 11月12日</div>
+    <h2>Mac 菜单栏常驻窗口的做法</h2>
+    <p class="lead">Electron 的 panel 类型窗口加 alwaysOnTop("floating")，可以跟着你切 Space，又不抢焦点。</p>
+    <p>Raycast 和 ChatGPT 桌面版都是这个做法。要注意全屏 app 上方需要 visibleOnFullScreen。</p>`,
+};
+
+const AUTOS = [
+  { id: "a1", name: "早报", k: "orange", icon: "doc", when: "每天 07:30", last: "今天 07:30 成功", on: true },
+  { id: "a2", name: "账单整理", k: "yellow", icon: "mail", when: "收到账单时 · 每月 1 日汇总", last: "今天 03:10 成功 · 多了 ¥86", on: true },
+  { id: "a3", name: "仓库备份", k: "teal", icon: "clock", when: "每天 03:00", last: "今天 03:00 成功", on: true },
+  { id: "a4", name: "订阅邮件归档", k: "blue", icon: "inbox", when: "收到时 · 30 天没打开", last: "夜里归档了 12 封", on: true },
+  { id: "a5", name: "周报草稿", k: "violet", icon: "doc", when: "每周五 16:30", last: "11月13日 成功", on: true },
+];
+
+const CHIPS = {
+  inbox: ["能处理的都处理掉", "先讲讲 Stripe 那封"],
+  cal: ["把站会挪到四点", "这周哪天下午最空？"],
+  todo: ["报销交给你", "今天先做哪件？"],
+  mail: ["草稿语气再客气一点", "只看需要我回的"],
+  research: ["讲 30 秒版本", "把结论加进待办"],
+  auto: ["明早早报加上英伟达", "账单为什么多了 86？"],
+  settings: ["为什么要连 Google？", "哪些数据会离开这台 Mac？"],
+};
+
+const note = (id) => NOTES.find((n) => n.id === id);
+const mail = (id) => MAILS.find((m) => m.id === id);
+const todo = (id) => TODOS.find((t) => t.id === id);
+const pending = () => NOTES.filter((n) => n.kind === "decide" && !n.done).length;
+const lateOpen = () => TODOS.filter((t) => t.g === "late" && !t.done && !t.doing).length;
+const unread = () => MAILS.filter((m) => m.unread).length;
+const fmt = (h) => `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
+const todayLeft = () => EVENTS.filter((e) => e.d === NOW.d && e.e > NOW.h).sort((a, b) => a.s - b.s);
+
+/* ── State ──────────────────────────────────────────────────── */
+const phoneMQ = matchMedia("(max-width: 760px)");
+const q = new URLSearchParams(location.search);
+/* Widths are a per-viewer convenience, so localStorage is fine (it may be unavailable). */
+const saved = (() => { try { return JSON.parse(localStorage.getItem("alfred.layout")) || {}; } catch { return {}; } })();
+const NAV = { min: 168, max: 300, def: 200, foldAt: 120 };
+const ALF = { min: 300, def: 400, pageMin: 420 };
+const S = {
+  nav: q.get("nav") === "rail" || q.get("nav") === "full" ? q.get("nav") : saved.nav || (innerWidth < 1200 ? "rail" : "full"),
+  navW: saved.navW || NAV.def,
+  alfW: saved.alfW || ALF.def,
+  page: PAGES.some((p) => p.id === q.get("page")) ? q.get("page") : "inbox",
+  alfred: phoneMQ.matches ? "closed" : "open",
+  sel: { inbox: "n1", mail: "m1", research: "r1", settings: q.get("sec") || "models" },
+  open: {},
+  inboxFilter: "all",
+  todoFilter: "all",
+  conv: "c1",
+  busy: false,
+};
+Object.defineProperty(S, "thread", { get: () => conv().thread });
+
+/* Conversations with Alfred. S.thread is always the current one's messages. */
+const CONVS = [
+  { id: "c1", title: "今天", t: "07:30", thread: [] },
+  { id: "c2", title: "个人 agent 的 app 布局", t: "08:20", state: "working", thread: [
+    { who: "me", text: "帮我调研一下个人 agent 的 app 布局，出几个方案", ctx: "调研" },
+    { who: "al", html: "<p>好。我先看 Robin 的代码和截图，再找十个参考，最后把方案做成能点的原型，放进调研。做完在通知里告诉你。</p>", receipts: ["读了 Robin 的代码和截图", "找了 10 个参考"] },
+    { who: "al", working: "在把选中的方案做成原型…" }] },
+  { id: "c3", title: "Stripe 续约", t: "昨天", state: "needs", thread: [
+    { who: "me", text: "Stripe 来信问续约的事，你看着办", ctx: "邮件" },
+    { who: "al", html: '<p>年付便宜 15%，我起草了一封同意年付、但要求换发票抬头的回复。发不发等你点头。</p><p><button class="link" data-act="go" data-id="inbox">去通知里看</button></p>' }] },
+  { id: "c4", title: "本地语音转写", t: "昨天", thread: [
+    { who: "me", text: "本地语音转写有哪些方案？", ctx: "调研" },
+    { who: "al", html: '<p>写完了：先用 whisper.cpp 跑 small 模型，离线、约 300ms 出字。<button class="link" data-act="go" data-id="research">打开报告</button></p>' }] },
+  { id: "c5", title: "周末去哪爬山", t: "周一", thread: [
+    { who: "me", text: "周六想去爬山，近一点的", ctx: "日程" },
+    { who: "al", html: "<p>周六上午天气最好。我放了 9:00–12:00 在日程里，路线发你了：单程 50 分钟，强度中等。</p>", receipts: ["日程 · 周六 9:00 爬山"] }] },
+];
+const conv = (id = S.conv) => CONVS.find((c) => c.id === id);
+
+/* ── What Alfred says on each page ──────────────────────────── */
+function line(page) {
+  switch (page) {
+    case "inbox": return pending() ? `${pending()} 件要你点头，别的我都处理好了。` : "都处理完了，今天不用再看这里。";
+    case "cal": return note("n2").done ? "上午 9 点到 12 点是一整块，下午 2–4 点写方案。" : "Mia 想把站会挪到下午；2–4 点我替你占住了写方案。";
+    case "todo": return lateOpen() ? `${lateOpen()} 件逾期，报销那件我能直接做。` : "逾期的清掉了，今天还剩 3 件。";
+    case "mail": return mail("m1").replied ? "需要你回的只剩 Leo 那封，不急。" : "Stripe 那封我起草好了回复，其余的不急。";
+    case "research": return "结论都在第一段；想听短的就问我。";
+    case "auto": return "昨夜三个都成功。账单比上月多了 ¥86。";
+    case "settings": return !signedIn().length ? "先登录一个模型，我才能开始干活。" : !SET.google.length ? "连上 Google，我就能看你的日程和邮件。" : "都连好了。想改哪项，直接跟我说也行。";
+  }
+}
+function peek(page) {
+  const next = todayLeft()[0];
+  return {
+    inbox: [`${pending()} 件等你决定`, NOTES.find((n) => n.kind === "decide" && !n.done)?.title || "都处理完了"],
+    cal: [next ? `下一个：${fmt(next.s)} ${next.title}` : "今天没有了", `今天还有 ${todayLeft().length} 个安排`],
+    todo: [`${lateOpen()} 件逾期`, "今天 3 件"],
+    mail: [`${unread()} 封未读`, mail("m1").replied ? "Stripe 已回复" : "Stripe 那封有草稿"],
+    research: ["1 份写完了", "1 份在做 · 60%"],
+    auto: ["5 个在跑", "昨夜全部成功"],
+    settings: [signedIn().length ? `模型：${modelLabel(SET.model)}` : "还没登录模型", SET.google.length ? `Google：${SET.google[0].email}` : "Google 没连"],
+  }[page];
+}
+function count(page) {
+  const n = page === "inbox" ? pending() : page === "todo" ? lateOpen() : page === "mail" ? unread() : 0;
+  return n || "";
+}
+const hot = (page) => (page === "inbox" || page === "todo" ? "hot" : "");
+
+/* ── Navigation ─────────────────────────────────────────────── */
+function renderNav() {
+  const cur = (id) => (S.page === id ? 'aria-current="page"' : "");
+  // The inbox count is the one solid colour in the sidebar: it is what needs you.
+  const badge = (id) => { const n = count(id); return id === "inbox" && n ? `<span class="count pill" data-k="warm">${n}</span>` : `<span class="count ${hot(id)}">${n}</span>`; };
+  const item = (p) => `<button class="nav-item" data-k="${p.k}" data-act="go" data-id="${p.id}" ${cur(p.id)} aria-label="${p.name}">${ic(p.icon)}<span class="label">${p.name}</span>${badge(p.id)}<span class="peek"><b>${p.name}</b>${peek(p.id).map((x) => `<span>${esc(x)}</span>`).join("")}</span></button>`;
+  const find = `<button class="find" data-act="palette">${ic("search")}<span>搜索，或问 Alfred</span><kbd>⌘K</kbd></button>`;
+  $("#side").innerHTML = `<div class="side-top"><div class="lights"><i></i><i></i><i></i></div>
+      <button class="icon-btn" data-act="nav-toggle" aria-label="${S.nav === "rail" ? "展开侧栏" : "收起侧栏"}" title="${S.nav === "rail" ? "展开侧栏" : "收起侧栏"}  ⌘\\">${ic("sidebar")}</button></div>${find}
+    <div class="nav-label">工作台</div>${PAGES.filter((p) => p.group === "work").map(item).join("")}
+    <div class="nav-sep"></div><div class="nav-label">模块</div>${PAGES.filter((p) => p.group === "mod").map(item).join("")}
+    <div class="nav-spacer"></div>
+    <div class="conv-head"><span>对话</span><button class="icon-btn" data-act="conv-new" aria-label="新对话" title="新对话">${ic("plus")}</button></div>
+    <div class="conv-list">${CONVS.slice(0, 5).map(convItem).join("")}</div>
+    <button class="nav-item conv-rail" data-act="alf-open" aria-label="对话">${ic("chat")}<span class="label">对话</span><span class="count">${CONVS.filter((c) => c.state === "working").length || ""}</span><span class="peek"><b>对话</b>${CONVS.slice(0, 4).map((c) => `<span>${c.state === "working" ? "● " : ""}${esc(c.title)} · ${c.t}</span>`).join("")}</span></button>
+    ${item(PAGES[pageIdx("settings")])}`;
+  const inMore = ["mail", "research", "auto", "settings"].includes(S.page);
+  const dockBtn = (id) => { const p = PAGES[pageIdx(id)]; return `<button data-k="${p.k}" data-act="go" data-id="${id}" ${cur(id)}>${ic(p.icon)}<span>${p.name}</span><span class="count">${count(id)}</span></button>`; };
+  $("#dock").innerHTML = `${dockBtn("inbox")}${dockBtn("cal")}<button data-act="alf-open" aria-label="Alfred">${figSlot("dock")}</button>${dockBtn("todo")}<button data-act="more" ${inMore ? 'aria-current="page"' : ""}>${ic("more")}<span>${inMore ? pageName(S.page) : "更多"}</span></button>`;
+  $("#more-sheet").innerHTML = PAGES.filter((p) => p.group === "mod").map((p) => `<button data-k="${p.k}" data-act="go" data-id="${p.id}">${ic(p.icon)}${p.name}<span class="count" style="margin-left:auto">${count(p.id)}</span></button>`).join("") + `<div class="sheet-label">对话</div>${CONVS.slice(0, 5).map(convItem).join("")}<button data-act="go" data-id="settings">${ic("gear")}设置</button>`;
+}
+
+function convItem(c) {
+  const st = c.state === "working" ? '<span class="pulse"></span>' : c.state === "needs" ? '<span class="mark" data-k="warm"></span>' : '<span class="mark" data-k="gray" style="opacity:.45"></span>';
+  return `<button class="conv" data-act="conv" data-id="${c.id}" aria-current="${S.conv === c.id}" title="${esc(c.title)}"><span class="st">${st}</span><span class="ct">${esc(c.title)}</span><span class="time">${c.t}</span></button>`;
+}
+
+/* ── Pages ──────────────────────────────────────────────────── */
+const head = (id, sub) => { const p = PAGES[pageIdx(id)]; return `<header class="page-head"><h1 data-k="${p.k}">${ic(p.icon)}${p.name}</h1><p class="page-sub">${sub}</p></header>`; };
+const back = (page) => `<button class="btn ghost small back" data-act="back" data-page="${page}">${ic("back")}${pageName(page)}</button>`;
+
+function pInbox() {
+  const F = [["all", "全部"], ["decide", "等你决定"], ["result", "结果"], ["away", "你不在时"], ["remind", "提醒"]];
+  const n = (k) => (k === "all" ? NOTES.length : NOTES.filter((x) => x.kind === k).length);
+  const list = NOTES.filter((x) => S.inboxFilter === "all" || x.kind === S.inboxFilter);
+  const sel = list.find((x) => x.id === S.sel.inbox) || list[0];
+  const rows = list.map((x) => `<button class="row" data-act="sel" data-page="inbox" data-id="${x.id}" aria-current="${sel?.id === x.id}" ${x.done ? "data-done" : ""}>
+      <span class="dot ${x.done ? "done" : ""}" data-k="${KIND_K[x.kind]}"></span><span class="t">${esc(x.title)}</span><span class="time">${x.t}</span>
+      <span class="s">${x.done ? "✓ " + esc(x.doneText) : esc(x.sum)}</span></button>`).join("");
+  return `${head("inbox", pending() ? `${pending()} 件等你决定，其余是 Alfred 做完了告诉你一声` : "都处理完了")}
+    <div class="chips">${F.map(([k, l]) => `<button class="chip" data-act="inbox-filter" data-id="${k}" aria-pressed="${S.inboxFilter === k}">${k === "all" ? "" : `<span class="mark" data-k="${KIND_K[k]}"></span>`}${l}<span class="count">${n(k)}</span></button>`).join("")}</div>
+    <div class="split" ${S.open.inbox ? "data-open" : ""}>
+      <div class="list" data-keep="inbox-list">${rows}</div>
+      <section class="detail" data-keep="inbox-detail">${sel ? noteDetail(sel) : ""}</section>
+    </div>`;
+}
+function noteDetail(x) {
+  return `<div class="detail-in">${back("inbox")}
+    <div class="kind-row"><span class="tag dot-tag" data-k="${x.done ? "gray" : KIND_K[x.kind]}">${KIND[x.kind]}</span>
+      <button class="tag" data-k="${pageK(x.src)}" data-act="go" data-id="${x.src}">来自${pageName(x.src)}</button><span>${x.t}</span></div>
+    <h2>${esc(x.title)}</h2><p>${esc(x.sum)}</p>${x.extra ? x.extra() : ""}
+    ${x.done ? `<p class="done-line">✓ ${esc(x.doneText)}</p>`
+      : `<div class="actions">${x.acts.map((a, i) => `<button class="btn ${i ? "ghost" : x.id === "n4" ? "alf" : ""}" data-act="note" data-id="${x.id}" data-i="${i}">${a}</button>`).join("")}</div>`}
+  </div>`;
+}
+
+function pCal() {
+  const W = ["一", "二", "三", "四", "五", "六", "日"];
+  S.hideAreas ||= new Set();
+  const left = todayLeft().length;
+  const day = (i) => {
+    const evs = EVENTS.filter((e) => e.d === i).map((e) => {
+      const past = i < NOW.d || (i === NOW.d && e.e <= NOW.h);
+      return `<div class="ev ${e.by ? "by-alfred" : ""} ${past ? "past" : ""} ${e.flash ? "flash" : ""}" data-k="${AREAS[e.a].k}" ${S.hideAreas.has(e.a) ? "hidden" : ""} title="${AREAS[e.a].name}" style="top:${(e.s - 8) * 52 + 1}px;height:${(e.e - e.s) * 52 - 3}px">${esc(e.title)}<small>${fmt(e.s)} – ${fmt(e.e)}${e.by ? " · " + e.by : ""}</small></div>`;
+    }).join("");
+    const now = i === NOW.d ? `<div class="now" style="top:${(NOW.h - 8) * 52}px"></div>` : "";
+    return `<div class="day ${i === NOW.d ? "today" : ""} ${i > 4 ? "weekend" : ""}"><div class="day-head">周${W[i]}<b>${16 + i}</b></div><div class="day-body">${evs}${now}</div></div>`;
+  };
+  const used = Object.keys(AREAS).filter((a) => EVENTS.some((e) => e.a === a));
+  const legend = `<div class="legend">${used.map((a) => `<button class="chip ${S.hideAreas.has(a) ? "off" : ""}" data-act="cal-area" data-id="${a}" aria-pressed="${!S.hideAreas.has(a)}" title="点一下隐藏或显示"><span class="mark" data-k="${AREAS[a].k}"></span>${AREAS[a].name}</button>`).join("")}
+    <span class="chip" style="box-shadow:none;outline:1.5px dashed var(--line);outline-offset:-1.5px"><span class="mark" data-k="alfred"></span>Alfred 排的</span></div>`;
+  const ask = !note("n2").done
+    ? `<div class="suggest"><svg class="fig" viewBox="0 0 120 120" data-mark style="width:22px;height:22px" aria-hidden="true"></svg><p>Mia 想把今天 9:30 的站会挪到 16:00。挪了以后你上午有三个小时整块。</p><button class="btn small" data-act="note" data-id="n2" data-i="0">好，挪吧</button><button class="btn ghost small" data-act="note" data-id="n2" data-i="1">不了</button></div>` : "";
+  EVENTS.forEach((e) => delete e.flash);
+  return `${head("cal", `11月16日 – 22日 · 今天还有 ${left} 个安排`)}${legend}${ask}
+    <div class="cal-scroll" data-keep="cal"><div class="week"><div class="gutter">${Array.from({ length: 12 }, (_, k) => `<div>${k ? 8 + k + ":00" : ""}</div>`).join("")}</div>${W.map((_, i) => day(i)).join("")}</div></div>`;
+}
+
+function pTodo() {
+  const used = Object.keys(AREAS).filter((a) => TODOS.some((t) => t.a === a));
+  const F = [["all", "全部", ""], ...used.map((a) => [a, AREAS[a].name, AREAS[a].k]), ["alfred", "Alfred 能做", "alfred"]];
+  const G = [["late", "逾期"], ["today", "今天"], ["tomorrow", "明天"], ["week", "本周"], ["later", "以后再说"]];
+  const vis = (t) => S.todoFilter === "all" || (S.todoFilter === "alfred" ? t.can || t.doing : t.a === S.todoFilter);
+  const row = (t) => `<li class="todo" data-k="${AREAS[t.a].k}" ${t.done ? "data-done" : ""} ${t.fresh ? "data-fresh" : ""}>
+      <button class="check" data-act="todo-check" data-id="${t.id}" aria-label="完成">${ic("check")}</button>
+      <div class="todo-body"><div class="todo-title">${esc(t.title)}</div>
+        <div class="todo-meta">${areaTag(t.a)}${t.due ? `<span class="${t.g === "late" ? "late" : ""}">${t.g === "late" ? "逾期 · " : ""}${t.due}</span>` : ""}${t.note ? `<span>${esc(t.note)}</span>` : ""}</div></div>
+      ${t.doing && !t.done ? `<span class="tag" data-k="alfred"><span class="pulse"></span>Alfred 在做</span>` : t.can && !t.done ? `<button class="btn ghost small hand" data-act="todo-hand" data-id="${t.id}">交给 Alfred</button>` : ""}
+    </li>`;
+  const groups = G.map(([g, l]) => {
+    const items = TODOS.filter((t) => t.g === g && vis(t));
+    return items.length ? `<section class="group"><h3 class="${g === "late" ? "late" : ""}">${l}<span>${items.filter((t) => !t.done).length}</span></h3><ul>${items.map(row).join("")}</ul></section>` : "";
+  }).join("");
+  TODOS.forEach((t) => delete t.fresh);
+  const open = TODOS.filter((t) => !t.done).length, doing = TODOS.filter((t) => t.doing && !t.done).length;
+  return `${head("todo", `${open} 件没做完${doing ? ` · ${doing} 件 Alfred 在做` : ""}`)}
+    <div class="chips">${F.map(([k, l, c]) => `<button class="chip" data-act="todo-filter" data-id="${k}" aria-pressed="${S.todoFilter === k}">${c ? `<span class="mark" data-k="${c}"></span>` : ""}${l}</button>`).join("")}</div>
+    <div class="body-scroll" data-keep="todo"><div class="todo-col">
+      <form class="add" data-form="add"><input name="t" placeholder="加一件事，回车。比如：周五前把发票寄出去" autocomplete="off"></form>${groups}
+    </div></div>`;
+}
+
+function pMail() {
+  const sel = mail(S.sel.mail) || MAILS[0];
+  const rows = MAILS.map((m) => `<button class="row mail" data-act="sel" data-page="mail" data-id="${m.id}" aria-current="${sel.id === m.id}" ${m.unread ? "data-unread" : ""}>
+      <span class="avatar" data-k="${m.k}">${esc(m.from[0])}</span><span class="t">${esc(m.from)}</span><span class="time">${m.unread ? '<span class="mark" data-k="alfred" style="display:inline-block;margin-right:6px"></span>' : ""}${m.t}</span>
+      <span class="s">${esc(m.subj)}</span>${m.note ? `<span class="note">${esc(m.replied ? "已回复" : m.note)}</span>` : ""}</button>`).join("");
+  const draft = sel.draft ? (sel.replied ? `<p class="done-line">✓ 已回复（第 ${sel.v} 版草稿）</p>`
+    : `<div class="card"><div class="card-label">Alfred 的草稿 · 第 ${sel.v} 版</div><pre>${esc(sel.draft)}</pre></div>
+       <div class="actions"><button class="btn" data-act="mail-send" data-id="${sel.id}">发送</button><button class="btn ghost" data-act="ask" data-text="草稿语气再客气一点">让 Alfred 改语气</button></div>`) : "";
+  return `${head("mail", `${unread()} 封未读 · 夜里归档了 12 封订阅`)}
+    <div class="split" ${S.open.mail ? "data-open" : ""}>
+      <div class="list" data-keep="mail-list">${rows}</div>
+      <section class="detail" data-keep="mail-detail"><div class="detail-in">${back("mail")}
+        <div class="kind-row"><span class="avatar" data-k="${sel.k}">${esc(sel.from[0])}</span><span><b style="color:var(--ink);font-weight:600">${esc(sel.from)}</b> · ${sel.t}</span></div>
+        <h2>${esc(sel.subj)}</h2><p class="mail-body">${esc(sel.body)}</p>${draft}
+      </div></section>
+    </div>`;
+}
+
+function pResearch() {
+  const sel = REPORTS.find((r) => r.id === S.sel.research) || REPORTS[0];
+  const rows = REPORTS.map((r) => { const doing = r.status.startsWith("在做"); return `<button class="row" data-act="sel" data-page="research" data-id="${r.id}" aria-current="${sel.id === r.id}">
+      <span class="dot" data-k="${doing ? "alfred" : "violet"}"></span><span class="t">${esc(r.title)}</span><span class="time"></span>
+      <span class="s">${r.t} · ${doing ? `<span style="color:var(--alf)">${r.status}</span>` : r.status}</span></button>`; }).join("");
+  return `${head("research", "Alfred 替你查的东西，写完放在这里")}
+    <div class="split narrow" ${S.open.research ? "data-open" : ""}>
+      <div class="list" data-keep="research-list">${rows}</div>
+      <section class="detail" data-keep="research-detail"><article class="article">${back("research")}${REPORT_BODY[sel.id]}</article></section>
+    </div>`;
+}
+
+function pAuto() {
+  return `${head("auto", "Alfred 按时或按条件自己去做的事")}
+    <div class="body-scroll" data-keep="auto"><div class="auto-list">${AUTOS.map((a) => `<div class="auto-row"><span class="n" data-k="${a.k}"><i>${ic(a.icon)}</i>${a.name}</span><span class="w">${a.when}</span><span class="l">${a.last}</span>
+      <button class="switch" role="switch" aria-checked="${a.on}" aria-label="${a.name}" data-act="auto-toggle" data-id="${a.id}"></button></div>`).join("")}</div></div>`;
+}
+
+/* ── Settings (prototype: every sign-in is simulated; see docs/design/settings-and-connections.md) ── */
+const SET_SECS = [
+  ["连接", [["models", "模型与订阅", "model", "violet"], ["accounts", "账户", "user", "blue"], ["connectors", "连接器", "plug", "teal"]]],
+  ["偏好", [["general", "通用", "gear", "gray"], ["voice", "语音", "mic", "orange"], ["notify", "通知", "bell", "warm"]]],
+  ["系统", [["devices", "设备", "device", "green"], ["privacy", "隐私与数据", "shield", "gray"]]],
+];
+const CLAUDE = ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Haiku 5.5"];
+const PROVIDERS = [
+  { id: "claude", name: "Claude Pro / Max", by: "Anthropic 订阅", sub: true, how: "browser", host: "claude.ai", logo: "A", k: "orange", models: CLAUDE },
+  { id: "chatgpt", name: "ChatGPT Plus / Pro", by: "OpenAI 订阅，经 Codex", sub: true, how: "browser", host: "auth.openai.com", logo: "O", k: "green", models: ["GPT-5.4"] },
+  { id: "copilot", name: "GitHub Copilot", by: "GitHub 订阅，输入一个短码就行", sub: true, how: "device", host: "github.com/login/device", logo: "G", k: "gray", models: ["Copilot · Claude Sonnet 5.5"] },
+  { id: "xai", name: "SuperGrok / X Premium", by: "xAI 订阅", sub: true, how: "browser", host: "accounts.x.ai", logo: "X", k: "gray", models: ["Grok"] },
+  { id: "anthropic", name: "Anthropic", by: "API key，按量付费", how: "key", logo: "A", k: "orange", models: CLAUDE },
+  { id: "openai", name: "OpenAI", by: "API key", how: "key", logo: "O", k: "green", models: ["GPT-5.4"] },
+  { id: "gemini", name: "Google Gemini", by: "API key", how: "key", logo: "G", k: "blue", models: ["Gemini Pro"] },
+  { id: "openrouter", name: "OpenRouter", by: "一个账号用很多家；登录或填 key", how: "browser", host: "openrouter.ai", logo: "R", k: "violet", models: ["OpenRouter · 多家模型"] },
+  { id: "deepseek", name: "DeepSeek", by: "API key", how: "key", logo: "D", k: "blue", models: ["DeepSeek"] },
+];
+const G_CAPS = [
+  { id: "calRead", group: "cal", name: "日历：读", d: "看你的日程，算哪里有空", scope: "calendar.readonly" },
+  { id: "calWrite", group: "cal", name: "日历：替你加和改", d: "占时间块、挪会议；每次先问你", scope: "calendar.events" },
+  { id: "mailRead", group: "mail", name: "Gmail：读", d: "理收件箱，找出要你回的信", scope: "gmail.readonly" },
+  { id: "mailSend", group: "mail", name: "Gmail：替你发", d: "草稿先放在 Alfred 里，你点头才发", scope: "gmail.send" },
+];
+const MCPS = [
+  { id: "notion", name: "Notion", d: "页面和数据库", how: "oauth", host: "notion.com", logo: "N", k: "gray", tools: 14, ro: 6 },
+  { id: "linear", name: "Linear", d: "任务和项目", how: "oauth", host: "linear.app", logo: "L", k: "violet", tools: 22, ro: 9 },
+  { id: "github", name: "GitHub", d: "仓库、issue 和 PR", how: "oauth", host: "github.com", logo: "G", k: "gray", tools: 31, ro: 18 },
+  { id: "browser", name: "浏览器", d: "在这台 Mac 上开网页、填表", how: "local", logo: "B", k: "teal", tools: 21, ro: 8, on: true, src: "本机" },
+  { id: "telegram", name: "Telegram", d: "在 Telegram 里跟 Alfred 说话；要一个 BotFather 给的 token", how: "token", logo: "T", k: "blue" },
+];
+const DEVICES = [
+  { id: "mac", name: "这台 MacBook", d: "主节点 · 全部能力", logo: "M", k: "green", self: true },
+  { id: "phone", name: "iPhone", d: "对话、看和改记录、推送、语音 · 刚刚", logo: "P", k: "blue" },
+  { id: "web", name: "办公室的电脑", d: "浏览器 · 对话和看记录 · 3 天前", logo: "W", k: "gray" },
+];
+const SET = { pi: "ask", flow: null, model: null, bgModel: null, thinking: "medium", google: [], gPick: { cal: true, mail: true }, figure: true, login: true, welcome: true, readOut: true, push: true, voiceKey: true };
+const signedIn = () => PROVIDERS.filter((p) => p.on);
+const modelOpts = () => signedIn().flatMap((p) => p.models.map((m) => [`${p.id}:${m}`, `${m} · ${p.name}`]));
+const modelLabel = (v) => (v ? v.split(":")[1] : "没选");
+function ensureModels() {
+  const opts = modelOpts().map((o) => o[0]);
+  if (!opts.includes(SET.model)) SET.model = opts[0] || null;
+  if (!opts.includes(SET.bgModel)) SET.bgModel = opts.find((v) => /Haiku|Sonnet/.test(v)) || opts[0] || null;
+}
+function startFlow(flow, ms, then) {
+  clearTimeout(SET.flow?.timer);
+  SET.flow = flow;
+  if (ms) flow.timer = setTimeout(() => { if (SET.flow !== flow) return; SET.flow = null; then(); renderAll(); }, ms);
+  renderAll();
+}
+function cancelFlow() { clearTimeout(SET.flow?.timer); SET.flow = null; renderAll(); }
+const flowOn = (id) => (SET.flow?.id === id ? SET.flow : null);
+
+/* What a sign-in looks like while it waits on the browser, a code or a key. */
+function flowCard(f) {
+  const there = isPhone() ? "登录页已经在你的 Mac 上打开，去那边" : `已在浏览器里打开 ${f.host} 的登录页，在那边`;
+  if (f.kind === "browser") return `<div class="flow"><div class="flow-h"><span class="pulse"></span><span>${there}${f.verb || "点「同意」"}，${f.after || "这里会自己变成已连接"}。</span></div>
+    ${f.note ? `<p class="small">${f.note}</p>` : ""}
+    <div class="actions"><button class="btn ghost small">复制链接</button><button class="btn ghost small" data-act="set-cancel">取消</button></div>
+    <p class="small muted">浏览器跳不回来？把地址栏里最后的网址贴在这里：</p><div class="field"><input class="input" placeholder="http://127.0.0.1:…/callback?code=…" autocomplete="off"></div></div>`;
+  if (f.kind === "device") return `<div class="flow"><span>在 ${f.host} 上输入这个码：</span><div class="code">WDJB-MJHT</div>
+    <div class="actions"><button class="btn small">打开网页</button><button class="btn ghost small">复制码</button><button class="btn ghost small" data-act="set-cancel">取消</button></div>
+    <div class="flow-h small muted"><span class="pulse"></span>等你在网页上确认…</div></div>`;
+  if (f.kind === "key") return `<form class="flow" data-form="key" data-id="${f.id}"><span>${f.label}，只存在这台 Mac 的钥匙串里。</span>
+    <div class="field"><input class="input" name="k" type="password" placeholder="${f.placeholder || "sk-…"}" autocomplete="off" required><button class="btn small">保存</button><button type="button" class="btn ghost small" data-act="set-cancel">取消</button></div></form>`;
+  if (f.kind === "confirm") return `<div class="flow"><span>${f.text}</span><div class="actions"><button class="btn small" data-act="set-confirm">${f.yes}</button><button class="btn ghost small" data-act="set-cancel">取消</button></div></div>`;
+  return "";
+}
+
+function setRow({ logo, k, n, d, end, flow, cls = "" }) {
+  return `<div class="set-row ${logo ? "has-logo" : ""} ${cls}">${logo ? `<span class="logo" data-k="${k}">${logo}</span>` : ""}<span class="n">${n}</span><span class="end">${end || ""}</span>${d ? `<span class="d">${d}</span>` : ""}${flow ? flowCard(flow) : ""}</div>`;
+}
+const sw = (key, on, label) => `<button class="switch" role="switch" aria-checked="${on}" aria-label="${label}" data-act="set-toggle" data-id="${key}"></button>`;
+const selectBox = (key, opts, cur) => `<select class="input" data-set="${key}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+
+function provRow(p) {
+  const f = flowOn(p.id);
+  const end = f ? "" : p.on
+    ? `<span class="status on">已登录${p.src ? ` · ${p.src}` : ""}</span><button class="btn ghost small" data-act="set-logout" data-id="${p.id}">退出</button>`
+    : `<button class="btn ${p.sub ? "" : "ghost"} small" data-act="set-login" data-id="${p.id}">${p.how === "key" ? "填 key" : "登录"}</button>`;
+  return setRow({ logo: p.logo, k: p.k, n: p.name, d: p.by, end, flow: f });
+}
+
+function sModels() {
+  const opts = modelOpts();
+  const pick = (key) => (opts.length ? selectBox(key, opts, SET[key]) : `<span class="muted" style="font-size:13px">先在下面登录一个</span>`);
+  const banner = SET.pi === "ask" ? `<div class="banner"><svg class="fig" viewBox="0 0 120 120" data-mark style="width:22px;height:22px" aria-hidden="true"></svg>
+    <p>你在 Pi 里登录过 <b>Claude Pro / Max</b> 和 <b>OpenAI</b>。要直接用吗？凭证会复制进钥匙串。</p>
+    <button class="btn small" data-act="set-import">导入</button><button class="btn ghost small" data-act="set-noimport">不用</button></div>` : "";
+  return `${banner}
+    <div class="set-group"><h3>默认</h3><div class="set-rows">
+      ${setRow({ n: "对话用的模型", d: "每个对话里还能单独换", end: pick("model") })}
+      ${setRow({ n: "思考强度", d: "越高越慢、越贵；难题更好", end: selectBox("thinking", [["low", "低"], ["medium", "中"], ["high", "高"]], SET.thinking) })}
+      ${setRow({ n: "后台用的模型", d: "自动任务、整理记忆这类不急的活，用便宜的", end: pick("bgModel") })}
+    </div></div>
+    <div class="set-group"><h3>用订阅</h3><p class="hint">用你已经付费的会员额度，不另外花钱。能不能在 Alfred 里用，以各家条款为准。</p>
+      <div class="set-rows">${PROVIDERS.filter((p) => p.sub).map(provRow).join("")}</div></div>
+    <div class="set-group"><h3>用 API key</h3><p class="hint">按用量付费，各家都支持，最稳妥。</p>
+      <div class="set-rows">${PROVIDERS.filter((p) => !p.sub).map(provRow).join("")}</div></div>`;
+}
+
+function sAccounts() {
+  const nf = flowOn("google-new");
+  const picks = [["cal", "日历"], ["mail", "Gmail"]];
+  const hero = `<div class="hero"><div class="hero-h"><span class="logo" data-k="blue">G</span><b>${SET.google.length ? "再连一个 Google 账号" : "Google"}</b>
+      <p>日历和 Gmail 用同一个账号。只给你勾的这几项，随时能收回。</p></div>
+    ${nf ? flowCard(nf) : `<div class="chips">${picks.map(([k, l]) => `<button class="chip" data-act="g-pick" data-id="${k}" aria-pressed="${SET.gPick[k]}">${l}</button>`).join("")}</div>
+      <div class="actions"><button class="btn" data-act="g-connect" ${SET.gPick.cal || SET.gPick.mail ? "" : "disabled"}>连接 Google</button></div>`}
+    <p class="small muted">在系统浏览器里登录，Alfred 看不到你的密码。凭证只存在这台 Mac 的钥匙串里。</p></div>`;
+  const acct = (a, i) => {
+    const df = flowOn(`g-off:${i}`);
+    const head = setRow({ logo: "G", k: "blue", n: esc(a.email), d: "Google 账号", end: df ? "" : `<span class="status on">已连接</span><button class="btn ghost small" data-act="g-disconnect" data-id="${i}">断开</button>`, flow: df });
+    const caps = G_CAPS.map((c) => {
+      const f = flowOn(`g-cap:${i}:${c.id}`);
+      return setRow({ cls: "sub", n: c.name, d: `${c.d} · <span class="scope">${c.scope}</span>`, end: f ? `<span class="status need">等你同意</span>` : sw(`g:${i}:${c.id}`, a.caps[c.id], c.name), flow: f });
+    }).join("");
+    return `<div class="set-rows">${head}${caps}</div>`;
+  };
+  const model = modelLabel(SET.model);
+  return `${SET.google.length ? `<div class="set-group"><h3>已连接</h3>${SET.google.map(acct).join("")}</div>
+      <div class="card"><div class="card-label">数据去哪</div>日历和邮件只在 Alfred 要用时读取。读到的内容会作为任务上下文，发给你选的模型（${esc(model)}）。改日程、发邮件，每次都先问你。</div>` : ""}
+    ${hero}
+    <div class="set-group"><h3>以后</h3><div class="set-rows">
+      ${setRow({ logo: "", k: "gray", cls: "muted-row", n: "iCloud 和这台 Mac 上的日历", d: "系统授权一次就能读，不用 Google", end: `<span class="tag" data-k="gray">以后</span>` })}
+      ${setRow({ cls: "muted-row", n: "Microsoft Outlook", d: "邮件和日历", end: `<span class="tag" data-k="gray">以后</span>` })}
+    </div></div>
+    <details class="adv"><summary>高级：用自己的 Google 客户端</summary>
+      <p>给 fork、自己部署，或者内置客户端满了的时候用。在 Google Cloud 建一个「桌面应用」类型的 OAuth 客户端，把下面两项填进来。</p>
+      <div class="field"><input class="input" placeholder="Client ID" autocomplete="off"><input class="input" type="password" placeholder="Client secret" autocomplete="off"><button class="btn ghost small">保存</button></div></details>`;
+}
+
+function sConnectors() {
+  const row = (m) => {
+    const f = flowOn(`mcp:${m.id}`);
+    const end = f ? "" : m.on
+      ? `<span class="status on">${m.tools ? `${m.tools} 个工具，${m.ro} 个只读` : "已连接"}</span>${m.how === "local" ? "" : `<button class="btn ghost small" data-act="mcp-off" data-id="${m.id}">断开</button>`}`
+      : m.need ? `<span class="status need">要登录</span><button class="btn small" data-act="mcp-connect" data-id="${m.id}">登录</button>`
+      : `<button class="btn ghost small" data-act="mcp-connect" data-id="${m.id}">${m.how === "token" ? "填 token" : "连接"}</button>`;
+    return setRow({ logo: m.logo, k: m.k, n: m.name, d: m.d, end, flow: f });
+  };
+  return `<div class="set-group"><h3>可以一键连的</h3><p class="hint">只读的工具 Alfred 直接用；会改东西的，每次先问你。</p>
+      <div class="set-rows">${MCPS.map(row).join("")}</div></div>
+    <div class="set-group"><h3>自己加</h3><p class="hint">任何 MCP 服务器：填网址（远程）或启动命令（本机）。要登录的，加好后点「登录」。</p>
+      <form class="field" data-form="mcp-add"><input class="input" name="u" placeholder="https://mcp.example.com/mcp 或 npx some-mcp-server" autocomplete="off" required><button class="btn ghost small">添加</button></form></div>`;
+}
+
+function sGeneral() {
+  const scheme = SCHEMES.map(([k, l]) => `<button class="chip" data-act="scheme" data-id="${k}" aria-pressed="${T.scheme === k}">${l}</button>`).join("");
+  return `<div class="set-rows">
+    ${setRow({ n: "语言", end: selectBox("lang", [["zh", "简体中文"], ["en", "English"]], "zh") })}
+    ${setRow({ n: "桌面上显示形象", d: "关掉以后只在菜单栏里", end: sw("figure", SET.figure, "显示形象") })}
+    ${setRow({ n: "登录 Mac 时打开 Alfred", end: sw("login", SET.login, "登录时打开") })}
+    ${setRow({ n: "深浅色", end: `<div class="chips" style="padding:0">${scheme}</div>` })}
+  </div>`;
+}
+
+function sVoice() {
+  const f = flowOn("voice");
+  return `<div class="set-rows">
+    ${setRow({ logo: "H", k: "orange", n: "Higgs Realtime", d: "实时语音对话；声音直接发给语音厂商", end: f ? "" : SET.voiceKey ? `<span class="status on">已设置 · 钥匙串</span><button class="btn ghost small" data-act="voice-key">更换</button>` : `<button class="btn small" data-act="voice-key">填 key</button>`, flow: f })}
+    ${setRow({ n: "麦克风", d: "只在你点开对话、按住说话时听；锁屏就停", end: `<span class="muted" style="font-size:13px">按需</span>` })}
+    ${setRow({ n: "念出汇报", d: "回来时、事情做完时说一句", end: sw("readOut", SET.readOut, "念出汇报") })}
+  </div>`;
+}
+
+function sNotify() {
+  return `<div class="set-rows">
+    ${setRow({ n: "安静时段", d: "这段时间只记下，不推送、不出声", end: selectBox("quiet", [["22-8", "22:00 – 08:00"], ["23-7", "23:00 – 07:00"], ["off", "不设"]], "22-8") })}
+    ${setRow({ n: "推送到手机", d: "只推等你决定的事", end: sw("push", SET.push, "推送到手机") })}
+    ${setRow({ n: "回来时打招呼", d: "离开超过一小时再回来，讲讲这段时间发生了什么", end: sw("welcome", SET.welcome, "回来时打招呼") })}
+  </div>`;
+}
+
+function sDevices() {
+  return `<div class="set-rows">${DEVICES.map((d) => setRow({ logo: d.logo, k: d.k, n: d.name, d: d.d, end: d.self ? `<span class="status on">这台</span>` : `<button class="btn ghost small" data-act="dev-revoke" data-id="${d.id}">吊销</button>` })).join("")}</div>
+    <div class="actions"><button class="btn ghost">配对新设备</button></div>
+    <p class="muted" style="font-size:13px">在新设备上打开 Alfred，扫这台 Mac 上显示的二维码。手机默认不能动登录凭证，只能看和断开。</p>`;
+}
+
+function sPrivacy() {
+  return `<div class="card"><div class="card-label">离开这台 Mac 的只有三类</div><ul class="leaves">
+      <li><b>模型厂商</b><span>任务需要的上下文：对话、相关的日程和邮件片段（${esc(modelLabel(SET.model))}）</span></li>
+      <li><b>语音厂商</b><span>你说的话，和 Alfred 念出来的结果</span></li>
+      <li><b>你连的服务</b><span>Alfred 替你读写 Google、Notion 等时，和它们之间的请求</span></li></ul></div>
+    <div class="set-rows">
+      ${setRow({ n: "数据目录", d: `<span class="path">~/Library/Application Support/Alfred</span>`, end: `<button class="btn ghost small">在 Finder 中显示</button>` })}
+      ${setRow({ n: "登录凭证", d: "模型、Google、连接器的 token 都在钥匙串里，不进数据库", end: `<span class="status on">钥匙串</span>` })}
+      ${setRow({ n: "导出全部数据", d: "对话、记录、记忆，一个压缩包", end: `<button class="btn ghost small">导出</button>` })}
+    </div>`;
+}
+
+const SET_BODY = { models: sModels, accounts: sAccounts, connectors: sConnectors, general: sGeneral, voice: sVoice, notify: sNotify, devices: sDevices, privacy: sPrivacy };
+const SET_SUB = {
+  models: "Alfred 用谁来想。登录一个订阅或者填一个 key 就能开始。",
+  accounts: "你的日程和邮件。一个按钮连上，权限一项一项给。",
+  connectors: "别的服务：Notion、GitHub、你自己的 MCP。",
+  general: "", voice: "", notify: "Alfred 什么时候开口，什么时候不打扰。",
+  devices: "同一个 Alfred，在这些设备上都能用。", privacy: "什么留在本机，什么会出去。",
+};
+function secState(id) {
+  if (id === "models") return signedIn().length ? `<span class="st">${signedIn().length} 个</span>` : `<span class="st need">未登录</span>`;
+  if (id === "accounts") return SET.google.length ? `<span class="st">已连</span>` : "";
+  if (id === "connectors") { const n = MCPS.filter((m) => m.on).length; return n ? `<span class="st">${n} 个</span>` : ""; }
+  return "";
+}
+
+function pSettings() {
+  const cur = SET_BODY[S.sel.settings] ? S.sel.settings : "models";
+  const nav = SET_SECS.map(([label, items]) => `<div class="sec-label">${label}</div>${items.map(([id, name, icon, k]) =>
+    `<button class="row" data-act="sel" data-page="settings" data-id="${id}" aria-current="${cur === id}" data-k="${k}">${ic(icon)}<span class="t">${name}</span>${secState(id)}</button>`).join("")}`).join("");
+  const [name] = SET_SECS.flatMap(([, items]) => items).filter(([id]) => id === cur).map(([, n]) => n);
+  return `${head("settings", "连上模型和你的账户，Alfred 就能开始干活")}
+    <div class="split narrow" ${S.open.settings ? "data-open" : ""}>
+      <div class="list set-nav" data-keep="settings-list">${nav}</div>
+      <section class="detail" data-keep="settings-detail"><div class="set-in">${back("settings")}
+        <header><h2>${name}</h2>${SET_SUB[cur] ? `<p>${SET_SUB[cur]}</p>` : ""}</header>${SET_BODY[cur]()}</div></section>
+    </div>`;
+}
+
+const RENDER = { inbox: pInbox, cal: pCal, todo: pTodo, mail: pMail, research: pResearch, auto: pAuto, settings: pSettings };
+
+function renderPage(dir) {
+  const el = $("#page");
+  const keep = {};
+  if (!dir) el.querySelectorAll("[data-keep]").forEach((n) => (keep[n.dataset.keep] = n.scrollTop));
+  const anim = dir ? "enter-fade" : "";
+  el.innerHTML = `<div class="page-in ${anim}">${RENDER[S.page]()}</div>`;
+  el.querySelectorAll("[data-keep]").forEach((n) => { if (keep[n.dataset.keep]) n.scrollTop = keep[n.dataset.keep]; });
+  el.querySelectorAll("svg[data-mark]").forEach((svg) => drawMark(svg, { width: 7, dark: isDark() }));
+}
+
+/* ── Alfred panel ───────────────────────────────────────────── */
+function renderAlfred() {
+  const phone = phoneMQ.matches;
+  $("#alf-head").innerHTML = `${figSlot("head")}
+    <div class="alf-who"><div class="alf-name">Alfred <span class="ctx">在看 · ${pageName(S.page)}</span></div><p class="alf-line">${esc(line(S.page))}</p></div>
+    <div class="alf-tools">
+      <button class="icon-btn wide-btn" data-act="alf-wide" aria-label="${S.alfred === "wide" ? "回到并排" : "展开对话"}" title="${S.alfred === "wide" ? "回到并排" : "展开成整页"}">${ic(S.alfred === "wide" ? "narrow" : "wide")}</button>
+      <button class="icon-btn" data-act="alf-close" aria-label="收起" title="收起  ⌘.">${ic(phone ? "down" : "panel")}</button>
+    </div>`;
+  $("#alf-chips").innerHTML = CHIPS[S.page].map((c) => `<button class="chip" data-act="ask" data-text="${esc(c)}">${esc(c)}</button>`).join("");
+  $("#comp-ctx").textContent = `关于：${pageName(S.page)}`;
+  $("#fab").innerHTML = `${figSlot("fab")}<span>${esc(line(S.page))}</span>`;
+  placeFigs();
+}
+function renderThread() {
+  $("#thread-in").innerHTML = `<div class="thread-title">${esc(conv().title)}<span>${conv().t}</span></div>` + S.thread.map((m) => m.who === "me"
+    ? `<div class="msg me"><span class="from-page">在「${m.ctx}」页问的</span><div class="bubble">${esc(m.text)}</div></div>`
+    : `<div class="msg al">${m.stamp ? `<span class="stamp">${m.stamp}</span>` : ""}${m.working ? `<div class="working"><span class="pulse"></span>${m.working}</div>` : m.html}${m.receipts?.length ? `<ul class="receipts">${m.receipts.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}</div>`).join("");
+  const t = $("#thread");
+  t.scrollTop = t.scrollHeight;
+}
+
+/* Shares the width: the sidebar and Alfred keep their dragged widths, but the page never drops below ALF.pageMin. */
+function applyWidths() {
+  const navPx = S.nav === "rail" ? 56 : S.navW;
+  const room = innerWidth - navPx - ALF.pageMin;
+  const alf = Math.max(ALF.min, Math.min(S.alfW, room));
+  $("#app").style.setProperty("--nav-px", S.navW + "px");
+  $("#app").style.setProperty("--alf-px", alf + "px");
+  document.body.dataset.nav = S.nav;
+}
+function saveWidths() {
+  try { localStorage.setItem("alfred.layout", JSON.stringify({ nav: S.nav, navW: S.navW, alfW: S.alfW })); } catch {}
+}
+
+function renderAll(dir) {
+  document.body.dataset.alfred = S.alfred;
+  applyWidths();
+  renderNav();
+  renderPage(dir);
+  renderAlfred();
+}
+
+/* ── Effects (from the pages or from the conversation) ──────── */
+function done(id, text) { const n = note(id); if (!n.done) { n.done = true; n.doneText = text; } }
+function moveStandup() {
+  const e = EVENTS.find((x) => x.id === "e7");
+  Object.assign(e, { s: 16, e: 16.5, flash: true });
+  done("n2", "站会改到了 16:00，Mia 收到了");
+}
+function sendStripe() {
+  const m = mail("m1");
+  m.replied = true; m.unread = false;
+  todo("t2").done = true;
+  done("n1", "草稿发出去了，待办里那件也勾掉了");
+}
+function hand(id) {
+  todo(id).doing = true;
+  if (id === "t1") done("n4", "交给 Alfred 了，做好了给你过目");
+}
+function addTodo(title, g = "today") {
+  TODOS.push({ id: "t" + Date.now(), title, due: g === "today" ? "今天" : "", g, a: "work", fresh: true });
+}
+
+const NOTE_FX = {
+  n1: [() => sendStripe(), () => { S.sel.mail = "m1"; S.open.mail = true; go("mail"); return "skip"; }, () => done("n1", "标记为不用回")],
+  n2: [() => moveStandup(), () => done("n2", "告诉 Mia 保持 9:30")],
+  n3: [() => { done("n3", "看过了"); S.sel.research = "r1"; S.open.research = true; go("research"); return "skip"; }],
+  n4: [() => hand("t1"), () => { Object.assign(todo("t1"), { g: "today", due: "今晚 20:00" }); done("n4", "改到了今晚 20:00"); }],
+  n5: [() => { done("n5", "看过了"); go("auto"); return "skip"; }],
+  n6: [() => done("n6", "好"), () => done("n6", "撤销了，12 封回到收件箱")],
+  n7: [() => done("n7", "会在 9:20 提醒你出门"), () => done("n7", "改成 9:00 提醒")],
+};
+
+/* ── Conversation (canned: there is no real agent here) ──────── */
+function respond(text) {
+  const R = (html, receipts) => ({ html, receipts });
+  if (/站会|四点|16/.test(text)) {
+    if (!note("n2").done) moveStandup();
+    return R("<p>改好了。Mia 那边我回了一句，她下午四点可以。</p>", ["周三站会 9:30 → 16:00", "回复了 Mia"]);
+  }
+  if (/Google/i.test(text)) return R("<p>连上以后我能看你的日程、算哪里有空，帮你理收件箱。改日程、发邮件之前都会先问你。权限是一项一项给的，在设置里随时能收回。</p>");
+  if (/数据|离开/.test(text)) return R("<p>三类：发给模型厂商的任务上下文，发给语音厂商的声音，还有我替你访问的服务，比如 Google。你的资料和登录凭证都留在这台 Mac 上。</p>");
+  if (/最空|哪天/.test(text)) return R("<p>周四 4 点以后和周五整个下午都是空的。要放一块专注时间进去吗？</p>");
+  if (/报销/.test(text)) { hand("t1"); return R("<p>好，我去邮箱里找发票，填好报销单放进通知给你过目。</p>", ["「整理报销」交给了 Alfred"]); }
+  if (/先做哪/.test(text)) return R("<p>先回 Stripe，5 分钟，草稿已经有了。然后 2 点开始写布局方案。给妈妈的电话留到晚饭后。</p>");
+  if (/都处理|能处理/.test(text)) {
+    const xs = NOTES.filter((n) => n.kind !== "decide" && !n.done);
+    xs.forEach((n) => done(n.id, "Alfred 一并处理了"));
+    return R(`<p>不需要你的 ${xs.length} 条我收掉了。剩下 ${pending()} 件要你点头的，我不替你决定。</p>`, xs.map((n) => n.title));
+  }
+  if (/Stripe/.test(text)) return R(`<p>Stripe 问续约要不要改年付，年付便宜 15%。我的草稿是同意年付，但发票抬头换成新公司。</p><p><button class="link" data-act="mail-open" data-id="m1">去邮件页看草稿</button></p>`);
+  if (/客气|语气/.test(text)) {
+    Object.assign(mail("m1"), { draft: DRAFTS[1], v: 2 });
+    return R("<p>改好了，语气软一些。</p>", ["Stripe 回复草稿 · 第 2 版"]);
+  }
+  if (/需要我回/.test(text)) return R(`<p>需要你回的只有两封：<button class="link" data-act="mail-open" data-id="m1">Stripe 续约</button>，和 <button class="link" data-act="mail-open" data-id="m5">Leo 的 1:1 议程</button>。</p>`);
+  if (/30 秒|短/.test(text)) return R("<p>一句话：先用 whisper.cpp 跑 small 模型，离线、约 300ms 出字、不花钱。系统听写更快但中文差一截；云端最准，但要联网、要付费。</p>");
+  if (/待办/.test(text)) { addTodo("在 home 节点接 whisper.cpp small 模型"); return R("<p>加好了，放在今天。</p>", ["待办 · 在 home 节点接 whisper.cpp small 模型"]); }
+  if (/英伟达|早报/.test(text)) return R("<p>好，从明早开始，早报多一节英伟达：股价、新闻和产品发布。</p>", ["早报 · 加了一节「英伟达」"]);
+  if (/86|账单/.test(text)) return R("<p>多出来的 ¥86 主要是云服务器：上周你开了一台临时机器跑测试，一直没关。要我关掉吗？</p>");
+  return R(`<p>收到，我按「${pageName(S.page)}」这页的内容来做。</p><p class="muted">原型里这里还没接真正的 agent。</p>`);
+}
+
+function send(text) {
+  text = text.trim();
+  if (!text || S.busy) return;
+  if (S.alfred === "closed") S.alfred = "open";
+  if (conv().fresh) { conv().title = text.length > 14 ? text.slice(0, 14) + "…" : text; delete conv().fresh; }
+  S.thread.push({ who: "me", text, ctx: pageName(S.page) });
+  const reply = { who: "al", working: "在想…" };
+  S.thread.push(reply);
+  S.busy = true;
+  renderAll();
+  renderThread();
+  setTimeout(() => {
+    const r = respond(text);
+    delete reply.working;
+    Object.assign(reply, r);
+    S.busy = false;
+    S.speaking = true;
+    renderAll();
+    renderThread();
+    setTimeout(() => { S.speaking = false; syncFig(); }, 1800);
+  }, 900);
+}
+
+/* ── Actions ────────────────────────────────────────────────── */
+const isPhone = () => phoneMQ.matches;
+function go(id) {
+  if (!PAGES.some((p) => p.id === id)) return;
+  const from = pageIdx(S.page), to = pageIdx(id);
+  if (isPhone()) S.alfred = "closed";
+  else if (S.alfred === "wide") S.alfred = "open";
+  delete $("#more").dataset.open;
+  if (id !== S.page) S.open[id] = S.open[id] && (id === "mail" || id === "research") ? S.open[id] : false;
+  const changed = id !== S.page;
+  S.page = id;
+  renderAll(changed ? (to > from ? "r" : "l") : undefined);
+  history.replaceState(null, "", `?page=${id}`);
+}
+function toggleNav() { S.nav = S.nav === "rail" ? "full" : "rail"; saveWidths(); renderAll(); }
+function setAlfred(mode) { S.alfred = mode; renderAll(); if (mode !== "closed") { renderThread(); if (!isPhone()) $("#input").focus(); } }
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  const { act, id } = el.dataset;
+  if ((act === "pal-close" || act === "more-close") && e.target !== el) return;
+  switch (act) {
+    case "go": go(id); break;
+    case "sel":
+      S.sel[el.dataset.page] = id; S.open[el.dataset.page] = true;
+      if (el.dataset.page === "mail") mail(id).unread = false;
+      renderAll(); break;
+    case "back": S.open[el.dataset.page] = false; renderAll(); break;
+    case "note": { const r = NOTE_FX[id][+el.dataset.i](); if (r !== "skip") renderAll(); break; }
+    case "inbox-filter": S.inboxFilter = id; renderAll(); break;
+    case "todo-filter": S.todoFilter = id; renderAll(); break;
+    case "todo-check": { const t = todo(id); t.done = !t.done; if (t.done) t.doing = false; renderAll(); break; }
+    case "todo-hand": hand(id); renderAll(); break;
+    case "mail-send": sendStripe(); renderAll(); break;
+    case "mail-open": S.sel.mail = id; S.open.mail = true; mail(id).unread = false; if (isPhone()) S.alfred = "closed"; go("mail"); break;
+    case "auto-toggle": { const a = AUTOS.find((x) => x.id === id); a.on = !a.on; renderAll(); break; }
+    case "ask": send(el.dataset.text); break;
+    case "alf-open": setAlfred("open"); break;
+    case "alf-close": setAlfred("closed"); break;
+    case "alf-toggle": setAlfred(S.alfred === "closed" ? "open" : "closed"); break;
+    case "alf-wide": setAlfred(S.alfred === "wide" ? "open" : "wide"); break;
+    case "nav-toggle": toggleNav(); break;
+    case "conv": S.conv = id; delete $("#more").dataset.open; if (S.alfred === "closed") S.alfred = "open"; setAlfred(S.alfred); break;
+    case "conv-new": {
+      const c = { id: "c" + Date.now(), title: "新对话", t: "现在", fresh: true, thread: [{ who: "al", html: `<p>想聊什么？我在看「${pageName(S.page)}」这页，可以从这里说起。</p>` }] };
+      CONVS.unshift(c); S.conv = c.id; if (S.alfred === "closed") S.alfred = "open"; setAlfred(S.alfred); break;
+    }
+    case "cal-area": S.hideAreas.has(id) ? S.hideAreas.delete(id) : S.hideAreas.add(id); renderAll(); break;
+    case "theme": T.theme = id; saveTheme(); applyTheme(); break;
+    case "scheme": T.scheme = id; saveTheme(); applyTheme(); break;
+    case "palette": openPalette(); break;
+    case "pal-close": closePalette(); break;
+    case "set-import":
+      Object.assign(PROVIDERS.find((p) => p.id === "claude"), { on: true, src: "从 Pi 导入" });
+      Object.assign(PROVIDERS.find((p) => p.id === "openai"), { on: true, src: "从 Pi 导入" });
+      SET.pi = "done"; ensureModels(); renderAll(); break;
+    case "set-noimport": SET.pi = "no"; renderAll(); break;
+    case "set-login": {
+      const p = PROVIDERS.find((x) => x.id === id);
+      const finish = () => { Object.assign(p, { on: true, src: "钥匙串" }); ensureModels(); };
+      if (p.how === "key") startFlow({ id, kind: "key", label: `粘贴 ${p.name} 的 API key` });
+      else startFlow({ id, kind: p.how, host: p.host }, p.how === "device" ? 3200 : 2200, finish);
+      break;
+    }
+    case "set-logout": { const p = PROVIDERS.find((x) => x.id === id); p.on = false; delete p.src; ensureModels(); renderAll(); break; }
+    case "set-cancel": cancelFlow(); break;
+    case "set-confirm": { const f = SET.flow; SET.flow = null; f.run(); renderAll(); break; }
+    case "set-toggle": {
+      if (id.startsWith("g:")) {
+        const [, i, cap] = id.split(":");
+        const a = SET.google[+i];
+        if (a.caps[cap]) { a.caps[cap] = false; renderAll(); break; }
+        // A capability not granted yet asks Google for one more scope (incremental authorization).
+        const c = G_CAPS.find((x) => x.id === cap);
+        startFlow({ id: `g-cap:${i}:${cap}`, kind: "browser", host: "accounts.google.com", after: "这一项会自己打开", note: `要多一项权限：<span class="scope">${c.scope}</span>` }, 2000, () => { a.caps[cap] = true; });
+        break;
+      }
+      SET[id] = !SET[id]; renderAll(); break;
+    }
+    case "g-pick": SET.gPick[id] = !SET.gPick[id]; renderAll(); break;
+    case "g-connect": {
+      const pick = { ...SET.gPick };
+      startFlow({ id: "google-new", kind: "browser", host: "accounts.google.com", verb: "选账号、点「允许」" }, 2400, () => {
+        const email = SET.google.length ? `work${SET.google.length}@example.com` : "you@gmail.com";
+        SET.google.push({ email, caps: { calRead: pick.cal, calWrite: false, mailRead: pick.mail, mailSend: false } });
+      });
+      break;
+    }
+    case "g-disconnect": startFlow({ id: `g-off:${id}`, kind: "confirm", text: `断开 ${esc(SET.google[+id].email)}：先在 Google 那边撤销 Alfred 的授权，再删掉这台 Mac 上的凭证。日历和邮件里的东西不会动。`, yes: "断开", run: () => SET.google.splice(+id, 1) }); break;
+    case "mcp-connect": {
+      const m = MCPS.find((x) => x.id === id);
+      if (m.how === "token") startFlow({ id: `mcp:${id}`, kind: "key", label: "粘贴 BotFather 给的 bot token", placeholder: "123456:ABC-…" });
+      else startFlow({ id: `mcp:${id}`, kind: "browser", host: m.host }, 2000, () => { m.on = true; m.need = false; m.tools ||= 7; m.ro ??= 3; });
+      break;
+    }
+    case "mcp-off": { const m = MCPS.find((x) => x.id === id); m.on = false; renderAll(); break; }
+    case "voice-key": startFlow({ id: "voice", kind: "key", label: "粘贴 Boson 的 API key" }); break;
+    case "dev-revoke": DEVICES.splice(DEVICES.findIndex((d) => d.id === id), 1); renderAll(); break;
+    case "more": $("#more").dataset.open = ""; break;
+    case "more-close": delete $("#more").dataset.open; break;
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const key = e.target.dataset?.set;
+  if (!key) return;
+  if (key in SET) SET[key] = e.target.value;
+  renderAll();
+});
+
+document.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (e.target.id === "composer") { const v = $("#input").value; $("#input").value = ""; grow(); send(v); return; }
+  if (e.target.dataset.form === "key") {
+    // The key goes to the home node's keychain store; the prototype only notes that one is set.
+    const id = e.target.dataset.id;
+    const p = PROVIDERS.find((x) => x.id === id);
+    if (p) { Object.assign(p, { on: true, src: "钥匙串" }); ensureModels(); }
+    else if (id === "voice") SET.voiceKey = true;
+    else if (id.startsWith("mcp:")) Object.assign(MCPS.find((m) => `mcp:${m.id}` === id), { on: true, tools: 0 });
+    SET.flow = null; renderAll(); return;
+  }
+  if (e.target.dataset.form === "mcp-add") {
+    const u = e.target.u.value.trim();
+    const remote = /^https?:\/\//.test(u);
+    const name = remote ? new URL(u).hostname.replace(/^mcp\./, "") : u.split(/\s+/).pop();
+    MCPS.push({ id: "x" + Date.now(), name: esc(name), d: esc(u), how: remote ? "oauth" : "local", host: remote ? new URL(u).hostname : "", logo: name[0].toUpperCase(), k: "gray", need: remote, on: !remote, tools: remote ? 0 : 5, ro: remote ? 0 : 2 });
+    renderAll(); return;
+  }
+  if (e.target.dataset.form === "add") {
+    const v = e.target.t.value.trim();
+    if (v) { addTodo(v); renderAll(); $("[data-form=add] input")?.focus(); }
+  }
+});
+
+const input = $("#input");
+const grow = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
+input.addEventListener("input", grow);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); $("#composer").requestSubmit(); }
+});
+$("#mic").innerHTML = ic("mic");
+$("#send").innerHTML = ic("send");
+$("#mic").addEventListener("click", () => {
+  // A stand-in for voice: Alfred "listens", then the words appear.
+  S.listening = true; syncFig();
+  input.placeholder = "在听…";
+  setTimeout(() => { S.listening = false; syncFig(); input.placeholder = "跟 Alfred 说…"; input.value = CHIPS[S.page][0]; grow(); input.focus(); }, 1300);
+});
+
+/* ⌘K */
+let palSel = 0, palItems = [];
+function renderPal() {
+  const qv = $("#pal-input").value.trim();
+  palItems = PAGES.filter((p) => !qv || p.name.includes(qv)).map((p) => ({ label: `去「${p.name}」`, icon: p.icon, kbd: p.id === "settings" ? "⌘," : `⌥${pageIdx(p.id) + 1}`, run: () => go(p.id) }));
+  const asks = qv ? [qv] : CHIPS[S.page];
+  palItems.push(...asks.map((a) => ({ label: `问 Alfred：${a}`, icon: "spark", kbd: qv ? "↵" : "", run: () => send(a) })));
+  if (qv) palItems.unshift(palItems.pop());
+  palSel = Math.min(palSel, palItems.length - 1);
+  $("#pal-list").innerHTML = palItems.map((it, i) => `<li><button role="option" aria-selected="${i === palSel}" data-i="${i}">${ic(it.icon)}${esc(it.label)}<kbd>${it.kbd}</kbd></button></li>`).join("");
+}
+function openPalette() { $("#palette").dataset.open = ""; $("#pal-input").value = ""; palSel = 0; renderPal(); $("#pal-input").focus(); }
+function closePalette() { delete $("#palette").dataset.open; }
+$("#pal-input").addEventListener("input", () => { palSel = 0; renderPal(); });
+$("#pal-input").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { palSel = (palSel + 1) % palItems.length; renderPal(); e.preventDefault(); }
+  if (e.key === "ArrowUp") { palSel = (palSel - 1 + palItems.length) % palItems.length; renderPal(); e.preventDefault(); }
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); const it = palItems[palSel]; closePalette(); it?.run(); }
+});
+$("#pal-list").addEventListener("click", (e) => { const b = e.target.closest("button[data-i]"); if (b) { const it = palItems[+b.dataset.i]; closePalette(); it.run(); } });
+
+document.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
+  if ((mod || e.altKey) && /^Digit[1-6]$/.test(e.code)) { e.preventDefault(); go(PAGES[+e.code.slice(5) - 1].id); return; }
+  if (mod && e.key === ",") { e.preventDefault(); go("settings"); return; }
+  if (mod && e.key === ".") { e.preventDefault(); setAlfred(S.alfred === "closed" ? "open" : "closed"); return; }
+  if (mod && (e.key === "\\" || e.code === "Backslash")) { e.preventDefault(); toggleNav(); return; }
+  if (e.key === "Escape") {
+    if ($("#palette").dataset.open !== undefined) closePalette();
+    else if ($("#more").dataset.open !== undefined) delete $("#more").dataset.open;
+    else if (S.alfred === "wide") setAlfred("open");
+    else if (isPhone() && S.alfred === "open") setAlfred("closed");
+  }
+});
+phoneMQ.addEventListener("change", () => { S.alfred = isPhone() ? "closed" : "open"; renderAll(); renderThread(); });
+addEventListener("resize", applyWidths);
+
+/* Dragging the dividers. The sidebar folds into the rail when dragged in past NAV.foldAt. */
+document.querySelectorAll(".resizer").forEach((rz) => {
+  rz.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    rz.setPointerCapture(e.pointerId);
+    rz.classList.add("active");
+    document.body.classList.add("resizing");
+    const startW = S.nav === "full" ? S.navW : NAV.def;
+    const move = (ev) => {
+      if (rz.dataset.resize === "nav") {
+        const x = Math.round(ev.clientX);
+        const nav = x < NAV.foldAt ? "rail" : "full";
+        // Folding keeps the width you had, so unfolding brings it back.
+        S.navW = nav === "full" ? Math.max(NAV.min, Math.min(NAV.max, x)) : startW;
+        if (nav !== S.nav) { S.nav = nav; renderNav(); placeFigs(); }
+      } else {
+        const navPx = S.nav === "rail" ? 56 : S.navW;
+        S.alfW = Math.round(Math.max(ALF.min, Math.min(innerWidth - navPx - ALF.pageMin, innerWidth - ev.clientX)));
+      }
+      applyWidths();
+    };
+    const up = () => {
+      rz.removeEventListener("pointermove", move);
+      rz.classList.remove("active");
+      document.body.classList.remove("resizing");
+      saveWidths();
+    };
+    rz.addEventListener("pointermove", move);
+    rz.addEventListener("pointerup", up, { once: true });
+    rz.addEventListener("pointercancel", up, { once: true });
+  });
+  rz.addEventListener("dblclick", () => {
+    if (rz.dataset.resize === "nav") toggleNav();
+    else { S.alfW = ALF.def; applyWidths(); saveWidths(); }
+  });
+});
+
+/* The morning brief opens the thread: it is the day's summary, in place of a grid of cards. */
+S.thread.push({ who: "al", stamp: "早报 · 07:30", html: `<p>早上好，Bruce。今天的事不多：</p>
+  <ul class="brief">
+    <li><span><button class="link" data-act="go" data-id="inbox">3 件事等你点头</button>，最急的是 Stripe 续约。</span></li>
+    <li><span><button class="link" data-act="go" data-id="cal">今天 3 个安排</button>；Mia 想把站会挪到下午，下午 2–4 点我先替你占住写方案。</span></li>
+    <li><span><button class="link" data-act="go" data-id="todo">2 件逾期</button>，报销那件我能直接做。</span></li>
+    <li><span><button class="link" data-act="go" data-id="research">语音转写的调研</button>写完了，结论很短。</span></li>
+  </ul>
+  <p class="muted">别的我都处理好了。有需要再叫你。</p>` });
+
+S.greeting = true;
+renderAll();
+renderThread();
+setTimeout(() => { S.greeting = false; syncFig(); }, 2600);
+</script>
+</body>
+</html>
