@@ -49,7 +49,8 @@ export interface PageDef {
   badge?(snapshot: unknown, state: StateResponse): number | undefined;
   /** One plain line under the page title: the facts. It also tells Alfred what you were looking at when you ask. */
   summary?(snapshot: unknown, state: StateResponse): string;
-  /** Alfred's own line about the page, in its voice, shown under its name while nothing is going on. */
+  /** Alfred's line about the page, shown under its name while nothing is going on. A few words: how many things,
+   * not a sentence about them. */
   headline?(snapshot: unknown, state: StateResponse): string;
   /** Questions worth asking from this page, most useful first; the chips above the composer. */
   suggestions?(snapshot: unknown, state: StateResponse): Key[];
@@ -164,8 +165,7 @@ const PAGES: PageDef[] = [
       const mail = unreadMail(snapshot);
       if (!mail.sources.length) return t("head.mail.connect");
       if (mail.broken) return t("head.mail.error");
-      const latest = mail.unread[0];
-      return latest ? t("head.mail.unread", { n: mail.unread.length, from: latest.from, subject: latest.subject }) : t("head.mail.clear");
+      return mail.unread.length ? t("head.mail.unread", { n: mail.unread.length }) : t("head.mail.clear");
     },
     suggestions: (snapshot) => unreadMail(snapshot).sources.length ? ["sug.mail.reply", "sug.mail.today", "sug.mail.important"] : [],
     render: ({ snapshot }) => <Mail snapshot={snapshot as MailSnapshot | undefined} />,
