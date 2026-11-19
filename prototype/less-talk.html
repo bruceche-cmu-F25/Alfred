@@ -1,0 +1,982 @@
+<!doctype html>
+<!--
+  Alfred: getting things into and around the daily pages with fewer words. A prototype: no build step, sample data,
+  a small scripted reader of dates and times instead of a model.
+  ask.html compares where a conversation with Alfred sits. This page asks how much can happen with no conversation:
+    1  Alfred goes first. What it read becomes a proposal; the proposal shows as a card under Notices and as a dashed
+       "ghost" in the place it would change (the calendar, the todo, under the mail). One tap: yes / change / no.
+    2  Say one line. The line at the bottom takes a sentence and shows what it will become before you press return.
+       Nothing answers back: the thing lands on its page, with undo. A question goes to the conversation instead.
+    3  Change in place. Click a todo, an event or a mail and say a few words about it, or tap a chip.
+       Those words go in the one line at the bottom (chosen 2026-11-19): picking a thing attaches it to the line,
+       and so does "change" on a proposal and "reply" under a mail, so there is one place to write on every page.
+       The strip at the top still switches to the other way, a line beside the thing, for comparison.
+  The conversation has no box of its own. A question goes in the same line, and Alfred answers out of it, in a card
+  above the line. An exchange that grows opens as the panel, which is only the transcript: the next sentence is still
+  written in the bottom line. Two answers are scripted; anything else gets a line saying so.
+-->
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alfred：少说话</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { height: 100dvh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; text-align: inherit; }
+h1, h2, h3, p { margin: 0; padding: 0; }
+a { color: inherit; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+.grow { flex: 1; min-width: 0; }
+
+/* ── The prototype's own strip ── */
+.proto { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--ink); color: var(--bg); font-size: 12px; overflow-x: auto; white-space: nowrap; }
+.proto b { flex: none; padding: 0 6px; }
+.proto .lab { flex: none; padding: 0 4px 0 10px; opacity: .6; }
+.proto button, .proto a { flex: none; height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 8px; opacity: .72; text-decoration: none; }
+.proto button:hover, .proto a:hover { opacity: 1; }
+.proto button[aria-pressed="true"] { background: var(--bg); color: var(--ink); opacity: 1; }
+.proto .what { flex: 1; min-width: 0; padding: 0 10px; opacity: .7; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 900px) { .proto .what { visibility: hidden; } }
+@media (max-width: 620px) { .proto .lab, .proto b { display: none; } }
+
+/* ── Shell: rail | page | conversation ── */
+.app { flex: 1; min-height: 0; position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr) var(--alf-w, 0px); grid-template-rows: minmax(0, 1fr); }
+.app[data-panel] { --alf-w: 340px; }
+.rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; background: var(--paper); border-right: 1px solid var(--line-soft); }
+.rail button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); }
+.rail button:hover { background: var(--wash); }
+.rail button[aria-current="page"] { background: var(--wash); color: var(--k-solid); }
+.rail .count { position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: var(--raise); font-size: 10px; }
+
+.page { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; container: page / inline-size; }
+.page-head { flex: none; padding: 22px 28px 12px; }
+.page-head h1 { display: flex; align-items: center; gap: 10px; font-size: 1.625rem; line-height: 1.25; font-weight: 650; letter-spacing: -.01em; }
+.page-head h1 svg { width: 24px; height: 24px; color: var(--k-solid); }
+.page-head p { margin-top: 6px; color: var(--muted); font-size: .875rem; }
+/* Room for the line at the bottom, so the last row can be scrolled clear of it. */
+.page-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 170px; }
+/* One column, centred, so the lists sit above the line at the bottom; the title starts where the rows' text does. */
+.col { max-width: 720px; margin-inline: auto; }
+.page:not([data-p="mail"]) .page-head > * { max-width: 696px; margin-inline: auto; }
+@container page (max-width: 520px) {
+  .page-head { padding: 16px 16px 10px; }
+  .page-body { padding-left: 8px; padding-right: 8px; }
+}
+
+/* ── Shared small parts ── */
+.tag { flex: none; padding: 0 7px; border-radius: 6px; background: var(--k-fill); color: var(--k-text); font-size: .75rem; font-weight: 500; white-space: nowrap; }
+.by { color: var(--alf); }
+.acts, .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.acts button { min-height: 30px; padding: 0 13px; border-radius: 999px; font-size: .8125rem; white-space: nowrap; }
+.acts .primary { background: var(--alf-solid); color: var(--on-alf); }
+.acts .ghost { color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
+.acts .ghost:hover { color: var(--ink); background: var(--wash); }
+/* The thing the bottom line is about: its button stays down, its card or draft takes Alfred's line. */
+.acts .ghost[aria-pressed="true"] { background: var(--alf-soft); color: var(--alf); box-shadow: inset 0 0 0 1px var(--alf); }
+.card[data-on], .draft[data-on] { border-color: var(--alf); border-style: solid; }
+.reply-acts { margin-top: 18px; }
+.chip { flex: none; max-width: 100%; height: 28px; padding: 0 11px; border-radius: 999px; background: var(--raise); color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; box-shadow: inset 0 0 0 1px var(--line); }
+.chip:hover { color: var(--ink); background: var(--wash); }
+.ic { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
+.ic:hover { background: var(--wash); color: var(--ink); }
+.send { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--alf-solid); color: var(--on-alf); }
+/* Yes / no on a ghost, where a row of buttons would not fit. */
+.mini { flex: none; display: inline-flex; gap: 6px; }
+.mini button { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; font-size: 13px; line-height: 1; }
+.mini .yes { background: var(--alf-solid); color: var(--on-alf); }
+.mini .no { color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); background: var(--raise); }
+/* A line to write a few words in: beside a thing, or to change a proposal. */
+.line { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 3px 3px 3px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--field); }
+.line:focus-within { border-color: var(--alf); box-shadow: 0 0 0 3px var(--alf-soft); }
+.line input { flex: 1; min-width: 0; height: 30px; border: 0; background: none; outline: none; }
+input::placeholder { color: var(--muted); }
+.near { display: flex; flex-direction: column; gap: 6px; margin: 2px 12px 10px 44px; max-width: 520px; animation: drop 240ms var(--ease) both; }
+@keyframes drop { from { opacity: 0; transform: translateY(-4px); } }
+.lost { display: flex; flex-wrap: wrap; gap: 2px 8px; color: var(--muted); font-size: .8125rem; }
+.lost button { color: var(--alf); }
+@container page (max-width: 520px) { .near { margin-left: 12px; } }
+@media (prefers-reduced-motion: reduce) { .near, .cap-up > * { animation: none !important; } }
+
+/* ── Notices: what Alfred proposes, one card each ── */
+.cards { display: flex; flex-direction: column; gap: 12px; padding: 8px 12px 0; }
+.card { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: 16px; background: var(--raise); transition: background-color 700ms var(--ease); }
+.card[data-fresh] { background: var(--alf-soft); }
+.card > * { max-width: 100%; }
+.card-src { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: .8125rem; }
+.card-src svg { width: 15px; height: 15px; }
+.card-src span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+button.card-src:hover { color: var(--ink); }
+.card-quote { font-weight: 550; overflow-wrap: anywhere; }
+.card-label { margin-top: 2px; color: var(--alf); font-size: .75rem; font-weight: 500; }
+.card-label.q { color: var(--ink); font-size: .9375rem; }
+.steps { align-self: stretch; display: flex; flex-direction: column; gap: 5px; }
+.step { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--copy); font-size: .875rem; }
+.step > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.step s { color: var(--muted); }
+.card .line, .draft .line { align-self: stretch; }
+.sub { padding: 18px 16px 4px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+.receipt { padding: 3px 16px; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+.receipt::before { content: "✓ "; color: var(--alf); }
+.receipt[data-state="no"]::before { content: "– "; color: var(--muted); }
+.clear { padding: 28px 16px; color: var(--muted); }
+
+/* ── Todos ── */
+.group, .day { padding-top: 14px; }
+.group h3, .day h3 { padding: 4px 12px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+.group[data-g="late"] h3 { color: var(--warm); }
+.day[data-today] h3 { color: var(--ink); }
+.group h3 span { opacity: .7; margin-left: 4px; }
+.todo { display: flex; align-items: flex-start; gap: 12px; padding: 6px 12px; border-radius: 12px; transition: background-color 700ms var(--ease); }
+.todo:hover, .todo[data-on] { background: var(--wash); }
+.todo[data-fresh], .ev[data-fresh] { background: var(--alf-soft); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--alf) 25%, transparent); }
+.todo .box { flex: none; width: 20px; height: 20px; margin-top: 4px; border-radius: 50%; box-shadow: inset 0 0 0 1.8px var(--k-solid, var(--muted)); }
+.todo[data-done] .box { background: var(--k-solid, var(--muted)); }
+.todo-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.todo-body { display: block; width: 100%; padding: 2px 0; overflow-wrap: anywhere; }
+.todo[data-done] .todo-title { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.todo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; color: var(--muted); font-size: .75rem; }
+/* Alfred's suggestion for this row, waiting for a yes. */
+.ghost-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 6px 5px 12px; border: 1px dashed color-mix(in oklch, var(--alf) 45%, transparent); border-radius: 12px; background: var(--alf-soft); color: var(--alf); font-size: .8125rem; }
+.ghost-line span { flex: 1 1 120px; min-width: 0; overflow-wrap: anywhere; }
+
+/* ── Calendar: the coming days as a list ── */
+.ev { width: 100%; display: flex; align-items: flex-start; gap: 12px; padding: 8px 12px; border: 1px solid transparent; border-radius: 12px; transition: background-color 700ms var(--ease); }
+button.ev:hover, .ev[data-on] { background: var(--wash); }
+.ev .time { flex: none; width: 92px; padding-top: 2px; color: var(--copy); font: .8125rem/1.5 var(--mono); white-space: nowrap; }
+.ev .time i { font-style: normal; color: var(--muted); }
+.ev .bar { flex: none; width: 3px; align-self: stretch; min-height: 22px; border-radius: 2px; background: var(--k-solid); }
+.ev-body { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.ev-meta { color: var(--muted); font-size: .75rem; }
+.ev[data-moving] :is(.ev-title, .time) { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.ev[data-ghost] { align-items: center; border: 1px dashed color-mix(in oklch, var(--alf) 45%, transparent); background: var(--alf-soft); }
+.ev[data-ghost] .ev-meta { color: var(--alf); }
+.free { padding: 6px 12px; color: var(--muted); font-size: .8125rem; }
+@container page (max-width: 520px) { .ev .time { width: 44px; } .ev .time i { display: none; } }
+
+/* ── Mail ── */
+.mail { height: 100%; display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
+.page-body:has(.mail) { padding: 0; overflow: hidden; }
+.mail-list { min-height: 0; overflow-y: auto; padding: 0 8px 24px 12px; border-right: 1px solid var(--line-soft); }
+.mail-row { width: 100%; display: block; padding: 9px 12px; border-radius: 12px; }
+.mail-row:hover, .mail-row[aria-current="true"] { background: var(--wash); }
+.mail-row .who { display: flex; align-items: center; gap: 6px; font-size: .875rem; font-weight: 600; }
+.mail-row .who span:first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mail-row .sub-line { display: block; color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mail-row[data-read] .who { font-weight: 400; color: var(--copy); }
+.mail-read { min-height: 0; overflow-y: auto; padding: 4px 28px 190px; }
+.mail-read h2 { font-size: 1.125rem; line-height: 1.35; overflow-wrap: anywhere; }
+.mail-read .from { margin-top: 4px; color: var(--muted); font-size: .8125rem; }
+.mail-read .text { margin-top: 16px; max-width: 64ch; color: var(--copy); white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft, .sent { margin-top: 18px; max-width: 64ch; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--alf-soft); transition: background-color 700ms var(--ease); }
+.draft { border: 1px dashed color-mix(in oklch, var(--alf) 45%, transparent); }
+.draft[data-fresh] { background: color-mix(in oklch, var(--alf) 18%, transparent); }
+.sent { border-left: 2px solid var(--alf); border-radius: 0 12px 12px 0; }
+.draft > *, .sent > * { max-width: 100%; }
+.draft b, .sent b { color: var(--alf); font-size: .75rem; font-weight: 500; }
+.draft p, .sent p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-read .near { margin: 18px 0 0; max-width: 64ch; }
+@container page (max-width: 620px) {
+  .mail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .mail-list { max-height: 30cqh; padding: 0 8px 8px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .mail-read { padding: 14px 16px 190px; }
+}
+
+/* ── The line at the bottom: say it once ── */
+.fig { display: block; width: 28px; height: 28px; flex: none; }
+.cap { position: absolute; z-index: 10; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: min(600px, calc(100% - 24px)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; }
+.cap-form { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 7px 8px 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--raise); box-shadow: 0 1px 2px oklch(0 0 0 / .05), 0 8px 28px oklch(0 0 0 / .1); transition: border-color .15s, box-shadow .15s; }
+.cap-form:focus-within { border-color: var(--alf); box-shadow: 0 0 0 3px var(--alf-soft), 0 8px 28px oklch(0 0 0 / .1); }
+.cap-form[data-about] { border-color: color-mix(in oklch, var(--alf) 55%, var(--line)); }
+.cap-form input { flex: 1; min-width: 0; height: 30px; border: 0; background: none; outline: none; }
+.cap-about { flex: 0 1 auto; min-width: 0; max-width: 40%; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 9px; border-radius: 999px; background: var(--alf-soft); color: var(--alf); font-size: .75rem; }
+.cap-about span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cap-about button { flex: none; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; font-size: 12px; line-height: 1; }
+.cap-about button:hover { background: var(--alf-soft); }
+.cap kbd { flex: none; padding: 0 5px; border-radius: 5px; background: var(--wash); color: var(--muted); font: .6875rem var(--mono); }
+.cap-up { display: flex; flex-direction: column; gap: 6px; }
+.cap-up:empty { display: none; }
+.cap-up > * { animation: rise 260ms var(--ease) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.pre, .toast, .cap-up .lost { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--raise); box-shadow: var(--shadow); font-size: .875rem; }
+.pill { flex: none; height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; border-radius: 999px; background: var(--k-fill); color: var(--k-text); font-size: .8125rem; font-weight: 500; white-space: nowrap; }
+button.pill:hover { box-shadow: inset 0 0 0 1px var(--k-line); }
+.pre .title { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.pre .hint { flex: none; color: var(--muted); font: .75rem var(--mono); }
+.toast .t { flex: 1 1 160px; min-width: 0; color: var(--copy); overflow-wrap: anywhere; }
+.toast .t::before { content: "✓ "; color: var(--alf); }
+.toast button { flex: none; color: var(--alf); font-size: .8125rem; white-space: nowrap; }
+/* Alfred's answer to a question: it comes out of the line, and can be opened into the conversation. */
+.ans { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-height: min(46vh, 340px); overflow-y: auto; padding: 11px 14px 10px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--raise); box-shadow: var(--shadow); }
+.ans .asked { max-width: 100%; padding-right: 26px; color: var(--muted); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ans .text { overflow-wrap: anywhere; }
+.ans .work { color: var(--muted); }
+.ans .foot button { color: var(--muted); font-size: .8125rem; }
+.ans .foot button:hover { color: var(--ink); }
+.ans .x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); font-size: 16px; line-height: 1; }
+.ans .x:hover { background: var(--wash); color: var(--ink); }
+.cap-chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
+.cap-chips .chip { box-shadow: inset 0 0 0 1px var(--line), 0 2px 8px oklch(0 0 0 / .06); }
+@container page (max-width: 520px) { .cap kbd { display: none; } }
+
+/* ── The back door: the conversation (a stub here) ── */
+.panel { display: none; min-width: 0; min-height: 0; flex-direction: column; background: var(--raise); border-left: 1px solid var(--line-soft); }
+.app[data-panel] .panel { display: flex; }
+.p-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 16px; font-weight: 600; }
+.turns { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 8px 16px 16px; }
+.said { align-self: flex-end; max-width: 85%; padding: 6px 12px; border-radius: 14px; background: var(--wash); color: var(--copy); overflow-wrap: anywhere; }
+.turns p { color: var(--copy); font-size: .9375rem; overflow-wrap: anywhere; }
+.turns .note { margin-top: auto; padding-top: 12px; color: var(--muted); font-size: .8125rem; }
+.turns a { color: var(--alf); }
+
+/* ── Narrow windows: the rail lies along the top, and the conversation is a sheet over the lower part. ── */
+@media (max-width: 760px) {
+  .app, .app[data-panel] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .rail { flex-direction: row; justify-content: center; gap: 12px; padding: 4px 0; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 12; height: 56%; border-left: 0; border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 40px oklch(0 0 0 / .14); }
+}
+</style>
+</head>
+<body>
+
+<div class="proto" id="proto" role="toolbar" aria-label="Prototype"></div>
+
+<div class="app" id="app">
+  <nav class="rail" id="rail"></nav>
+
+  <main class="page" id="page">
+    <header class="page-head" id="page-head"></header>
+    <div class="page-body" id="page-body"></div>
+
+    <div class="cap" id="cap">
+      <div class="cap-up" id="cap-up" role="status" aria-live="polite"></div>
+      <form class="cap-form" id="cap-form">
+        <span data-fig></span>
+        <span class="cap-about" id="cap-about" hidden></span>
+        <input id="cap-input" autocomplete="off" maxlength="200">
+        <kbd>⌘K</kbd>
+        <button type="button" class="ic" data-mic="cap" aria-label="Dictate"><svg class="i" viewBox="0 0 20 20"><rect x="7.5" y="3" width="5" height="9" rx="2.5"/><path d="M4.5 10a5.5 5.5 0 0 0 11 0M10 15.5V18"/></svg></button>
+        <button type="submit" class="send" aria-label="Send"><svg class="i" viewBox="0 0 20 20"><path d="M4 10h11M11 5l5 5-5 5"/></svg></button>
+      </form>
+    </div>
+  </main>
+
+  <aside class="panel" id="panel" aria-label="Alfred">
+    <header class="p-head"><span>Alfred</span><span class="grow"></span><button type="button" class="ic" data-close aria-label="Close"><svg class="i" viewBox="0 0 20 20"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></svg></button></header>
+    <div class="turns" id="turns"></div>
+  </aside>
+</div>
+
+<script type="module">
+/* Alfred's figure lives in packages/ui/src/entity/tesseract.js (linked here as figure.js). */
+import { createFigure } from "./figure.js";
+
+const $ = (selector) => document.querySelector(selector);
+const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const params = new URLSearchParams(location.search);
+const PAGE_KEYS = ["inbox", "todos", "cal", "mail"];
+
+/* ── State ── */
+const S = {
+  lang: params.get("lang") === "en" ? "en" : "zh",
+  page: PAGE_KEYS.includes(params.get("p")) ? params.get("p") : "inbox",
+  /** Where words about a thing go: "near" (a line beside it) or "bar" (the one line at the bottom). */
+  edit: params.get("edit") === "near" ? "near" : "bar",
+  /** What the next words are about: a todo, an event, a mail or a proposal ({ kind, id }); and the open mail. */
+  sel: null, mail: "lin",
+  /** The proposal being changed; what the reader did not understand. */
+  revise: null, lost: null,
+  /** The bottom line: overrides of what the reader made of the sentence, and whether the day choices are open. */
+  kind: null, day: undefined, dayMenu: false, focus: false,
+  toast: null, mood: null,
+  /** What was asked and answered ({ asked, text, act }); whether the last answer's card is up; the transcript panel. */
+  turns: [], card: false, panel: false,
+  fresh: new Set(),
+};
+const t = (zh, en) => (S.lang === "en" ? en : zh);
+const pick = (pair) => pair[S.lang === "en" ? 1 : 0];
+
+/* ── Days and times: Thursday 19 November ── */
+const TODAY = "2026-11-19";
+const ZW = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"], EW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const pad = (n) => String(n).padStart(2, "0");
+const at = (day) => { const [y, m, d] = day.split("-").map(Number); return new Date(y, m - 1, d); };
+const iso = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const plus = (day, n) => { const date = at(day); date.setDate(date.getDate() + n); return iso(date); };
+const away = (day) => Math.round((at(day) - at(TODAY)) / 864e5);
+const mins = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+const hhmm = (n) => `${pad(Math.floor(((n % 1440) + 1440) % 1440 / 60))}:${pad(((n % 60) + 60) % 60)}`;
+const md = (day) => { const date = at(day); return t(`${date.getMonth() + 1}月${date.getDate()}日`, `${date.getDate()} ${date.toLocaleString("en", { month: "short" })}`); };
+/** The weekday as you would say it: 周五, 下周一; a date once it is further off. */
+function wd(day) {
+  const n = away(day), w = at(day).getDay();
+  if (n >= 0 && n <= 3) return t(ZW[w], EW[w]);
+  if (n > 3 && n <= 10) return t("下" + ZW[w], "next " + EW[w]);
+  return md(day);
+}
+function dayText(day) {
+  if (!day) return t("不定日子", "No date");
+  const n = away(day);
+  return n === 0 ? t("今天", "Today") : n === 1 ? t("明天", "Tomorrow") : wd(day).replace(/^n/, "N");
+}
+/** The day of the week asked for, counted from today; weeks start on Monday. */
+function weekday(target, next) {
+  const idx = (w) => (w + 6) % 7;
+  let diff = idx(target) - idx(at(TODAY).getDay());
+  if (next || diff < 0) diff += 7;
+  return plus(TODAY, diff);
+}
+
+/* ── The reader: what a sentence says about a day and a time. Stands in for the model. ── */
+const ZD = { 日: 0, 天: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
+const ZN = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12 };
+const ED = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+const PERIOD = { 早上: 9, 上午: 10, 中午: 12, 下午: 15, 晚上: 19, 今晚: 19, morning: 9, noon: 12, afternoon: 15, evening: 19, tonight: 19 };
+function read(text) {
+  let rest = ` ${text} `, day = null, start = null, by = false;
+  const take = (re, fn, mark = " ") => { const m = rest.match(re); if (!m) return false; fn(m); rest = rest.replace(m[0], mark); return true; };
+  const DAY = "\u0001";
+  if (/\bby\s+(?:next\s+|the\s+)?(?:mon|tue|wed|thu|fri|sat|sun|tomorrow|today|weekend)/i.test(rest)) { by = true; rest = rest.replace(/\bby\s+/i, " "); }
+  take(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/, (m) => { day = `2026-${pad(m[1])}-${pad(m[2])}`; }, DAY)
+    || take(/大后天/, () => { day = plus(TODAY, 3); }, DAY)
+    || take(/后天/, () => { day = plus(TODAY, 2); }, DAY)
+    || take(/明天|\btomorrow\b/i, () => { day = plus(TODAY, 1); }, DAY)
+    || take(/今天|\btoday\b/i, () => { day = TODAY; }, DAY)
+    || take(/(下)?周末|\b(?:the\s+)?(next\s+)?weekend\b/i, (m) => { day = weekday(6, !!(m[1] || m[2])); }, DAY)
+    || take(/(下)?(?:周|星期|礼拜)([一二三四五六日天])/, (m) => { day = weekday(ZD[m[2]], !!m[1]); }, DAY)
+    || take(/\b(?:on\s+)?(next\s+)?(mon|tue|wed|thu|fri|sat|sun)(?:day|sday|nesday|rsday|urday)?\b/i, (m) => { day = weekday(ED[m[2].toLowerCase()], !!m[1]); }, DAY);
+  if (/\u0001\s*(?:之前|以前|前)/.test(rest)) { by = true; rest = rest.replace(/\u0001\s*(?:之前|以前|前)/, " "); }
+  rest = rest.replace(DAY, " ");
+  take(/(\d{1,2})[:：](\d{2})/, (m) => { start = [Number(m[1]), Number(m[2])]; })
+    || take(/(早上|上午|中午|下午|晚上|今晚)?\s*(\d{1,2}|十[一二]?|[一二两三四五六七八九])\s*点\s*(半|\d{1,2})?\s*分?/, (m) => {
+      let hour = /\d/.test(m[2]) ? Number(m[2]) : ZN[m[2]];
+      if ((m[1] === "下午" || m[1] === "晚上" || m[1] === "今晚") && hour < 12) hour += 12;
+      else if (m[1] === "中午" && hour < 11) hour += 12;
+      else if (!m[1] && hour >= 1 && hour <= 7) hour += 12;
+      if (m[1] === "今晚" && !day) day = TODAY;
+      start = [hour, m[3] === "半" ? 30 : Number(m[3] ?? 0)];
+    })
+    || take(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i, (m) => { start = [Number(m[1]) % 12 + (/pm/i.test(m[3]) ? 12 : 0), Number(m[2] ?? 0)]; })
+    || take(/早上|上午|中午|下午|晚上|今晚|\b(?:in the\s+|this\s+)?(?:morning|noon|afternoon|evening)\b|\btonight\b/i, (m) => {
+      const key = m[0].trim().toLowerCase().replace(/^(in the|this)\s+/, "");
+      start = [PERIOD[key], 0];
+      if ((key === "今晚" || key === "tonight") && !day) day = TODAY;
+    });
+  if (start) rest = rest.replace(/早上|上午|中午|下午|晚上/, " ");
+  const title = rest.replace(/\s+/g, " ").trim().replace(/^[，,。.、:：的在于]+|[，,。.、:：]+$/g, "").replace(/\s+(?:at|on)$/i, "").trim() || text.trim();
+  const ask = /[?？]\s*$/.test(text) || /^\s*(帮我|怎么|为什么|哪|什么|what|why|how|which|help|should)/i.test(text);
+  return { title, day, start: start && `${pad(start[0])}:${pad(start[1])}`, by, kind: ask ? "ask" : start && !by ? "event" : "todo" };
+}
+
+/* ── Sample data ── */
+const AREAS = {
+  money: ["财务", "Money", "yellow"], work: ["工作", "Work", "blue"], people: ["家人朋友", "People", "pink"],
+  learn: ["学习", "Learning", "violet"], travel: ["出行", "Travel", "orange"], life: ["生活", "Life", "green"],
+};
+const sample = () => ({
+  todos: [
+    { id: "exp", title: ["整理报销", "File the expenses"], area: "money", due: "2026-11-17" },
+    { id: "renew", title: ["回 Stripe 续约邮件", "Answer Stripe about the renewal"], area: "work", due: "2026-11-18" },
+    { id: "layout", title: ["写 Alfred 布局方案", "Write the Alfred layout plan"], area: "work", due: "2026-11-19" },
+    { id: "voice", title: ["看完语音转写调研", "Finish the voice input research"], area: "learn", due: "2026-11-19" },
+    { id: "passport", title: ["预约续签护照", "Book the passport renewal"], area: "travel", due: "2026-11-20" },
+    { id: "report", title: ["交季度报告", "Hand in the quarterly report"], area: "work", due: "2026-11-20" },
+    { id: "dinner", title: ["订周末的餐厅", "Book a table for the weekend"], area: "life", due: "2026-11-21" },
+  ],
+  events: [
+    { id: "standup", title: ["站会", "Stand-up"], day: "2026-11-19", start: "10:00", end: "10:30", area: "work" },
+    { id: "write", title: ["写布局方案", "Write the layout plan"], day: "2026-11-19", start: "14:00", end: "15:30", area: "work" },
+    { id: "gym", title: ["健身", "Gym"], day: "2026-11-19", start: "18:30", end: "19:30", area: "life" },
+    { id: "review", title: ["设计评审", "Design review"], day: "2026-11-20", start: "10:00", end: "11:00", area: "work", who: ["陈琳", "Lin Chen"] },
+    { id: "lunch", title: ["和老周午饭", "Lunch with Zhou"], day: "2026-11-20", start: "12:30", end: "13:30", area: "people", who: ["老周", "Zhou"] },
+    { id: "mum", title: ["和妈妈视频", "Video call with mum"], day: "2026-11-22", start: "15:00", end: "16:00", area: "people" },
+    { id: "weekly", title: ["周会", "Weekly meeting"], day: "2026-11-23", start: "09:30", end: "10:00", area: "work" },
+  ],
+  mails: [
+    { id: "lin", who: ["陈琳", "Lin Chen"], sub: ["周五的评审能改到下午吗？", "Could Friday's review move to the afternoon?"], at: "09:12", unread: true,
+      body: ["Bruce，\n\n周五上午我临时要去客户那边，评审能不能改到下午？三点以后我都可以。\n\n琳", "Bruce,\n\nI have to be at a client's on Friday morning. Could the review move to the afternoon? Any time after three works for me.\n\nLin"] },
+    { id: "rent", who: ["房东 王先生", "Mr Wang (landlord)"], sub: ["下月起房租调整", "Rent change from next month"], at: "08:40", unread: true,
+      body: ["你好，\n\n合同到期续签，下月起房租每月上调 200，其余条款不变。没问题的话回复确认一下。\n\n王", "Hello,\n\nWith the renewal, the rent goes up by 200 a month from next month; nothing else changes. Please reply to confirm.\n\nWang"] },
+    { id: "stripe", who: ["Stripe", "Stripe"], sub: ["你的订阅已自动续订", "Your subscription has renewed"], at: "07:55", unread: true,
+      body: ["你的年度订阅已于 11 月 18 日自动续订，收据见附件。", "Your annual subscription renewed automatically on 18 November. The receipt is attached."] },
+    { id: "gh", who: ["GitHub", "GitHub"], sub: ["[alfred] CI 通过：alfred-harness", "[alfred] CI passed: alfred-harness"], at: null,
+      body: ["alfred-harness 分支上的检查全部通过。", "All checks have passed on the alfred-harness branch."] },
+    { id: "news", who: ["设计周刊", "Design Weekly"], sub: ["本周：界面里的留白", "This week: white space in interfaces"], at: null,
+      body: ["本周我们聊留白：什么时候是呼吸，什么时候是浪费。", "This week is about white space: when it lets a page breathe and when it is waste."] },
+  ],
+  /* What Alfred proposes. A step with no text of its own (the reply to Lin) is written from the other steps. */
+  props: [
+    { id: "lin", state: "open", from: { kind: "mail", id: "lin" }, steps: [
+      { kind: "move", ev: "review", day: "2026-11-20", start: "15:00" },
+      { kind: "reply", mail: "lin", text: null },
+    ] },
+    { id: "exp", state: "open", from: { kind: "todo", id: "exp" }, steps: [
+      { kind: "due", todo: "exp", day: "2026-11-21" },
+      { kind: "add", title: ["整理报销", "File the expenses"], day: "2026-11-21", start: "10:00", area: "money" },
+    ] },
+    { id: "lisa", state: "open", from: { kind: "voice", text: ["周六晚上和 Lisa 吃饭", "Dinner with Lisa on Saturday evening"] },
+      ask: { q: ["哪个 Lisa？", "Which Lisa?"], options: [
+        { label: ["Lisa 王 · 同事", "Lisa Wang · colleague"], title: ["和 Lisa 王吃饭", "Dinner with Lisa Wang"] },
+        { label: ["Lisa Chen · 大学同学", "Lisa Chen · from university"], title: ["和 Lisa Chen 吃饭", "Dinner with Lisa Chen"] },
+      ] },
+      steps: [{ kind: "add", title: ["和 Lisa 吃饭", "Dinner with Lisa"], day: "2026-11-21", start: "19:00", area: "people" }] },
+    { id: "rent", state: "open", from: { kind: "mail", id: "rent" }, steps: [
+      { kind: "reply", mail: "rent", text: ["收到，新的房租我确认，下月起按新的金额转。", "Got it. I confirm the new rent and will pay the new amount from next month."] },
+      { kind: "todo", title: ["改自动转账的金额", "Change the standing transfer amount"], day: "2026-11-30", area: "money" },
+    ] },
+  ],
+});
+let D = sample();
+/** What D was before each change, newest last: undo steps back through it. */
+const past = [];
+let seq = 0;
+const uid = () => `n${++seq}`;
+const todo = (id) => D.todos.find((item) => item.id === id);
+const event = (id) => D.events.find((item) => item.id === id);
+const mail = (id) => D.mails.find((item) => item.id === id);
+const prop = (id) => D.props.find((item) => item.id === id);
+const asking = (item) => !!item.ask && !item.answered;
+/** Proposals that can be said yes to as they stand: they show as ghosts where they would land. */
+const live = () => D.props.filter((item) => item.state === "open" && !asking(item));
+const waiting = () => D.props.filter((item) => item.state === "open" && !item.own);
+const draftFor = (mailId) => live().find((item) => item.steps.some((step) => step.kind === "reply" && step.mail === mailId));
+
+/* ── Pages ── */
+const ICON = {
+  inbox: '<svg class="i" viewBox="0 0 20 20"><path d="M3.5 11.5l2-6.5h9l2 6.5v3.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M3.5 11.5h4a2.5 2.5 0 0 0 5 0h4"/></svg>',
+  todos: '<svg class="i" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M7 10.2l2 2 4-4.2"/></svg>',
+  cal: '<svg class="i" viewBox="0 0 20 20"><rect x="3.5" y="4.5" width="13" height="12" rx="2"/><path d="M3.5 8.5h13M7 3v3M13 3v3"/></svg>',
+  mail: '<svg class="i" viewBox="0 0 20 20"><rect x="3" y="4.5" width="14" height="11" rx="2"/><path d="M3.5 6.5l6.5 5 6.5-5"/></svg>',
+  mic: '<svg class="i" viewBox="0 0 20 20"><rect x="7.5" y="3" width="5" height="9" rx="2.5"/><path d="M4.5 10a5.5 5.5 0 0 0 11 0M10 15.5V18"/></svg>',
+  go: '<svg class="i" viewBox="0 0 20 20"><path d="M4 10h11M11 5l5 5-5 5"/></svg>',
+};
+const PAGES = {
+  inbox: { k: "warm", title: () => t("通知", "Notices"), count: () => waiting().length,
+    summary: () => { const n = waiting().length; return n ? t(`${n} 件等你点头`, `${n} waiting for you`) : t("都处理完了", "All clear"); } },
+  todos: { k: "blue", title: () => t("待办", "Todos"), count: () => 0,
+    summary: () => { const open = D.todos.filter((item) => !item.done), late = open.filter((item) => item.due && item.due < TODAY).length; return t(`${open.length} 件没做完` + (late ? `，${late} 件逾期` : ""), `${open.length} open` + (late ? `, ${late} overdue` : "")); } },
+  cal: { k: "now", title: () => t("日程", "Calendar"), count: () => 0,
+    summary: () => { const n = D.events.filter((item) => item.day === TODAY).length; return t(`今天 ${n} 个`, `${n} today`); } },
+  mail: { k: "teal", title: () => t("邮件", "Mail"), count: () => D.mails.filter((item) => item.unread).length,
+    summary: () => { const n = D.mails.filter((item) => item.unread).length; return t(`${n} 封未读`, `${n} unread`); } },
+};
+
+/* ── What a proposal says ── */
+function replyText(item, step) {
+  if (step.text) return pick(step.text);
+  const move = item.steps.find((other) => other.kind === "move");
+  return t(`可以，改到${wd(move.day)} ${move.start}。日程我一起挪了。`, `Sure, let's make it ${wd(move.day)} at ${move.start}. I have moved the calendar event too.`);
+}
+function stepHtml(item, step) {
+  const tag = (k, zh, en) => `<span class="tag" data-k="${k}">${t(zh, en)}</span>`;
+  if (step.kind === "move") { const e = event(step.ev); return `<div class="step">${tag("now", "日程", "Event")}<span>${esc(pick(e.title))} <s>${esc(wd(e.day))} ${e.start}</s> → ${e.day === step.day ? "" : esc(wd(step.day)) + " "}${step.start}</span></div>`; }
+  if (step.kind === "add") return `<div class="step">${tag("now", "日程", "Event")}<span>${esc(pick(step.title))} · ${esc(wd(step.day))} ${step.start}</span></div>`;
+  if (step.kind === "due") return `<div class="step">${tag("blue", "待办", "Todo")}<span>${esc(pick(todo(step.todo).title))} → ${esc(wd(step.day))}</span></div>`;
+  if (step.kind === "todo") return `<div class="step">${tag("blue", "待办", "Todo")}<span>${esc(pick(step.title))} · ${esc(wd(step.day))}</span></div>`;
+  return `<div class="step">${tag("teal", "回复", "Reply")}<span>“${esc(replyText(item, step))}”</span></div>`;
+}
+/** Carry a step out; returns what it touched, so the page can light it up. */
+function carry(item, step) {
+  if (step.kind === "move") { const e = event(step.ev), length = mins(e.end) - mins(e.start); Object.assign(e, { day: step.day, start: step.start, end: hhmm(mins(step.start) + length), by: true }); return e.id; }
+  if (step.kind === "add") { const id = uid(); D.events.push({ id, title: step.title, day: step.day, start: step.start, end: hhmm(mins(step.start) + 60), area: step.area, by: true }); return id; }
+  if (step.kind === "due") { Object.assign(todo(step.todo), { due: step.day, by: true }); return step.todo; }
+  if (step.kind === "todo") { const id = uid(); D.todos.push({ id, title: step.title, area: step.area, due: step.day, by: true }); return id; }
+  Object.assign(mail(step.mail), { replied: replyText(item, step), unread: false }); return step.mail;
+}
+function doneText(item, step) {
+  if (step.kind === "move") return t(`${pick(event(step.ev).title)}挪到${wd(step.day)} ${step.start}`, `${pick(event(step.ev).title)} moved to ${wd(step.day)} ${step.start}`);
+  if (step.kind === "add") return t(`${pick(step.title)}排在${wd(step.day)} ${step.start}`, `${pick(step.title)} booked ${wd(step.day)} ${step.start}`);
+  if (step.kind === "due") return t(`${pick(todo(step.todo).title)}改到${wd(step.day)}`, `${pick(todo(step.todo).title)} now due ${wd(step.day)}`);
+  if (step.kind === "todo") return t(`记了待办：${pick(step.title)}`, `Todo added: ${pick(step.title)}`);
+  return t(`回了${pick(mail(step.mail).who)}`, `Replied to ${pick(mail(step.mail).who)}`);
+}
+/** Likely changes to a proposal, as chips. */
+const REV = (id) => ({ lin: [t("下午 4 点", "4pm"), t("下周一", "Next Monday")], exp: [t("周日", "Sunday"), t("下周一", "Next Monday")] }[id] ?? []);
+const onProp = (item) => S.sel?.kind === "prop" && S.sel.id === item.id;
+/** Yes / change / no for a proposal; the same three wherever it shows. */
+function actsHtml(item) {
+  if (S.revise === item.id) {
+    const chips = REV(item.id);
+    const label = t("改成…", "Change it to…");
+    return `<form class="line" data-rev="${item.id}"><input maxlength="200" autocomplete="off" placeholder="${label}" aria-label="${label}"><button type="submit" class="send" aria-label="${t("改", "Change")}">${ICON.go}</button></form>`
+      + (chips.length ? `<div class="chips">${chips.map((chip) => `<button type="button" class="chip" data-revchip="${item.id}|${esc(chip)}">${esc(chip)}</button>`).join("")}</div>` : "") + lostHtml();
+  }
+  const n = item.steps.length, yes = n > 1 ? t(`好，${n} 件`, `Yes, all ${n}`) : item.steps[0].kind === "reply" ? t("发送", "Send") : t("好", "Yes");
+  return `<div class="acts"><button type="button" class="primary" data-accept="${item.id}">${yes}</button><button type="button" class="ghost" data-revise="${item.id}" aria-pressed="${onProp(item)}">${t("改", "Change")}</button><button type="button" class="ghost" data-decline="${item.id}">${t("不", "No")}</button></div>`;
+}
+const miniHtml = (item) => `<span class="mini"><button type="button" class="yes" data-accept="${item.id}" aria-label="${t("好", "Yes")}" title="${t("好", "Yes")}">✓</button><button type="button" class="no" data-decline="${item.id}" aria-label="${t("不", "No")}" title="${t("不", "No")}">✕</button></span>`;
+const lostHtml = () => S.lost ? `<p class="lost"><span>${t("没听懂这句", "I did not get that")}</span><button type="button" data-talk>${t("和 Alfred 聊", "Talk it through")}</button></p>` : "";
+
+/* ── Words about a thing: the line beside it (or its chips above the bottom line) ── */
+const CHIPS = {
+  todo: () => [t("今天", "Today"), t("明天", "Tomorrow"), t("周六", "Saturday"), t("下周一", "Next Monday"), t("做完了", "Done")],
+  event: () => [t("晚 1 小时", "1 hour later"), t("明天", "Tomorrow"), t("下周一", "Next Monday"), t("取消", "Cancel")],
+  mail: () => [t("可以", "Yes, that works"), t("明天再回", "Reply tomorrow"), t("记成待办", "Make it a todo")],
+  prop: (id) => REV(id),
+};
+const chipsHtml = (it) => CHIPS[it.kind](it.id).map((chip) => `<button type="button" class="chip" data-chip="${esc(chip)}">${esc(chip)}</button>`).join("");
+function nearHtml(kind) {
+  if (S.edit !== "near") return "";
+  const label = kind === "mail" ? t("回一句…", "Reply in a line…") : t("改这件事…", "Change this…");
+  return `<div class="near"><form class="line" data-near><input maxlength="200" autocomplete="off" placeholder="${label}" aria-label="${label}">
+    <button type="button" class="ic" data-mic="near" aria-label="${t("说", "Dictate")}">${ICON.mic}</button><button type="submit" class="send" aria-label="${t("好", "Go")}">${ICON.go}</button></form>
+    <div class="chips">${chipsHtml({ kind })}</div>${lostHtml()}</div>`;
+}
+/** The thing the next words are about, if any. With the line beside things, the open mail always has one. */
+function target() {
+  if (S.edit === "near") return S.page === "mail" ? { kind: "mail", id: S.mail } : S.sel?.kind === "prop" ? null : S.sel;
+  return S.sel;
+}
+function targetName(it) {
+  if (it.kind === "todo") return pick(todo(it.id).title);
+  if (it.kind === "event") return pick(event(it.id).title);
+  if (it.kind === "mail") return t("回 ", "To ") + pick(mail(it.id).who);
+  const from = prop(it.id).from;
+  return t("提议 · ", "Proposal · ") + pick(from.kind === "mail" ? mail(from.id).who : from.kind === "todo" ? todo(from.id).title : from.text);
+}
+
+/* ── Drawing the pages ── */
+function inboxHtml() {
+  const open = waiting(), rest = D.props.filter((item) => item.state !== "open" && !item.own);
+  const card = (item) => {
+    const from = item.from;
+    let src;
+    if (from.kind === "mail") { const m = mail(from.id); src = `<button type="button" class="card-src" data-go="mail:${m.id}">${ICON.mail}<span>${esc(pick(m.who))}${m.at ? " · " + m.at : ""}</span></button><p class="card-quote">${esc(pick(m.sub))}</p>`; }
+    else if (from.kind === "todo") { const item2 = todo(from.id); src = `<button type="button" class="card-src" data-go="todos">${ICON.todos}<span>${t(`逾期 ${-away(item2.due)} 天`, `${-away(item2.due)} days overdue`)}</span></button><p class="card-quote">${esc(pick(item2.title))}</p>`; }
+    else src = `<span class="card-src">${ICON.mic}<span>${t("昨晚你说的", "You said last night")}</span></span><p class="card-quote">“${esc(pick(from.text))}”</p>`;
+    const body = asking(item)
+      ? `<p class="card-label q">${esc(pick(item.ask.q))}</p><div class="acts">${item.ask.options.map((option, n) => `<button type="button" class="ghost" data-opt="${item.id}:${n}">${esc(pick(option.label))}</button>`).join("")}<button type="button" class="ghost" data-decline="${item.id}">${t("算了", "Never mind")}</button></div>`
+      : `<p class="card-label">${t("Alfred 提议", "Alfred suggests")}</p><div class="steps">${item.steps.map((step) => stepHtml(item, step)).join("")}</div>${actsHtml(item)}`;
+    return `<article class="card" ${S.fresh.has(item.id) ? "data-fresh" : ""} ${onProp(item) ? "data-on" : ""}>${src}${body}</article>`;
+  };
+  return `<div class="col"><div class="cards">${open.map(card).join("") || `<p class="clear">${t("都处理完了", "All clear")}</p>`}</div>
+    ${rest.length ? `<h3 class="sub">${t("处理过的", "Handled")}</h3>${rest.map((item) => `<p class="receipt" data-state="${item.state}">${esc(item.receipt)}</p>`).join("")}` : ""}</div>`;
+}
+function todosHtml() {
+  const ghosts = new Map();
+  for (const item of live()) for (const step of item.steps) if (step.kind === "due") ghosts.set(step.todo, item);
+  const groups = [
+    ["late", t("逾期", "Overdue"), (item) => !item.done && item.due && away(item.due) < 0],
+    ["today", t("今天", "Today"), (item) => !item.done && item.due === TODAY],
+    ["tomorrow", t("明天", "Tomorrow"), (item) => !item.done && item.due && away(item.due) === 1],
+    ["week", t("本周", "This week"), (item) => !item.done && item.due && away(item.due) > 1 && away(item.due) <= 3],
+    ["next", t("下周", "Next week"), (item) => !item.done && item.due && away(item.due) > 3 && away(item.due) <= 10],
+    ["later", t("以后", "Later"), (item) => !item.done && item.due && away(item.due) > 10],
+    ["none", t("没定日子", "No date"), (item) => !item.done && !item.due],
+    ["done", t("做完的", "Done"), (item) => item.done],
+  ];
+  return `<div class="col">${groups.map(([key, title, test]) => {
+    const items = D.todos.filter(test);
+    if (!items.length) return "";
+    return `<section class="group" data-g="${key}"><h3>${esc(title)}<span>${items.length}</span></h3>${items.map((item) => {
+      const area = AREAS[item.area], on = S.sel?.kind === "todo" && S.sel.id === item.id, ghost = ghosts.get(item.id);
+      const also = ghost?.steps.find((step) => step.kind === "add"), due = ghost?.steps.find((step) => step.kind === "due");
+      return `<div class="todo" ${area ? `data-k="${area[2]}"` : ""} ${item.done ? "data-done" : ""} ${S.fresh.has(item.id) ? "data-fresh" : ""} ${on ? "data-on" : ""}>
+        <button type="button" class="box" data-toggle="${item.id}" aria-label="${t("做完", "Done")}：${esc(pick(item.title))}"></button>
+        <div class="todo-col"><button type="button" class="todo-body" data-sel="todo:${item.id}" aria-expanded="${on}"><span class="todo-title">${esc(pick(item.title))}</span>
+          <span class="todo-meta">${area ? `<span class="tag">${esc(t(area[0], area[1]))}</span>` : ""}<span>${esc(dayText(item.due))}</span>${item.by ? `<span class="by">${t("Alfred 改的", "Changed by Alfred")}</span>` : ""}</span></button>
+          ${ghost ? `<div class="ghost-line"><span>${t("Alfred 提议", "Alfred suggests")} → ${esc(wd(due.day))}${also ? " " + also.start : ""}</span>${miniHtml(ghost)}</div>` : ""}
+        </div></div>${on ? nearHtml("todo") : ""}`;
+    }).join("")}</section>`;
+  }).join("")}</div>`;
+}
+function calHtml() {
+  const ghosts = [], moving = new Map();
+  for (const item of live()) for (const step of item.steps) {
+    if (step.kind === "move") { const e = event(step.ev); moving.set(e.id, step); ghosts.push({ item, day: step.day, start: step.start, end: hhmm(mins(step.start) + mins(e.end) - mins(e.start)), title: e.title }); }
+    if (step.kind === "add") ghosts.push({ item, day: step.day, start: step.start, end: hhmm(mins(step.start) + 60), title: step.title });
+  }
+  const days = new Set([0, 1, 2, 3, 4].map((n) => plus(TODAY, n)));
+  for (const row of [...D.events, ...ghosts]) days.add(row.day);
+  const time = (row) => `<span class="time">${row.start}<i>–${row.end}</i></span>`;
+  return `<div class="col">${[...days].sort().map((day) => {
+    const date = at(day), n = away(day);
+    const head = (n === 0 ? t("今天 · ", "Today · ") : n === 1 ? t("明天 · ", "Tomorrow · ") : "") + t(`${date.getMonth() + 1}月${date.getDate()}日 ${ZW[date.getDay()]}`, `${EW[date.getDay()]} ${md(day)}`);
+    const rows = [...D.events.filter((item) => item.day === day), ...ghosts.filter((ghost) => ghost.day === day)].sort((a, b) => a.start.localeCompare(b.start));
+    return `<section class="day" ${n === 0 ? "data-today" : ""}><h3>${esc(head)}</h3>${rows.map((row) => {
+      if (row.item) return `<div class="ev" data-ghost data-k="alfred">${time(row)}<span class="bar"></span><span class="ev-body"><span class="ev-title">${esc(pick(row.title))}</span><span class="ev-meta">${t("Alfred 提议", "Alfred suggests")}</span></span>${miniHtml(row.item)}</div>`;
+      const area = AREAS[row.area], on = S.sel?.kind === "event" && S.sel.id === row.id, move = moving.get(row.id);
+      const meta = [row.who && pick(row.who), area && t(area[0], area[1])].filter(Boolean).join(" · ");
+      return `<button type="button" class="ev" data-k="${area ? area[2] : "gray"}" data-sel="event:${row.id}" aria-expanded="${on}" ${on ? "data-on" : ""} ${S.fresh.has(row.id) ? "data-fresh" : ""} ${move ? "data-moving" : ""}>
+        ${time(row)}<span class="bar"></span><span class="ev-body"><span class="ev-title">${esc(pick(row.title))}</span>
+        <span class="ev-meta">${esc(meta)}${row.by ? ` <span class="by">${t("Alfred 改的", "Changed by Alfred")}</span>` : ""}${move ? ` <span class="by">→ ${esc(wd(move.day))} ${move.start}</span>` : ""}</span></span></button>${on ? nearHtml("event") : ""}`;
+    }).join("") || `<p class="free">${t("空着", "Free")}</p>`}</section>`;
+  }).join("")}</div>`;
+}
+function mailHtml() {
+  const open = mail(S.mail), draft = draftFor(open.id);
+  const when = (item) => item.at ?? t("昨天", "Yesterday");
+  const flag = (item) => item.replied ? `<span class="tag" data-k="green">${t("已回", "Replied")}</span>` : draftFor(item.id) ? `<span class="tag" data-k="alfred">${t("有草稿", "Draft")}</span>` : "";
+  let under = "";
+  if (open.replied) under = `<div class="sent"><b>${t("已回复", "Replied")}</b><p>${esc(open.replied)}</p></div>`;
+  else if (draft) {
+    const reply = draft.steps.find((step) => step.kind === "reply"), others = draft.steps.filter((step) => step !== reply);
+    under = `<div class="draft" ${S.fresh.has(draft.id) ? "data-fresh" : ""} ${onProp(draft) ? "data-on" : ""}><b>${draft.own ? t("草稿", "Draft") : t("Alfred 起草", "Drafted by Alfred")}</b><p>${esc(replyText(draft, reply))}</p>
+      ${others.length ? `<div class="steps">${others.map((step) => stepHtml(draft, step)).join("")}</div>` : ""}${actsHtml(draft)}</div>`;
+  } else under = S.edit === "near" ? nearHtml("mail")
+    : `<div class="acts reply-acts"><button type="button" class="ghost" data-sel="mail:${open.id}" aria-pressed="${S.sel?.kind === "mail"}">${t("回一句…", "Reply in a line…")}</button></div>`;
+  return `<div class="mail"><div class="mail-list">${D.mails.map((item) => `
+    <button type="button" class="mail-row" data-mail="${item.id}" ${item.id === S.mail ? 'aria-current="true"' : ""} ${item.unread ? "" : "data-read"}>
+      <span class="who"><span>${esc(pick(item.who))}</span>${flag(item)}</span><span class="sub-line">${esc(pick(item.sub))}</span></button>`).join("")}</div>
+    <article class="mail-read"><h2>${esc(pick(open.sub))}</h2><p class="from">${esc(pick(open.who))} · ${esc(when(open))}</p><p class="text">${esc(pick(open.body))}</p>${under}</article></div>`;
+}
+function renderPage() {
+  const def = PAGES[S.page];
+  $("#page").dataset.p = S.page;
+  $("#page-head").innerHTML = `<h1 data-k="${def.k}">${ICON[S.page]}${esc(def.title())}</h1><p>${esc(def.summary())}</p>`;
+  $("#page-body").innerHTML = { inbox: inboxHtml, todos: todosHtml, cal: calHtml, mail: mailHtml }[S.page]();
+  $("#rail").innerHTML = PAGE_KEYS.map((key) => { const item = PAGES[key]; return `<button type="button" data-page="${key}" data-k="${item.k}" aria-label="${esc(item.title())}" title="${esc(item.title())}" ${S.page === key ? 'aria-current="page"' : ""}>${ICON[key]}${item.count() ? `<span class="count">${item.count()}</span>` : ""}</button>`; }).join("");
+}
+
+/* ── The bottom line ── */
+const input = $("#cap-input");
+/** What the sentence in the bottom line will become, with what the user corrected by hand. */
+function reading(text) {
+  const got = read(text), kind = S.kind ?? got.kind, day = S.day === undefined ? got.day : S.day;
+  return { ...got, kind, day, start: got.start ?? (kind === "event" ? "09:00" : null) };
+}
+function renderUp() {
+  const text = input.value.trim(), it = S.edit === "bar" ? target() : null;
+  let html = "";
+  if (S.card && !S.panel && S.turns.length) {
+    const turn = S.turns.at(-1);
+    html += `<div class="ans"><p class="asked">${esc(turn.asked)}</p>`
+      + (turn.text ? `<p class="text">${esc(turn.text)}</p>${turn.act ? `<div class="acts"><button type="button" class="primary" data-run="${turn.act.run}">${esc(turn.act.label)}</button></div>` : ""}` : `<p class="work">${t("在想…", "Thinking…")}</p>`)
+      + `<div class="foot"><button type="button" data-expand>${t("展开对话", "Open the conversation")}</button></div><button type="button" class="x" data-dismiss aria-label="${t("收起", "Dismiss")}">×</button></div>`;
+  }
+  if (S.toast) html += `<div class="toast"><span class="t">${esc(S.toast.text)}</span>${S.toast.go && S.toast.go !== S.page ? `<button type="button" data-go="${S.toast.go}">${t("去看", "Show")}</button>` : ""}${S.toast.undo ? `<button type="button" data-undo>${t("撤销", "Undo")}</button>` : ""}</div>`;
+  if (it) {
+    if (S.lost) html += lostHtml();
+    const chips = text ? "" : chipsHtml(it);
+    if (chips) html += `<div class="cap-chips">${chips}</div>`;
+  } else if (text) {
+    const got = reading(text);
+    const label = { todo: t("待办", "Todo"), event: t("日程", "Event"), ask: t("问 Alfred", "Ask Alfred") }[got.kind], k = { todo: "blue", event: "now", ask: "alfred" }[got.kind];
+    html += `<div class="pre"><button type="button" class="pill" data-k="${k}" data-kind title="${t("换一种", "Switch")}">${label} ⇄</button>`
+      + (got.kind === "ask" ? "" : `<button type="button" class="pill" data-k="gray" data-daymenu aria-expanded="${S.dayMenu}">${esc(got.kind === "event" && !got.day ? dayText(TODAY) : dayText(got.day))}</button>`)
+      + (got.kind === "event" ? `<span class="pill" data-k="gray">${got.start}</span>` : "")
+      + `<span class="title">${esc(got.kind === "ask" ? text : got.title)}</span><span class="hint">↵</span></div>`;
+    if (S.dayMenu) html += `<div class="cap-chips">${[TODAY, plus(TODAY, 1), weekday(6), weekday(1, true), ""].map((day) => `<button type="button" class="chip" data-day="${day}">${esc(dayText(day))}</button>`).join("")}</div>`;
+  } else if (S.focus && !S.toast) {
+    html += `<div class="cap-chips">${[t("周五前交报告", "Hand in the report by Friday"), t("明天下午3点和王老师喝咖啡", "Coffee with Mr Wang tomorrow at 3pm"), t("今天先做哪件？", "What first today?")].map((chip) => `<button type="button" class="chip" data-fill="${esc(chip)}">${esc(chip)}</button>`).join("")}</div>`;
+  }
+  $("#cap-up").innerHTML = html;
+  const about = $("#cap-about");
+  about.hidden = !it;
+  if (it) about.innerHTML = `<span>${esc(targetName(it))}</span><button type="button" data-unabout aria-label="${t("不说它了", "Let go")}">×</button>`;
+  $("#cap-form").toggleAttribute("data-about", !!it);
+  input.placeholder = it ? (it.kind === "mail" ? t("回一句…", "Reply in a line…") : it.kind === "prop" ? t("改成…", "Change it to…") : t("改这件事…", "Change this…")) : t("记一句：周五前交报告", "Say it once: report by Friday");
+  input.setAttribute("aria-label", input.placeholder);
+}
+let toastTimer;
+function toast(text, { go = null, undo = true } = {}) {
+  S.toast = { text, go, undo };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { S.toast = null; renderUp(); }, 7000);
+}
+
+/* ── Changes. Each one remembers what was there before, so it can be undone. ── */
+const remember = () => { past.push(JSON.stringify(D)); if (past.length > 30) past.shift(); };
+/** A change is made: say so above the bottom line, light up what changed, let go of what was picked. */
+function done(text, { ids = [], go = null, keep = false } = {}) {
+  for (const id of ids) S.fresh.add(id);
+  if (!keep) S.sel = null;
+  S.revise = null; S.lost = null;
+  toast(text, { go });
+  mood("done");
+  render();
+  $("#page-body [data-fresh]")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  // Not a redraw: someone may be typing by then.
+  setTimeout(() => { for (const id of ids) S.fresh.delete(id); document.querySelectorAll("[data-fresh]").forEach((el) => el.removeAttribute("data-fresh")); }, 2600);
+}
+function undo() {
+  if (!past.length) return;
+  D = JSON.parse(past.pop());
+  Object.assign(S, { sel: null, revise: null, lost: null });
+  toast(t("撤销了", "Undone"), { undo: false });
+  render();
+}
+function lost(text) { S.lost = text; mood("think"); render("line"); }
+
+function accept(item) {
+  remember();
+  const texts = item.steps.map((step) => doneText(item, step)), ids = item.steps.map((step) => carry(item, step));
+  item.state = "done";
+  item.receipt = texts.join(t("，", ", "));
+  done(item.receipt, { ids });
+}
+function decline(item) {
+  remember();
+  item.state = "no";
+  item.receipt = t("没做：", "Not done: ") + (item.from.kind === "mail" ? pick(mail(item.from.id).sub) : item.from.kind === "todo" ? pick(todo(item.from.id).title) : pick(item.from.text));
+  done(t("不做了", "Left alone"));
+}
+/** The user changed a thing by hand: what Alfred proposed for it gives way. A reply that is still owed stays,
+    and says what the user chose. */
+function yieldTo(kind, id, name) {
+  for (const item of D.props) {
+    if (item.state !== "open") continue;
+    const hit = item.steps.find((step) => (kind === "event" && step.kind === "move" && step.ev === id) || (kind === "todo" && step.kind === "due" && step.todo === id));
+    if (!hit) continue;
+    const reply = item.steps.find((step) => step.kind === "reply"), e = kind === "event" && event(id);
+    if (reply && e) {
+      if (!reply.text) { const text = t(`可以，改到${wd(e.day)} ${e.start}。日程我已经挪了。`, `Sure, let's make it ${wd(e.day)} at ${e.start}. I have moved the calendar event.`); reply.text = [text, text]; }
+      item.steps = item.steps.filter((step) => step !== hit);
+    } else { item.state = "no"; item.receipt = t(`你自己办了：${name}`, `You did it yourself: ${name}`); }
+  }
+}
+/** A few words change a proposal: a day or a time moves its steps; anything else is the reply itself. */
+function revise(item, text) {
+  const got = read(text);
+  const before = JSON.stringify(D);
+  let changed = false;
+  for (const step of item.steps) {
+    if (step.kind === "move" || step.kind === "add") { if (got.day) { step.day = got.day; changed = true; } if (got.start) { step.start = got.start; changed = true; } }
+    else if ((step.kind === "due" || step.kind === "todo") && got.day) { step.day = got.day; changed = true; }
+  }
+  const reply = item.steps.find((step) => step.kind === "reply");
+  if (!changed && reply) { reply.text = [text, text]; changed = true; }
+  if (!changed) return lost(text);
+  past.push(before);
+  done(t("改好了，等你点头", "Changed. Waiting for your yes"), { ids: [item.id] });
+}
+function todoCommand(item, text) {
+  const q = text.toLowerCase(), got = read(text), name = pick(item.title);
+  if (/做完|完成|搞定|\bdone\b|finished/.test(q)) { remember(); item.done = true; yieldTo("todo", item.id, name); return done(t(`做完了：${name}`, `Done: ${name}`)); }
+  if (/删|不要了|算了|delete|remove|drop/.test(q)) { remember(); D.todos = D.todos.filter((other) => other !== item); yieldTo("todo", item.id, name); return done(t(`删了：${name}`, `Removed: ${name}`)); }
+  if (got.day) { remember(); item.due = got.day; yieldTo("todo", item.id, name); return done(t(`${name}改到${dayText(got.day)}`, `${name} now due ${dayText(got.day).toLowerCase()}`), { ids: [item.id] }); }
+  lost(text);
+}
+function eventCommand(item, text) {
+  const q = text.toLowerCase(), got = read(text), name = pick(item.title);
+  const tell = item.who ? t(` · 会告诉${pick(item.who)}`, ` · ${pick(item.who)} will be told`) : "";
+  if (/取消|删|cancel|delete/.test(q)) { remember(); D.events = D.events.filter((other) => other !== item); yieldTo("event", item.id, name); return done(t(`取消了：${name}`, `Cancelled: ${name}`) + tell); }
+  const shift = /晚.*小时|推迟|hours? later/.test(q) ? 60 : /早.*小时|提前|hours? earlier/.test(q) ? -60 : 0;
+  if (!shift && !got.day && !got.start) return lost(text);
+  remember();
+  const length = mins(item.end) - mins(item.start), begin = got.start ? mins(got.start) : mins(item.start) + shift;
+  Object.assign(item, { day: got.day ?? item.day, start: hhmm(begin), end: hhmm(begin + length) });
+  yieldTo("event", item.id, name);
+  done(t(`${name}挪到${wd(item.day)} ${item.start}`, `${name} moved to ${wd(item.day)} ${item.start}`) + tell, { ids: [item.id] });
+}
+/** Words about a mail: put off as a todo, or a reply. A reply is only a draft until it is sent with a yes. */
+function mailCommand(item, text) {
+  const draft = draftFor(item.id);
+  if (draft) return revise(draft, text);
+  const q = text.toLowerCase(), got = read(text);
+  if (/待办|todo/.test(q) || (got.day && /回|再|reply|later/.test(q))) {
+    remember();
+    const id = uid(), day = got.day ?? TODAY;
+    D.todos.push({ id, title: [`回${item.who[0]}`, `Reply to ${item.who[1]}`], area: null, due: day });
+    return done(t(`记到待办 · ${dayText(day)}`, `Todo added · ${dayText(day)}`), { ids: [id], go: "todos" });
+  }
+  remember();
+  const id = uid();
+  D.props.push({ id, own: true, state: "open", from: { kind: "mail", id: item.id }, steps: [{ kind: "reply", mail: item.id, text: [text, text] }] });
+  done(t("草稿在下面，点发送才发", "Draft below. It goes when you press send"), { ids: [id] });
+}
+function command(text) {
+  const it = target();
+  text = text.trim();
+  if (!it || !text) return;
+  S.lost = null;
+  if (it.kind === "todo") todoCommand(todo(it.id), text);
+  else if (it.kind === "event") eventCommand(event(it.id), text);
+  else if (it.kind === "prop") revise(prop(it.id), text);
+  else mailCommand(mail(it.id), text);
+}
+/** One sentence becomes a todo or an event where it belongs. A question goes to the conversation. */
+function capture(text) {
+  const got = reading(text);
+  Object.assign(S, { kind: null, day: undefined, dayMenu: false });
+  if (got.kind === "ask") return talk(text);
+  remember();
+  const id = uid(), title = [got.title, got.title];
+  if (got.kind === "event") {
+    const day = got.day ?? TODAY;
+    D.events.push({ id, title, day, start: got.start, end: hhmm(mins(got.start) + 60), area: null });
+    done(t(`记到日程 · ${dayText(day)} ${got.start}`, `On the calendar · ${dayText(day)} ${got.start}`), { ids: [id], go: "cal" });
+  } else {
+    D.todos.push({ id, title, area: null, due: got.day });
+    done(t("记到待办", "Todo added") + (got.day ? ` · ${dayText(got.day)}` : ""), { ids: [id], go: "todos" });
+  }
+}
+/** The scripted Alfred: one question it can answer with something to press; a line for everything else. */
+function answer(asked) {
+  const exp = todo("exp");
+  if (/先做|first/i.test(asked) && exp && !exp.done && away(exp.due) < 0) return {
+    text: t(`先做「${exp.title[0]}」：逾期 ${-away(exp.due)} 天，半小时能做完。今天 16:00 以后你是空的。`, `Start with “${exp.title[1]}”: ${-away(exp.due)} days overdue, half an hour of work. You are free today after 16:00.`),
+    act: { run: "exp-today", label: t("排到今天 16:00", "Book it today at 16:00") },
+  };
+  return { text: t("这句原型里没编答案。真的 Alfred 会在这里答一两句；说不完的，展开成对话。", "This prototype has no answer written for that. The real Alfred answers here in a line or two; anything longer opens as a conversation.") };
+}
+/** A question, or a sentence the reader could not place: Alfred answers out of the bottom line. */
+async function talk(text) {
+  const turn = { asked: text ?? S.lost ?? "", text: null, act: null };
+  S.turns.push(turn);
+  Object.assign(S, { card: true, lost: null, sel: null, revise: null });
+  mood("think"); render();
+  await sleep(700);
+  if (!S.turns.includes(turn)) return;
+  Object.assign(turn, answer(turn.asked));
+  // Not a full redraw: the next sentence may already be on its way.
+  mood("speak"); renderUp(); renderTurns();
+}
+/** What an answer offered to do, once it is pressed. */
+function run(what) {
+  const turn = S.turns.at(-1), item = todo("exp");
+  if (what !== "exp-today" || !item) return;
+  remember();
+  const id = uid(), name = pick(item.title);
+  Object.assign(item, { due: TODAY, by: true });
+  D.events.push({ id, title: item.title, day: TODAY, start: "16:00", end: "16:30", area: item.area, by: true });
+  yieldTo("todo", item.id, name);
+  turn.act = null; S.card = false;
+  done(t(`${name}排在今天 16:00`, `${name} booked today at 16:00`), { ids: [id, item.id], go: "cal" });
+}
+function renderTurns() {
+  $("#turns").innerHTML = S.turns.map((turn) => `<div class="said">${esc(turn.asked)}</div><p>${turn.text ? esc(turn.text) : t("在想…", "Thinking…")}</p>`).join("")
+    + `<p class="note">${t("这里只有记录。接着说，还是写在底部那一行。", "This is only the transcript. The next sentence still goes in the bottom line.")}</p>`;
+}
+
+/* ── Alfred's figure, in the bottom line ── */
+const isDark = () => document.documentElement.dataset.scheme === "dark";
+const slot = $("span[data-fig]"), svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+svg.setAttribute("viewBox", "0 0 120 120"); svg.setAttribute("class", "fig"); svg.setAttribute("aria-hidden", "true");
+slot.replaceWith(svg);
+let figure = createFigure(svg, { width: 5.6, small: true, dark: isDark() });
+let moodTimer;
+function mood(state) { S.mood = state; clearTimeout(moodTimer); moodTimer = setTimeout(() => { S.mood = null; syncFigure(); }, 1600); syncFigure(); }
+function syncFigure() { figure.setState(S.mood ?? (S.focus ? "listen" : "rest")); figure.refresh(); }
+
+/* ── Drawing everything ── */
+function renderProto() {
+  $("#proto").innerHTML = `<b>${t("少说话", "Fewer words")}</b><span class="lab">${t("改一件事，话说在", "Words about a thing go")}</span>`
+    + [["bar", t("底部那一行", "In the bottom line")], ["near", t("它旁边", "Beside it")]].map(([key, label]) => `<button type="button" data-edit="${key}" aria-pressed="${S.edit === key}">${label}</button>`).join("")
+    + `<span class="what">${t("Alfred 先提议 · 记一句不回话 · 点一下就改", "Alfred goes first · one line, no reply · change in place")}</span>`
+    + `<a href="ask.html">${t("聊天的四种", "The four chats")}</a><button type="button" data-reset>${t("重来", "Reset")}</button><button type="button" data-lang>${S.lang === "en" ? "中文" : "EN"}</button><button type="button" data-scheme aria-label="${t("深浅", "Light or dark")}">◐</button>`;
+}
+/** Redraw. `focus`: "line" puts the caret in the line that is open on the page; "cap" in the bottom line. */
+function render(focus) {
+  document.documentElement.lang = S.lang === "en" ? "en" : "zh-CN";
+  document.title = t("Alfred：少说话", "Alfred: fewer words");
+  $("#app").toggleAttribute("data-panel", S.panel);
+  renderProto(); renderPage(); renderUp(); syncFigure();
+  renderTurns();
+  if (focus === "line") ($("#page-body form.line input") ?? (S.edit === "bar" ? input : null))?.focus();
+  if (focus === "cap") input.focus();
+}
+function reset() {
+  D = sample(); past.length = 0; clearTimeout(toastTimer);
+  Object.assign(S, { sel: null, mail: "lin", revise: null, lost: null, kind: null, day: undefined, dayMenu: false, toast: null, turns: [], card: false, panel: false, mood: null });
+  S.fresh.clear(); input.value = "";
+  render();
+}
+function go(page, id) {
+  Object.assign(S, { page, sel: null, revise: null, lost: null });
+  if (page === "mail" && id) S.mail = id;
+  render();
+}
+async function dictate(field, text) {
+  field.focus(); field.value = "";
+  for (const char of text) { field.value += char; field.dispatchEvent(new Event("input", { bubbles: true })); await sleep(S.lang === "en" ? 26 : 70); }
+}
+
+/* ── Events ── */
+document.addEventListener("click", (ev) => {
+  const el = ev.target.closest("[data-accept],[data-decline],[data-revise],[data-opt],[data-toggle],[data-sel],[data-mail],[data-chip],[data-revchip],[data-go],[data-talk],[data-undo],[data-kind],[data-daymenu],[data-day],[data-fill],[data-page],[data-unabout],[data-mic],[data-edit],[data-reset],[data-lang],[data-scheme],[data-close],[data-run],[data-expand],[data-dismiss]");
+  if (!el) return;
+  const d = el.dataset;
+  if ("accept" in d) accept(prop(d.accept));
+  else if ("decline" in d) decline(prop(d.decline));
+  else if ("revise" in d) {
+    // With the bottom line, "change" attaches the proposal to it; with the line beside things, one opens in the card.
+    if (S.edit === "bar") S.sel = onProp(prop(d.revise)) ? null : { kind: "prop", id: d.revise }; else S.revise = d.revise;
+    S.lost = null; render("line");
+  }
+  else if ("opt" in d) {
+    const [id, n] = d.opt.split(":"), item = prop(id);
+    remember();
+    item.answered = true; item.steps[0].title = item.ask.options[Number(n)].title;
+    past.pop(); accept(item);
+  }
+  else if ("toggle" in d) { const item = todo(d.toggle); remember(); item.done = !item.done; if (item.done) yieldTo("todo", item.id, pick(item.title)); done(item.done ? t(`做完了：${pick(item.title)}`, `Done: ${pick(item.title)}`) : t(`没做完：${pick(item.title)}`, `Open again: ${pick(item.title)}`)); }
+  else if ("sel" in d) {
+    const [kind, id] = d.sel.split(":"), same = S.sel?.kind === kind && S.sel.id === id;
+    S.sel = same ? null : { kind, id }; S.lost = null; S.revise = null;
+    render(same ? undefined : "line");
+  }
+  else if ("mail" in d) { Object.assign(S, { mail: d.mail, sel: null, revise: null, lost: null }); mail(d.mail).unread = false; render(); }
+  else if ("chip" in d) command(d.chip);
+  else if ("revchip" in d) { const [id, text] = d.revchip.split("|"); revise(prop(id), text); }
+  else if ("go" in d) go(...d.go.split(":"));
+  else if ("talk" in d) talk();
+  else if ("undo" in d) undo();
+  else if ("kind" in d) { S.kind = reading(input.value).kind === "todo" ? "event" : "todo"; renderUp(); input.focus(); }
+  else if ("daymenu" in d) { S.dayMenu = !S.dayMenu; renderUp(); input.focus(); }
+  else if ("day" in d) { S.day = d.day || null; S.dayMenu = false; renderUp(); input.focus(); }
+  else if ("fill" in d) { input.value = d.fill; S.toast = null; renderUp(); input.focus(); }
+  else if ("page" in d) go(d.page);
+  else if ("unabout" in d) { S.sel = null; S.lost = null; render("cap"); }
+  else if ("mic" in d) {
+    const it = target(), about = d.mic === "near" || (S.edit === "bar" && it);
+    const field = d.mic === "near" ? el.closest("form").querySelector("input") : input;
+    dictate(field, !about ? t("周五下午三点和王老师喝咖啡", "Coffee with Mr Wang Friday at 3pm") : it.kind === "mail" ? t("收到，谢谢", "Got it, thank you") : it.kind === "prop" ? t("下午四点", "4pm") : it.kind === "event" ? t("挪到明天下午四点", "Move it to tomorrow at 4pm") : t("挪到下周一", "Move it to next Monday"));
+  }
+  else if ("edit" in d) { Object.assign(S, { edit: d.edit, sel: null, revise: null, lost: null }); render(); }
+  else if ("reset" in d) reset();
+  else if ("lang" in d) { S.lang = S.lang === "en" ? "zh" : "en"; reset(); }
+  else if ("scheme" in d) { document.documentElement.dataset.scheme = isDark() ? "light" : "dark"; figure.destroy(); figure = createFigure(svg, { width: 5.6, small: true, dark: isDark() }); syncFigure(); }
+  else if ("close" in d) { S.panel = false; S.card = false; render(); }
+  else if ("run" in d) run(d.run);
+  else if ("expand" in d) { S.panel = true; render("cap"); }
+  else if ("dismiss" in d) { S.card = false; renderUp(); }
+});
+document.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const form = ev.target, field = form.querySelector("input"), text = field.value.trim();
+  if (!text) return;
+  if (form.id === "cap-form") {
+    field.value = "";
+    if (S.edit === "bar" && target()) command(text); else capture(text);
+    if (!S.panel) input.focus();
+  }
+  else if ("rev" in form.dataset) revise(prop(form.dataset.rev), text);
+  else command(text);
+});
+input.addEventListener("input", () => { if (!input.value.trim()) Object.assign(S, { kind: null, day: undefined, dayMenu: false }); else S.toast = null; S.lost = null; renderUp(); });
+input.addEventListener("focus", () => { S.focus = true; renderUp(); syncFigure(); });
+input.addEventListener("blur", () => { S.focus = false; renderUp(); syncFigure(); });
+/* Chips above the bottom line are pressed without taking the caret out of it. */
+$("#cap-up").addEventListener("pointerdown", (ev) => { if (ev.target.closest("button")) ev.preventDefault(); });
+document.addEventListener("keydown", (ev) => {
+  const mod = ev.metaKey || ev.ctrlKey;
+  if (mod && ev.key.toLowerCase() === "k") { ev.preventDefault(); input.focus(); }
+  else if (mod && ev.key.toLowerCase() === "z" && !ev.target.value) { ev.preventDefault(); undo(); }
+  else if (ev.key === "Escape") {
+    if (S.panel) { S.panel = false; S.card = false; render(); }
+    else if (S.card) { S.card = false; renderUp(); }
+    else if (S.revise || S.sel) { Object.assign(S, { revise: null, sel: null, lost: null }); render(); }
+    else document.activeElement?.blur();
+  }
+});
+
+const scheme = params.get("scheme");
+document.documentElement.dataset.scheme = scheme === "dark" || scheme === "light" ? scheme : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+figure.destroy(); figure = createFigure(svg, { width: 5.6, small: true, dark: isDark() });
+render();
+</script>
+</body>
+</html>
