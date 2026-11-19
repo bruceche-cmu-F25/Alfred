@@ -126,6 +126,9 @@ export const api = {
   pushSubscribe: (subscription: PushSubscriptionJSON) => post<PushInfo>("/api/push/subscribe", { subscription }),
   pushUnsubscribe: () => post<PushInfo>("/api/push/unsubscribe", {}),
   pushTest: () => post<PushResult>("/api/push/test", {}),
+  /** Speech to text on the home node: start loading the model (someone began talking), then send the recording. */
+  voiceWarm: () => post<{ loaded: boolean }>("/api/voice/warm", {}),
+  transcribe: (wav: Blob) => call<{ text: string; ms: number }>("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav }),
 };
 
 export type Connection = "connecting" | "live" | "reconnecting";

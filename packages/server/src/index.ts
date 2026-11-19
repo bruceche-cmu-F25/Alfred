@@ -5,3 +5,4 @@ export { RemoteAccess, PairingError, DEFAULT_SERVE_PORT, DEVICE_COOKIE, type Rem
 export { Tailscale, cliRunner, findTailscale, type Runner } from "./tailscale.ts";
 export { PushService, noticeMessage, checkSubscription, PUSH_CLIENT, type PushSender, type PushMessage } from "./push.ts";
 export { OUTLET_STALE_MS, Outlets, watchAttention, type AttentionOptions, type Reach, type SeenOutlet } from "./attention.ts";
+export { Transcriber, VoiceError, DEFAULT_VOICE_COMMAND, type Transcript, type TranscriberOptions } from "./voice.ts";

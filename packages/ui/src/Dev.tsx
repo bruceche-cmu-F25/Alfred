@@ -15,6 +15,8 @@ import { t, type Key } from "./i18n/index.ts";
 import { AsciiField } from "./shell/AsciiField.tsx";
 import { Figure } from "./shell/Figure.tsx";
 import { Icon } from "./shell/icons.tsx";
+import { MicButton } from "./voice/MicButton.tsx";
+import { appendDictation } from "./voice/wav.ts";
 import { when } from "./shell/Nav.tsx";
 
 export interface DevProps {
@@ -209,6 +211,7 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
               </select>
             </label>
             <span className="grow" />
+            <MicButton disabled={!project?.trustedAt} onText={(words) => setDraft((now) => appendDictation(now, words))} />
             <button type="submit" className="send" disabled={!draft.trim() || !project?.trustedAt || busy} aria-label={t("composer.send")}>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
             </button>

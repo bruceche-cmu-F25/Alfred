@@ -8,6 +8,8 @@ import { Diff } from "./Diff.tsx";
 import { Linked } from "./Linked.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Icon } from "./shell/icons.tsx";
+import { MicButton } from "./voice/MicButton.tsx";
+import { appendDictation } from "./voice/wav.ts";
 
 const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
 
@@ -103,7 +105,10 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
       </div>
       {!permission && (
         <form className="request-free" onSubmit={(event) => { event.preventDefault(); answer(text); }}>
-          <input value={text} onChange={(event) => setText(event.target.value)} placeholder={t("req.free")} aria-label={t("req.answer")} maxLength={2000} disabled={busy} />
+          <span className="with-mic">
+            <input value={text} onChange={(event) => setText(event.target.value)} placeholder={t("req.free")} aria-label={t("req.answer")} maxLength={2000} disabled={busy} />
+            <MicButton className="small" disabled={busy} onText={(words) => setText((now) => appendDictation(now, words))} />
+          </span>
         </form>
       )}
       {error && <p className="problem small" role="alert">{error}</p>}
@@ -303,6 +308,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -386,6 +392,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
       )}
       <form className="composer" onSubmit={send}>
         <textarea
+          ref={field}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKey}
@@ -397,6 +404,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         <div className="composer-bar">
           <ComposerBar conversation={detail?.conversation} onError={setError} />
           <span className="grow" />
+          <MicButton onText={(words) => { setDraft((now) => appendDictation(now, words)); field.current?.focus(); }} />
           <button type="submit" className="send" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
           </button>

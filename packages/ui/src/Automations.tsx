@@ -5,6 +5,8 @@ import { automationTitle, scheduleText, whenText } from "./automationText.ts";
 import { Linked } from "./Linked.tsx";
 import { plainText } from "./markdown.ts";
 import { Icon } from "./shell/icons.tsx";
+import { MicButton } from "./voice/MicButton.tsx";
+import { appendDictation } from "./voice/wav.ts";
 import { t, type Key } from "./i18n/index.ts";
 
 const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7];
@@ -51,7 +53,10 @@ function AutomationForm({ automation, onDone }: { automation?: Automation; onDon
           </label>
           <label className="field">
             <span>{t("auto.goal")}</span>
-            <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={t("auto.goalPlaceholder")} maxLength={2000} rows={3} />
+            <span className="with-mic">
+              <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={t("auto.goalPlaceholder")} maxLength={2000} rows={3} />
+              <MicButton className="small" onText={(words) => setGoal((now) => appendDictation(now, words))} />
+            </span>
           </label>
         </>
       )}

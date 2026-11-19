@@ -35,6 +35,7 @@ import type { GoogleConnections } from "./google.ts";
 import type { ModelAccounts } from "@alfred/engine-pi";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
 import type { PushService } from "./push.ts";
+import { MAX_VOICE_BYTES, type Transcriber } from "./voice.ts";
 
 const MAX_BODY = 64 * 1024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -121,6 +122,7 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
   if (name === "AutomationError") return { status: code === "missing" ? 404 : 400, body: { error: message } };
   if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
   if (name === "PairingError") return { status: 400, body: { error: message, code: String(code) } };
+  if (name === "VoiceError") return { status: code === "unavailable" ? 503 : code === "busy" ? 429 : 502, body: { error: message, code: `voice_${String(code)}` } };
   if (name === "RemoteError") return { status: 409, body: { error: message } };
   if (name === "PushError") return { status: 400, body: { error: message } };
   if (name === "ProjectError") return { status: code === "missing" ? 404 : code === "untrusted" ? 409 : 400, body: { error: message, code: String(code) } };
@@ -474,6 +476,40 @@ export interface ServeOptions {
   remote?: RemoteAccess;
   /** Push notifications to paired devices (`/api/push`). */
   push?: PushService;
+  /** Speech to text (`/api/voice/*`); left out, those routes are 404. */
+  voice?: Transcriber;
+}
+
+async function readAudio(req: IncomingMessage): Promise<Buffer> {
+  if (!/^audio\/(wav|wave|x-wav)\b/i.test(req.headers["content-type"] ?? "")) throw new HttpError(415, "Send 16-bit PCM WAV");
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_VOICE_BYTES) throw new HttpError(413, "Recording too long");
+    chunks.push(chunk as Buffer);
+  }
+  const wav = Buffer.concat(chunks);
+  if (wav.length < 44 || wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE") throw new HttpError(400, "Not a WAV file");
+  return wav;
+}
+
+/** Any device that may talk to Alfred may talk to it out loud. */
+async function voiceRoute(voice: Transcriber | undefined, req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+  if (!voice) throw new HttpError(404, "Not found");
+  if (req.method === "GET" && path === "/api/voice") {
+    const why = await voice.unavailable();
+    return send(res, 200, { available: !why, reason: why, loaded: voice.loaded });
+  }
+  if (req.method === "POST" && path === "/api/voice/warm") {
+    await readJson(req);
+    voice.warm();
+    return send(res, 200, { loaded: voice.loaded });
+  }
+  if (req.method === "POST" && path === "/api/voice/transcribe") {
+    return send(res, 200, await voice.transcribe(await readAudio(req)));
+  }
+  throw new HttpError(404, "Not found");
 }
 
 function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -494,6 +530,7 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
         req.on("close", () => remote.events.off("revoked", onRevoked));
       }
     }
+    if (path === "/api/voice" || path.startsWith("/api/voice/")) return voiceRoute(options.voice, req, res, path);
     if (path.startsWith("/api/connections") && (options.google || options.models)
       && await handleConnections({ google: options.google, models: options.models }, req, res, url, options.log)) return;
     if (path === "/api/outlets") return outletRoute(home, peer, req, res);

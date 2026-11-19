@@ -5,6 +5,17 @@
 > 承接：[full-duplex-voice.md](full-duplex-voice.md)（实时语音对话，另一件事，见第 1 节）、[remote-access.md](remote-access.md)（手机走 Tailscale Serve 的 PWA）、[../design/dev-mode.md](../design/dev-mode.md)（开发会话、权限模式）。
 > 标记：**【事实】** 读代码、文档核实过；**【建议】** 本文的提案；**【待定】** 见第 7 节。
 
+## 实现状态（2026-11-19）
+
+已做第一版「听写」：
+
+- **麦克风按钮放在 6 处跟 Alfred 说话的地方**：Alfred 面板的输入框（日常对话，手机也是它）、开发页新会话的输入框、Alfred 提问时的「自己写回答」、收件箱里「改一下」提议、自动化的「要做什么」、⌘K 面板。
+- 点一下开始，再点一下结束，Esc 丢掉；说完的文字插进输入框，看过再发，不会自动发出去。录音中按钮变红，显示时长，按钮外圈随音量变化。
+- **识别在主节点上做**：`POST /api/voice/transcribe`（16kHz 单声道 WAV）。开始录音时前端顺手调一次 `POST /api/voice/warm`，模型一边录一边加载；闲置 10 分钟卸载。模型是 Qwen3-ASR 0.6B（第 6.1 节），通过 `uv` 跑 `packages/server/voice/transcribe.py`。配对过的手机也能用。
+- 代码：`packages/server/src/voice.ts`、`packages/ui/src/voice/`；测试 `packages/server/test/voice.test.ts`。
+
+还没做：快说（全局快捷键、长按形象）、词表、识别后的整理、形象的 `listen` 状态、打包时带上 Python 和模型。
+
 ## 0. 结论
 
 1. **先做「听写」，不做「实时对话」。** 按住（或点一下）说话，松开后整段转成文字。这覆盖了「跟 Alfred 说一声就建待办」，因为建待办是 agent 已经会做的事，语音只是换了一种输入。全双工实时对话照 full-duplex-voice.md 以后做，到时候复用这里的麦克风、形象状态和权限。

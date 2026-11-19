@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import type { Conversation } from "@alfred/protocol";
 import { t } from "../i18n/index.ts";
 import { Icon, type IconName } from "./icons.tsx";
+import { MicButton } from "../voice/MicButton.tsx";
+import { appendDictation } from "../voice/wav.ts";
 import type { PageDef } from "./pages.tsx";
 
 interface Item { id: string; label: string; icon: IconName; hint?: string; run(): void }
@@ -56,9 +58,12 @@ export function Palette({ pages, conversations, actions, onPage, onSelect, onAsk
   return (
     <div className="palette" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="pal" role="dialog" aria-modal="true" aria-label={t("pal.label")}>
-        <input ref={input} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKey}
-          placeholder={t("pal.placeholder")} aria-label={t("pal.label")}
-          role="combobox" aria-expanded="true" aria-controls="palette-list" aria-activedescendant={items[index] ? `pal-${index}` : undefined} />
+        <span className="with-mic pal-field">
+          <input ref={input} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKey}
+            placeholder={t("pal.placeholder")} aria-label={t("pal.label")}
+            role="combobox" aria-expanded="true" aria-controls="palette-list" aria-activedescendant={items[index] ? `pal-${index}` : undefined} />
+          <MicButton className="small" onText={(words) => { setQuery((now) => appendDictation(now, words)); input.current?.focus(); }} />
+        </span>
         <ul id="palette-list" role="listbox">
           {items.map((item, n) => (
             <li key={item.id}>

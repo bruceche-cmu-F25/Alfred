@@ -3,6 +3,8 @@ import type { StateResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { desktop } from "./desktop.ts";
 import { Linked } from "./Linked.tsx";
+import { MicButton } from "./voice/MicButton.tsx";
+import { appendDictation } from "./voice/wav.ts";
 import { inboxItems, kindColour, kindName, KINDS, type InboxItem, type InboxKind } from "./shell/inbox.ts";
 import { when } from "./shell/Nav.tsx";
 import { intlLocale, t } from "./i18n/index.ts";
@@ -69,7 +71,10 @@ function Detail({ item, onDone, onOpenConversation, conversationTitle }: {
             </>
           ) : revising ? (
             <form className="revise" onSubmit={(event) => { event.preventDefault(); if (text.trim()) act(() => api.revise(proposal.id, text.trim()).then(() => t("inbox.revised"))); }}>
-              <textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} rows={2} maxLength={1000} placeholder={t("inbox.revisePlaceholder")} aria-label={t("inbox.reviseLabel")} />
+              <span className="with-mic">
+                <textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} rows={2} maxLength={1000} placeholder={t("inbox.revisePlaceholder")} aria-label={t("inbox.reviseLabel")} />
+                <MicButton className="small" disabled={busy} onText={(words) => setText((now) => appendDictation(now, words))} />
+              </span>
               <div className="inbox-actions">
                 <button type="submit" disabled={busy || !text.trim()}>{t("inbox.reviseSend")}</button>
                 <button type="button" className="ghost" disabled={busy} onClick={() => setRevising(false)}>{t("inbox.reviseCancel")}</button>

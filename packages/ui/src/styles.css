@@ -707,3 +707,25 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 
 /* A proposal step with more than a line to read (an email's whole text). */
 .step-detail { margin: 6px 0 2px; max-height: 320px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--wash); color: var(--copy); font: .8125rem/1.6 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Voice: the microphone beside every place you talk to Alfred (voice/MicButton.tsx). */
+.mic { position: relative; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.mic-button { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; color: var(--muted); background: none; transition: background .15s, color .15s, box-shadow .08s linear; }
+.mic-button:hover:not(:disabled) { color: var(--ink); background: color-mix(in oklab, var(--field), var(--ink) 7%); }
+.mic[data-state="starting"] .mic-button { color: var(--bad); }
+.mic[data-state="recording"] .mic-button { color: #fff; background: var(--bad); box-shadow: 0 0 0 calc(2px + var(--level, 0) * 7px) color-mix(in oklab, var(--bad) 22%, transparent); }
+.mic[data-state="transcribing"] .mic-button { color: var(--accent); }
+.mic-stop { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+.mic-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: mic-spin .8s linear infinite; }
+@keyframes mic-spin { to { transform: rotate(360deg); } }
+.mic-time { font: 12px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--bad); }
+.mic-error { position: absolute; z-index: 20; bottom: calc(100% + 8px); right: 0; width: max-content; max-width: min(280px, 80vw); padding: 7px 10px; border-radius: 10px; font-size: 12.5px; line-height: 1.4; color: var(--bg); background: var(--ink); box-shadow: 0 6px 20px oklch(0 0 0 / .15); }
+.mic.small .mic-button { width: 28px; height: 28px; }
+.mic.small svg { width: 16px; height: 16px; }
+/* A field with a microphone inside it (one-line answers, the palette, revise boxes). */
+.with-mic { position: relative; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.with-mic > input, .with-mic > textarea { flex: 1; min-width: 0; }
+@media (prefers-reduced-motion: reduce) { .mic-spin { animation-duration: 2.4s; } .mic-button { transition: none; } }
+.with-mic > textarea + .mic { align-self: flex-end; margin-bottom: 3px; }
+.pal-field { border-bottom: 1px solid var(--line-soft); padding-right: 12px; }
+.pal .pal-field input { border-bottom: 0; }

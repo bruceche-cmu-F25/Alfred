@@ -120,6 +120,17 @@ export const zh = {
   "composer.continue": "接着说…",
   "composer.working": "它正在办，你说的会直接加进去…",
   "composer.send": "发送",
+  "voice.start": "用说的",
+  "voice.starting": "正在打开麦克风…",
+  "voice.stop": "说完了，转成文字",
+  "voice.working": "正在转成文字…",
+  "voice.escCancels": "Esc 取消",
+  "voice.denied": "麦克风没打开：请在浏览器或系统设置里允许 Alfred 用麦克风",
+  "voice.noMic": "没找到麦克风",
+  "voice.unavailable": "这台 Alfred 还听不了：{reason}",
+  "voice.noServer": "主节点没开语音",
+  "voice.failed": "没转成文字，再说一次？",
+  "voice.nothing": "没听到说话",
 
   // Receipts: what a run actually wrote
   "rcpt.added": "添加了待办「{title}」",

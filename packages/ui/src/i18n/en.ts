@@ -121,6 +121,17 @@ export const en: Record<keyof typeof zh, string> = {
   "composer.continue": "Go on…",
   "composer.working": "It's working on this; what you say goes straight in…",
   "composer.send": "Send",
+  "voice.start": "Say it",
+  "voice.starting": "Opening the microphone…",
+  "voice.stop": "Done — turn it into text",
+  "voice.working": "Turning it into text…",
+  "voice.escCancels": "Esc to cancel",
+  "voice.denied": "The microphone is off: allow Alfred to use it in your browser or system settings",
+  "voice.noMic": "No microphone found",
+  "voice.unavailable": "This Alfred can't listen yet: {reason}",
+  "voice.noServer": "the home node has no voice",
+  "voice.failed": "Couldn't make that into text. Say it again?",
+  "voice.nothing": "Didn't hear anything",
 
   // Receipts: what a run actually wrote
   "rcpt.added": "Added the todo “{title}”",

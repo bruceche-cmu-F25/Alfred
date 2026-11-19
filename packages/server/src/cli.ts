@@ -15,6 +15,7 @@ import { googleService } from "./google-service.ts";
 import { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 import { openHome } from "./home.ts";
 import { createHttpServer, createIngressServer } from "./http.ts";
+import { Transcriber } from "./voice.ts";
 import { RemoteAccess } from "./remote.ts";
 import { PushService } from "./push.ts";
 import { cliRunner, findTailscale, Tailscale } from "./tailscale.ts";
@@ -75,8 +76,10 @@ if (command === "serve") {
   remote.events.on("revoked", (id) => { push.unsubscribe(id); home.outlets.forget(id); });
   // The phones' notifications: one more outlet the home node's attention can hand a notice to.
   home.reach(() => push.reaches());
-  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, remote, push });
-  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, models, remote, push });
+  // Speech to text for every device; the model loads when someone starts talking.
+  const voice = new Transcriber({ log });
+  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, remote, push, voice });
+  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, models, remote, push, voice });
   server.on("error", (error: NodeJS.ErrnoException) => {
     void engine.close();
     home.close();
@@ -96,6 +99,7 @@ if (command === "serve") {
   });
   ingress.on("error", (error: NodeJS.ErrnoException) => log(`ingress port ${ingressPort} unavailable (${error.code ?? error.message}); other devices cannot connect`));
   const stop = async () => {
+    voice.close();
     google.close();
     models.close();
     server.close();
