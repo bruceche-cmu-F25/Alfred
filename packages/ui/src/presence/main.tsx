@@ -7,7 +7,7 @@ import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AwayDigest, Notice } from "@alfred/protocol";
 import { desktop } from "../desktop.ts";
-import { createSky, type SkyState } from "../entity/sky.js";
+import { createFigure, type Figure, type FigureState } from "../entity/tesseract.js";
 import { useAlfred } from "../useAlfred.ts";
 import { welcomeLines } from "../welcome.ts";
 import "./presence.css";
@@ -18,9 +18,19 @@ const BUSY = new Set(["queued", "running", "cancelling"]);
 function Presence() {
   const { state } = useAlfred();
   const [welcome, setWelcome] = useState<Notice | null>(null);
-  const sky = useRef<ReturnType<typeof createSky> | null>(null);
+  const svg = useRef<SVGSVGElement>(null);
+  const figure = useRef<Figure | null>(null);
 
-  useEffect(() => { sky.current = createSky(); }, []);
+  // The figure follows the system's light or dark appearance, like the bubble.
+  useEffect(() => {
+    if (!svg.current) return;
+    const dark = matchMedia("(prefers-color-scheme: dark)");
+    const live = createFigure(svg.current, { width: 4.6, dark: dark.matches });
+    figure.current = live;
+    const follow = () => live.setDark(dark.matches);
+    dark.addEventListener("change", follow);
+    return () => { dark.removeEventListener("change", follow); live.destroy(); figure.current = null; };
+  }, []);
   useEffect(() => desktop?.onWelcome((notice) => setWelcome(notice)), []);
 
   const close = (opened: boolean) => {
@@ -42,8 +52,9 @@ function Presence() {
 
   const working = state?.runs.some((run) => BUSY.has(run.state)) ?? false;
   const waiting = state?.notices.some((notice) => notice.kind !== "welcome") ?? false;
-  const mood: SkyState = welcome || waiting ? "notice" : working ? "working" : "idle";
-  useEffect(() => { sky.current?.setState(mood); }, [mood]);
+  // Greeting when you come back, amber when something waits for you, the turning nut while it works.
+  const mood: FigureState = welcome ? "hello" : waiting ? "notice" : working ? "work" : "rest";
+  useEffect(() => { figure.current?.setState(mood); }, [mood]);
 
   const lines = welcome ? welcomeLines(welcome.payload as unknown as AwayDigest, desktop?.userName ?? null) : null;
   const label = working ? "Alfred 正在办事" : waiting ? "Alfred 有事等你看" : "Alfred";
@@ -61,7 +72,7 @@ function Presence() {
         </div>
       )}
       <button type="button" className="figure" aria-label={`${label}。点按打开主窗口`} title={label} onClick={() => desktop?.toggleMain()} {...hover}>
-        <canvas data-sky aria-hidden="true" />
+        <svg ref={svg} viewBox="0 0 120 120" aria-hidden="true" />
       </button>
     </div>
   );

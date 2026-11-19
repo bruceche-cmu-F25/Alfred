@@ -74,8 +74,11 @@ try {
   assert.ok(launchdLoaded(), "launchd agent loaded");
   assert.ok(existsSync(plist), "plist written");
   ok(`launchd agent ${label} is loaded and answers on :${PORT}`);
+  // Alfred's panel may have been left closed: open it from the floating button.
+  await main.waitForSelector(".composer textarea, .fab");
+  if (await main.$(".fab")) await main.click(".fab");
   await main.waitForSelector(".composer textarea");
-  await figure.waitForSelector(".figure canvas");
+  await figure.waitForSelector(".figure svg line");
   await main.screenshot({ path: join(shots, "main.png") });
   await figure.screenshot({ path: join(shots, "figure.png") });
   ok("main window and the figure window are up");

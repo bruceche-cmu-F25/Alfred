@@ -2,8 +2,8 @@
  * retry after a dropped connection can never do the same thing twice.
  */
 import type {
-  Conversation, ConversationDetail, CoreEvent, LiveUpdate, ModelsResponse, Notice, OpResponse, Run, StateResponse, SubmitRunResponse,
-  ThinkingLevel,
+  Conversation, ConversationDetail, CoreEvent, LiveUpdate, ModelsResponse, Notice, OpResponse, ProposalResponse, Run, StateResponse,
+  SubmitRunResponse, ThinkingLevel,
 } from "@alfred/protocol";
 import "./desktop.ts";
 
@@ -75,6 +75,10 @@ export const api = {
   claim: (id: string) => post<Notice>(`/api/notices/${id}/claim`, { client: deviceId }),
   present: (id: string) => post<Notice>(`/api/notices/${id}/present`, { client: deviceId }),
   acknowledge: (id: string) => post<Notice>(`/api/notices/${id}/acknowledge`, {}),
+  /** The user's decision on a proposal. A retry with the same request id gets the same answer. */
+  accept: (id: string, requestId = newRequestId()) => post<ProposalResponse>(`/api/proposals/${id}/accept`, { requestId }),
+  decline: (id: string) => post<ProposalResponse>(`/api/proposals/${id}/decline`, { requestId: newRequestId() }),
+  revise: (id: string, text: string) => post<ProposalResponse>(`/api/proposals/${id}/revise`, { requestId: newRequestId(), text }),
 };
 
 export type Connection = "connecting" | "live" | "reconnecting";

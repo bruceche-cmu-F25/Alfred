@@ -17,6 +17,7 @@ export function describeReceipt(event: CoreEvent): string {
       return `修改了${title}${fields.length ? `的${[...new Set(fields)].join("、")}` : ""}`;
     }
     case "todo.imported": return `导入了 ${String(event.payload.imported)} 条待办`;
+    case "proposal.opened": return `提议：${title}，在通知里等你决定`;
     default: return event.kind;
   }
 }

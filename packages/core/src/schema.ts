@@ -9,6 +9,7 @@ export const RUN_STATES = [
 ] as const;
 export const NOTICE_STATES = ["pending", "claimed", "presented", "acknowledged", "expired"] as const;
 export const ACTORS = ["user", "alfred", "system"] as const;
+export const PROPOSAL_STATES = ["open", "executed", "declined", "stale", "failed", "superseded", "expired"] as const;
 
 const list = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
 const object = (column: string) => `json_valid(${column}) AND json_type(${column}) = 'object'`;
@@ -95,5 +96,27 @@ ALTER TABLE core_runs ADD COLUMN request TEXT CHECK (request IS NULL OR (json_va
   sql: `
 ALTER TABLE core_conversations ADD COLUMN model TEXT CHECK (model IS NULL OR (length(model) BETWEEN 3 AND 200 AND instr(model, '/') > 1));
 ALTER TABLE core_conversations ADD COLUMN thinking TEXT CHECK (thinking IS NULL OR thinking IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'));
+`,
+}, {
+  // Changes Alfred prepares that wait for the user's yes (proposals.ts).
+  id: "core:4",
+  sql: `
+CREATE TABLE core_proposals (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  state TEXT NOT NULL CHECK (state IN (${list(PROPOSAL_STATES)})),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+  summary TEXT NOT NULL CHECK (length(summary) <= 2000),
+  steps TEXT NOT NULL CHECK (json_valid(steps) AND json_type(steps) = 'array' AND json_array_length(steps) BETWEEN 1 AND 20),
+  subjects TEXT NOT NULL CHECK (json_valid(subjects) AND json_type(subjects) = 'array'),
+  opened_seq INTEGER NOT NULL,
+  run_id TEXT,
+  conversation_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  decided_at TEXT,
+  outcome TEXT CHECK (outcome IS NULL OR (json_valid(outcome) AND json_type(outcome) = 'object'))
+) STRICT;
+CREATE INDEX core_proposals_state ON core_proposals(state, created_at);
 `,
 }];

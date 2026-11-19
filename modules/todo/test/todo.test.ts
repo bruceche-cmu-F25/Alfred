@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { CORE_MIGRATIONS, listEvents, openWorld, type World } from "@alfred/core";
-import { invokeOp, moduleMigrations, OpInputError, runTools } from "@alfred/module-kit";
+import { acceptProposal, CORE_MIGRATIONS, listEvents, listOpenProposals, openWorld, withCoreContext, type World } from "@alfred/core";
+import { applyStep, assistantTools, invokeOp, moduleMigrations, OpInputError, runTools } from "@alfred/module-kit";
 import {
-  addTodo, compareTodos, completeTodo, importTodos, listTodos, readRobinTodos, TodoConflictError, todoModule,
-  todoRevision, updateTodo, type Todo,
+  addTodo, compareTodos, completeTodo, formatTodo, importTodos, listTodos, readRobinTodos, TodoConflictError, todoModule,
+  todoRevision, updateTodo, type Todo, type TodoSnapshot,
 } from "../src/index.ts";
 
 function world(): World {
@@ -99,4 +99,70 @@ test("an import keeps Robin's records exactly, reads Robin without writing, and 
   const drift = compareTodos(w, todos);
   assert.deepEqual([drift.same, drift.differ, drift.missing, drift.extra.length], [1, ["a1"], [], 1]);
   assert.equal(listEvents(w).events.filter((event) => event.kind === "todo.imported").length, 1);
+});
+
+test("a todo can belong to an area; unknown areas are refused and an empty one clears it", () => {
+  const w = world();
+  const { todo } = addTodo(w, { title: "Renew passport", area: "travel" });
+  assert.equal(todo.area, "travel");
+  assert.match(formatTodo(todo, "2026-11-18"), /\[travel: 出行\]/);
+  assert.throws(() => addTodo(w, { title: "x", area: "space" }), /area must be one of/);
+  assert.throws(() => updateTodo(w, { id: todo.id }, { area: "space" }), /area must be one of/);
+  updateTodo(w, { id: todo.id }, { area: "" });
+  assert.equal(listTodos(w)[0].area, undefined);
+  const changes = listEvents(w).events.at(-1)!.payload.changes as Record<string, unknown>;
+  assert.deepEqual(changes.area, ["travel", null]);
+});
+
+test("the snapshot says when Alfred made the latest change to a todo, from the event log", () => {
+  const w = world();
+  const mine = addTodo(w, { title: "Mine" }).todo;
+  const its = withCoreContext({ actor: "alfred" }, () => addTodo(w, { title: "Alfred's" }).todo);
+  const snapshot = () => todoModule.snapshot!(w) as TodoSnapshot;
+  const by = (id: string) => snapshot().todos.find((todo) => todo.id === id)!.changedBy;
+  assert.equal(by(mine.id), undefined);
+  assert.equal(by(its.id)?.kind, "todo.added");
+  withCoreContext({ actor: "alfred" }, () => updateTodo(w, { id: mine.id }, { area: "work" }));
+  assert.equal(by(mine.id)?.kind, "todo.updated");
+  // The user's own later change is the latest: no longer shown as Alfred's.
+  withCoreContext({ actor: "user" }, () => updateTodo(w, { id: mine.id }, { title: "Mine, renamed" }));
+  assert.equal(by(mine.id), undefined);
+});
+
+
+test("a run proposes todo changes; accepting runs them pinned to the todos it saw", () => {
+  const w = world();
+  const { todo } = addTodo(w, { title: "Hand in report", due: "2026-11-01" });
+  addTodo(w, { title: "Old idea" });
+  const propose = assistantTools(w, [todoModule]).find((tool) => tool.name === "propose")!;
+  const said = withCoreContext({ actor: "alfred" }, () => propose.execute({
+    title: "清掉两条？", summary: "都过了很久了。",
+    calls: [{ tool: "todo_delete", params: { title: "report" } }, { tool: "todo_complete", params: { title: "Old idea" } }],
+  }, new AbortController().signal)) as string;
+  assert.match(said, /Proposed "清掉两条？" \(2 steps\)/);
+  const [proposal] = listOpenProposals(w);
+  assert.deepEqual(proposal.steps.map((step) => step.op), ["todo.delete", "todo.complete"]);
+  assert.deepEqual(proposal.steps.map((step) => step.preview), ["永久删除待办「Hand in report」", "完成待办「Old idea」"], "previews name the todos found, not the search text");
+  assert.equal((proposal.steps[0].input as { id: string }).id, todo.id, "the title was resolved to an id when proposed");
+  assert.deepEqual(proposal.subjects.length, 2);
+  assert.equal(listTodos(w).length, 2, "proposing changes nothing");
+
+  const done = acceptProposal(w, proposal.id, (step) => applyStep(w, [todoModule], step));
+  assert.equal(done.state, "executed");
+  assert.deepEqual(listTodos(w, { includeDone: true }).map((item) => [item.title, item.done]), [["Old idea", true]]);
+});
+
+test("editing a todo after Alfred proposed a change to it makes the proposal stale", () => {
+  const w = world();
+  const { todo } = addTodo(w, { title: "Call the bank" });
+  const propose = assistantTools(w, [todoModule]).find((tool) => tool.name === "propose")!;
+  propose.execute({ title: "删掉？", summary: "", calls: [{ tool: "todo_delete", params: { id: todo.id } }] }, new AbortController().signal);
+  updateTodo(w, { id: todo.id }, { title: "Call the bank about the card" });
+  const [proposal] = listOpenProposals(w);
+  assert.equal(proposal.stale, true);
+  assert.equal(acceptProposal(w, proposal.id, (step) => applyStep(w, [todoModule], step)).state, "stale");
+  assert.equal(listTodos(w).length, 1);
+  // A bad call is refused before anything is proposed.
+  const refused = propose.execute({ title: "x", summary: "", calls: [{ tool: "todo_delete", params: { title: "nothing like this" } }] }, new AbortController().signal);
+  assert.match(String(refused), /No todo matching/);
 });

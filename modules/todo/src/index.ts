@@ -1,7 +1,7 @@
-import { localDate, type World } from "@alfred/core";
+import { AREAS, areaName, lastChanges, localDate, type World } from "@alfred/core";
 import { defineModule, defineOp, defineTool, Type } from "@alfred/module-kit";
 import {
-  addTodo, completeTodo, deleteTodo, formatTodo, listTodos, MIGRATIONS, todoRevision, updateTodo,
+  addTodo, completeTodo, deleteTodo, formatTodo, listTodos, MIGRATIONS, resolveTodo, todoRevision, updateTodo, type Todo,
 } from "./domain.ts";
 import type { TodoSnapshot } from "./types.ts";
 
@@ -16,10 +16,19 @@ const Ref = {
 const DateField = (description: string) => Type.Optional(Type.String({ description }));
 const Status = Type.Union([Type.Literal("todo"), Type.Literal("doing"), Type.Literal("done")]);
 
+const AreaField = Type.Optional(Type.String({
+  description: `The area of life it belongs to: ${AREAS.map((area) => `${area.id} (${area.name})`).join(", ")}. An empty string removes it.`,
+}));
+
 function snapshot(world: World): TodoSnapshot {
+  // Provenance from the log: Alfred's own latest change to a todo is shown as such.
+  const changes = lastChanges(world, "todo:");
   return {
     today: localDate(),
-    todos: listTodos(world, { includeDone: true }).map((todo) => ({ ...todo, revision: todoRevision(todo) })),
+    todos: listTodos(world, { includeDone: true }).map((todo) => {
+      const last = changes.get(`todo:${todo.id}`);
+      return { ...todo, revision: todoRevision(todo), ...(last?.actor === "alfred" ? { changedBy: { actor: "alfred" as const, kind: last.kind, at: last.at } } : {}) };
+    }),
   };
 }
 
@@ -31,6 +40,13 @@ function named(world: World, params: { id?: string; title?: string }): string {
 
 function failed(result: { error: string } | object): result is { error: string } {
   return "error" in result;
+}
+
+/** For proposals: the todo a call names, pinned by id and revision, as the subject it touches. */
+function pinned(world: World, params: { id?: string; title?: string }, make: (todo: Todo, revision: string) => { op: string; input: unknown; preview: string }) {
+  const todo = resolveTodo(world, params);
+  if (failed(todo)) return todo;
+  return { ...make(todo, todoRevision(todo)), subjects: [`todo:${todo.id}`] };
 }
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -46,6 +62,7 @@ export const todoModule = defineModule({
     "A todo has a due date, never a time. Resolve relative dates (\"Friday\", \"tomorrow\") against the local date you were given.",
     "For a task spanning several days, set startDate to its first day and due to its last day: one ranged todo, not one per day.",
     "Before editing or completing a todo you have not seen in this run, call todo_list to find its id.",
+    `Set a todo's area when it is clear which part of life it belongs to (${AREAS.map((area) => area.id).join(", ")}); leave it out when unsure.`,
   ].join("\n"),
 
   ops: [
@@ -54,7 +71,7 @@ export const todoModule = defineModule({
       input: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 500 }),
         due: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
-        plannedOn: Type.Optional(Type.String()), url: Type.Optional(Type.String()),
+        plannedOn: Type.Optional(Type.String()), url: Type.Optional(Type.String()), area: Type.Optional(Type.String()),
       }),
       run: (world, input) => addTodo(world, input).todo,
     }),
@@ -65,7 +82,7 @@ export const todoModule = defineModule({
         patch: Type.Object({
           title: Type.Optional(Type.String()), done: Type.Optional(Type.Boolean()), status: Type.Optional(Status),
           due: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
-          plannedOn: Type.Optional(Type.String()), url: Type.Optional(Type.String()),
+          plannedOn: Type.Optional(Type.String()), url: Type.Optional(Type.String()), area: Type.Optional(Type.String()),
         }, { additionalProperties: false }),
       }),
       run: (world, input) => updateTodo(world, { id: input.id, revision: input.revision }, input.patch),
@@ -105,8 +122,10 @@ export const todoModule = defineModule({
         due: DateField("Due date, or last day of a multi-day task, as YYYY-MM-DD in the user's local timezone"),
         startDate: DateField("First day of a multi-day task as YYYY-MM-DD. Only with due."),
         url: Type.Optional(Type.String({ description: "Link to where the task is actually done (http, https or mailto)" })),
+        area: AreaField,
       }),
       describe: (_world, params) => params.title,
+      pin: (_world, params) => ({ op: "todo.add", input: params, preview: `添加待办「${params.title}」${params.due ? `，截止 ${params.due}` : ""}` }),
       execute(world, params) {
         try {
           const { todo, open } = addTodo(world, params);
@@ -125,12 +144,26 @@ export const todoModule = defineModule({
         due: DateField("Replacement due date as YYYY-MM-DD, or an empty string to remove it"),
         startDate: DateField("Replacement first day as YYYY-MM-DD, or an empty string to remove it"),
         url: Type.Optional(Type.String({ description: "Replacement link, or an empty string to remove it" })),
+        area: AreaField,
         status: Type.Optional(Type.Union([Type.Literal("todo"), Type.Literal("doing")], { description: "todo or doing (in progress). Use todo_complete to finish." })),
       }),
       describe: (world, params) => named(world, params),
+      pin: (world, params) => {
+        const { id, title, newTitle, ...rest } = params;
+        const patch = Object.fromEntries(Object.entries({ ...rest, ...(newTitle !== undefined ? { title: newTitle } : {}) }).filter(([, value]) => value !== undefined));
+        if (!Object.keys(patch).length) return { error: "Nothing to change." };
+        const said: string[] = [];
+        if (patch.title !== undefined) said.push(`改名为「${String(patch.title)}」`);
+        if (patch.due !== undefined) said.push(patch.due ? `截止日改为 ${String(patch.due)}` : "去掉截止日");
+        if (patch.startDate !== undefined) said.push(patch.startDate ? `开始日改为 ${String(patch.startDate)}` : "去掉开始日");
+        if (patch.area !== undefined) said.push(patch.area ? `领域改为${areaName(String(patch.area)) ?? patch.area}` : "去掉领域");
+        if (patch.status !== undefined) said.push(patch.status === "doing" ? "标成进行中" : "标回未开始");
+        if (patch.url !== undefined) said.push(patch.url ? "换链接" : "去掉链接");
+        return pinned(world, { id, title }, (todo, revision) => ({ op: "todo.update", input: { id: todo.id, revision, patch }, preview: `把「${todo.title}」${said.join("、")}` }));
+      },
       execute(world, params) {
         const { id, title, newTitle, ...rest } = params;
-        if (newTitle === undefined && Object.values(rest).every((value) => value === undefined)) return "Provide a newTitle, due, startDate, url or status to update.";
+        if (newTitle === undefined && Object.values(rest).every((value) => value === undefined)) return "Provide a newTitle, due, startDate, url, area or status to update.";
         try {
           const result = updateTodo(world, { id, title }, { ...rest, ...(newTitle !== undefined ? { title: newTitle } : {}) });
           return failed(result) ? result.error : `Updated ${formatTodo(result)}`;
@@ -144,6 +177,7 @@ export const todoModule = defineModule({
       description: "Mark a todo as done. Identify it by id or by a distinctive part of its title.",
       parameters: Type.Object(Ref),
       describe: (world, params) => named(world, params),
+      pin: (world, params) => pinned(world, params, (todo, revision) => ({ op: "todo.complete", input: { id: todo.id, revision }, preview: `完成待办「${todo.title}」` })),
       execute(world, params) {
         const result = completeTodo(world, params);
         if (failed(result)) return result.error;
@@ -156,6 +190,7 @@ export const todoModule = defineModule({
       parameters: Type.Object(Ref),
       describe: (world, params) => named(world, params),
       confirm: (world, params) => `永久删除待办「${named(world, params)}」？删除后不能恢复。`,
+      pin: (world, params) => pinned(world, params, (todo, revision) => ({ op: "todo.delete", input: { id: todo.id, revision }, preview: `永久删除待办「${todo.title}」` })),
       execute(world, params) {
         const result = deleteTodo(world, params);
         return failed(result) ? result.error : `Deleted "${result.title}".`;

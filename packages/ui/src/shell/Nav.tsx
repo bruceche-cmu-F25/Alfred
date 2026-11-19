@@ -1,0 +1,114 @@
+import type { Conversation, StateResponse } from "@alfred/protocol";
+import { api, type Connection } from "../api.ts";
+import { Icon } from "./icons.tsx";
+import { moduleOf, type PageDef } from "./pages.tsx";
+import type { NavMode } from "./layout.ts";
+
+const CONNECTION = { connecting: "连接中", live: "在线", reconnecting: "重新连接中" } as const;
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+export const MOD = isMac ? "⌘" : "Ctrl+";
+
+/** "08:20" today, "昨天", or "11月16日". */
+export function when(iso: string): string {
+  const at = new Date(iso), now = new Date();
+  const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((day(now) - day(at)) / 86_400_000);
+  if (days === 0) return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  if (days === 1) return "昨天";
+  return `${at.getMonth() + 1}月${at.getDate()}日`;
+}
+
+export interface NavProps {
+  state: StateResponse;
+  pages: PageDef[];
+  page: string;
+  mode: NavMode;
+  selected: string | null;
+  connection: Connection;
+  onPage(key: string): void;
+  onSelect(id: string | null): void;
+  onFold(): void;
+  onPalette(): void;
+  /** Rail only: the conversations live in Alfred's panel. */
+  onConversations(): void;
+  /** Shown as a sheet (phone): the top button closes it instead of folding. */
+  sheet?: boolean;
+}
+
+/** The sidebar: the workspace's pages, then the conversations, like a session list. Folds to a rail of icons. */
+export function Nav({ state, pages, page, mode, selected, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet }: NavProps) {
+  const rename = (conversation: Conversation) => {
+    const title = window.prompt("对话名称", conversation.title);
+    if (title && title.trim() && title.trim() !== conversation.title) api.updateConversation(conversation.id, { title }).catch(() => {});
+  };
+  const archive = (conversation: Conversation) => {
+    api.updateConversation(conversation.id, { archived: true }).then(() => { if (selected === conversation.id) onSelect(null); }).catch(() => {});
+  };
+  const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0);
+  const groups: Array<[string, PageDef[]]> = [["工作台", pages.filter((item) => item.group === "work")], ["模块", pages.filter((item) => item.group === "modules")]];
+
+  return (
+    <nav className="nav" data-mode={mode} aria-label="工作台">
+      <div className="nav-top">
+        <button type="button" className="find" onClick={onPalette} title={`搜索、跳转，或直接问 Alfred（${MOD}K）`}>
+          <Icon name="search" /><span>搜索，或问 Alfred</span><kbd>{MOD}K</kbd>
+        </button>
+        {sheet ? (
+          <button type="button" className="icon-btn" onClick={onFold} aria-label="关闭" title="关闭"><Icon name="close" /></button>
+        ) : (
+          <button type="button" className="icon-btn" onClick={onFold} aria-label={mode === "full" ? "收成图标栏" : "展开侧栏"} title={`${mode === "full" ? "收成图标栏" : "展开侧栏"}（${MOD}\\）`}>
+            <Icon name="rail" />
+          </button>
+        )}
+      </div>
+
+      {groups.map(([label, items]) => items.length > 0 && (
+        <div className="nav-group" key={label}>
+          <p className="nav-label">{label}</p>
+          {items.map((item) => {
+            const count = item.badge?.(state.modules[moduleOf(item)], state);
+            return (
+              <button type="button" key={item.key} className="nav-item" data-k={item.k} aria-current={page === item.key ? "page" : undefined}
+                onClick={() => onPage(item.key)} title={mode === "rail" ? item.title : undefined}>
+                <Icon name={item.icon} /><span className="label">{item.title}</span>
+                {count ? <span className="count">{count}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+
+      <div className="nav-spacer" />
+
+      <div className="conv-head">
+        <span>对话</span>
+        <button type="button" className="icon-btn" aria-label="新对话" title="新对话" onClick={() => onSelect(null)}><Icon name="plus" /></button>
+      </div>
+      <ul className="conv-list">
+        {state.conversations.length === 0 && <li className="quiet small empty-list">还没有对话。</li>}
+        {state.conversations.map((conversation) => (
+          <li key={conversation.id}>
+            <button type="button" className="conv" aria-current={selected === conversation.id ? "true" : undefined}
+              onClick={() => onSelect(conversation.id)} onDoubleClick={() => rename(conversation)} title={conversation.lastGoal ?? conversation.title}>
+              <span className="st" aria-hidden="true">
+                {conversation.attention > 0 ? <span className="mark" data-k="warm" /> : conversation.busy > 0 ? <span className="pulse" /> : <span className="mark dim" />}
+              </span>
+              <span className="ct">{conversation.title}</span>
+              {conversation.attention > 0
+                ? <span className="badge attention" aria-label={`${conversation.attention} 件需要你`}>{conversation.attention}</span>
+                : <span className="time">{when(conversation.updatedAt)}</span>}
+            </button>
+            <button type="button" className="archive" aria-label={`归档「${conversation.title}」`} onClick={() => archive(conversation)}>
+              <Icon name="archive" />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="nav-item conv-rail" onClick={onConversations} title="对话" aria-label="对话">
+        <Icon name="chat" />{waiting ? <span className="count">{waiting}</span> : null}
+      </button>
+
+      <p className="connection" data-state={connection} title={CONNECTION[connection]}><span aria-hidden="true" /><b>{CONNECTION[connection]}</b></p>
+    </nav>
+  );
+}

@@ -242,3 +242,49 @@ test("conversations over HTTP: a run asks, the device answers, the reply streams
     home.close();
   }
 });
+
+test("proposals over HTTP: a run proposes, the user accepts once, or asks for a change", async () => {
+  const proposing: EnginePort = {
+    async submit(request) {
+      const propose = request.tools.find((tool) => tool.name === "propose")!;
+      const said = await propose.execute({ title: "删掉「Old」？", summary: "很久没动了。", calls: [{ tool: "todo_delete", params: { title: "Old" } }] }, new AbortController().signal);
+      return { reply: said };
+    },
+  };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: proposing, modules: [todoModule] });
+  const { server, base } = await start(home);
+  try {
+    await post(base, "/api/ops/todo.add", { requestId: "t1", input: { title: "Old" } });
+    await post(base, "/api/runs", { requestId: "r1", goal: "tidy up" });
+    await home.idle();
+    const state = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    assert.equal(state.proposals.length, 1);
+    const [proposal] = state.proposals;
+    assert.equal(proposal.steps[0].op, "todo.delete");
+    assert.equal((state.modules.todo as TodoSnapshot).todos.length, 1, "nothing changed until the user says yes");
+
+    const accept = () => post(base, `/api/proposals/${proposal.id}/accept`, { requestId: "yes-1" });
+    const first = await (await accept()).json() as { proposal: { state: string }; replayed: boolean };
+    assert.deepEqual([first.proposal.state, first.replayed], ["executed", false]);
+    const again = await (await accept()).json() as { replayed: boolean };
+    assert.equal(again.replayed, true);
+    const after = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    assert.equal((after.modules.todo as TodoSnapshot).todos.length, 0);
+    assert.equal(after.proposals.length, 0);
+    assert.equal((await post(base, `/api/proposals/${proposal.id}/decline`, { requestId: "no-1" })).status, 409);
+
+    // Asking for a change: this one is superseded and a new run in the same conversation revises it.
+    await post(base, "/api/ops/todo.add", { requestId: "t2", input: { title: "Old" } });
+    await post(base, "/api/runs", { requestId: "r2", goal: "tidy up again", conversationId: proposal.conversationId });
+    await home.idle();
+    const second = ((await (await fetch(`${base}/api/state`)).json()) as StateResponse).proposals[0];
+    const revised = await (await post(base, `/api/proposals/${second.id}/revise`, { requestId: "change-1", text: "先别删，改成完成" })).json() as { proposal: { state: string }; run: { conversationId: string; goal: string } };
+    assert.equal(revised.proposal.state, "superseded");
+    assert.equal(revised.run.conversationId, second.conversationId);
+    assert.match(revised.run.goal, /先别删，改成完成/);
+    await home.idle();
+  } finally {
+    server.close(); server.closeAllConnections();
+    home.close();
+  }
+});

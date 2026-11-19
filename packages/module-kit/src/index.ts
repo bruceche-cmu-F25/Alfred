@@ -6,7 +6,7 @@
  * trusting its code. Third parties extend Alfred through MCP and skills instead.
  */
 import {
-  runCommand, withCoreContext, type Actor, type Migration, type RunTool, type World,
+  coreContext, getRun, openProposal, runCommand, withCoreContext, type Actor, type Migration, type ProposalStep, type RunTool, type World,
 } from "@alfred/core";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -42,6 +42,12 @@ export interface ModuleTool<P extends TSchema = TSchema> {
   describe?(world: World, params: Static<P>): string;
   /** For `irreversible` tools: the question that asks the user to allow this one call. */
   confirm?(world: World, params: Static<P>): string;
+  /**
+   * For tools a run may propose instead of doing: the device operation this call stands for, pinned to the exact
+   * records it names now (ids and revisions, not a title to search later), and the subjects it touches
+   * (`todo:<id>`), so the proposal goes stale if they change. Tools without it cannot be proposed.
+   */
+  pin?(world: World, params: Static<P>): { op: string; input: unknown; subjects?: string[]; preview?: string } | { error: string };
 }
 
 /** A view a device can open for a module: a pane beside the conversation, or a page. */
@@ -141,10 +147,20 @@ export function runTools(
   });
 }
 
-/** Tools every run gets from the harness itself: asking the user, and
+/** Runs one proposal step as the device operation it is, with the same input checks as a click. Throws on failure
+ * (including an operation that answers with `{ error }`), so the proposal's steps roll back together. */
+export function applyStep(world: World, modules: readonly AlfredModule[], step: ProposalStep): unknown {
+  const op = modules.flatMap((module) => module.ops).find((candidate) => candidate.name === step.op);
+  if (!op) throw new UnknownOpError(step.op);
+  const result = op.run(world, checked(op.input, step.input, `input for ${op.name}`));
+  if (result && typeof result === "object" && typeof (result as { error?: unknown }).error === "string") throw new Error((result as { error: string }).error);
+  return result;
+}
+
+/** Tools every run gets from the harness itself: asking the user, proposing changes for later, and
  * opening a module's view on the user's device.
  */
-export function assistantTools(modules: readonly AlfredModule[]): RunTool[] {
+export function assistantTools(world: World, modules: readonly AlfredModule[]): RunTool[] {
   const tools: RunTool[] = [{
     name: "ask_user",
     label: "Ask",
@@ -160,6 +176,55 @@ export function assistantTools(modules: readonly AlfredModule[]): RunTool[] {
       return `The user answered: ${answer}`;
     },
   }];
+  const proposable = modules.flatMap((module) => module.tools).filter((tool) => tool.pin && tool.level !== "read");
+  if (proposable.length) {
+    tools.push({
+      name: "propose",
+      label: "Propose",
+      description: [
+        "Prepare changes for the user to approve later, instead of making them now. Use it for anything the user should decide",
+        "(deleting, several changes at once, anything you are unsure they want), or when they asked you to suggest rather than do.",
+        "The user sees your title and summary in their inbox, with the exact steps, and can accept, decline or ask for a change;",
+        "accepting runs exactly these steps, once. Do not also make these changes yourself. After proposing you can finish and say what you proposed.",
+        `Tools you can propose: ${proposable.map((tool) => tool.name).join(", ")} (with the same parameters as calling them).`,
+      ].join(" "),
+      parameters: Type.Object({
+        title: Type.String({ maxLength: 120, description: "The decision as a short question in the user's language, e.g. 删掉 3 条逾期很久的待办？" }),
+        summary: Type.String({ maxLength: 1200, description: "What will change and why, briefly, in the user's language" }),
+        calls: Type.Array(Type.Object({
+          tool: Type.Union(proposable.map((tool) => Type.Literal(tool.name))),
+          params: Type.Record(Type.String(), Type.Unknown(), { description: "The tool's parameters" }),
+        }), { minItems: 1, maxItems: 20 }),
+      }) as unknown as Record<string, unknown>,
+      describe: (params) => String(params.title ?? "").slice(0, 120),
+      execute(params) {
+        const calls = Array.isArray(params.calls) ? params.calls as Array<{ tool?: unknown; params?: unknown }> : [];
+        if (!calls.length) return "Give at least one call to propose.";
+        const steps: ProposalStep[] = [];
+        const subjects: string[] = [];
+        for (const [index, call] of calls.entries()) {
+          const tool = proposable.find((candidate) => candidate.name === call.tool);
+          if (!tool) return `Call ${index + 1}: ${String(call.tool)} cannot be proposed. Use one of: ${proposable.map((candidate) => candidate.name).join(", ")}.`;
+          let parsed: unknown;
+          try { parsed = checked(tool.parameters, call.params ?? {}, `parameters for ${tool.name}`); } catch (error) { return `Call ${index + 1}: ${(error as Error).message}`; }
+          const pinned = tool.pin!(world, parsed as never);
+          if ("error" in pinned) return `Call ${index + 1}: ${pinned.error}`;
+          const op = modules.flatMap((module) => module.ops).find((candidate) => candidate.name === pinned.op);
+          if (!op) return `Call ${index + 1}: no operation ${pinned.op}.`;
+          try { checked(op.input, pinned.input, `input for ${op.name}`); } catch (error) { return `Call ${index + 1}: ${(error as Error).message}`; }
+          // What the user reads: the module's own words for the pinned step, else the tool and what it names.
+          let preview = pinned.preview ?? tool.label;
+          if (!pinned.preview) try { preview = tool.describe ? `${tool.label}：${tool.describe(world, parsed as never)}` : tool.label; } catch { /* keep the label */ }
+          steps.push({ op: pinned.op, input: pinned.input, preview });
+          subjects.push(...(pinned.subjects ?? []));
+        }
+        const run = coreContext()?.run;
+        const conversationId = run ? getRun(world, run.id).run.conversationId : null;
+        const proposal = openProposal(world, { title: String(params.title ?? ""), summary: String(params.summary ?? ""), steps, subjects, conversationId });
+        return `Proposed "${proposal.title}" (${steps.length} step${steps.length > 1 ? "s" : ""}). It waits in the user's inbox for their decision; nothing has changed yet.`;
+      },
+    });
+  }
   const views = modules.flatMap((module) => (module.views ?? []).map((view) => ({ key: `${module.id}.${view.id}`, module: module.id, view: view.id, title: view.title })));
   if (views.length) {
     tools.push({

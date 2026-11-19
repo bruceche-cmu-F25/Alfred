@@ -3,11 +3,12 @@
  * HTTP, pages, engines or any particular module.
  */
 export { openWorld, type Migration, type World } from "./world.ts";
-export { CORE_MIGRATIONS, ACTORS, RUN_STATES, NOTICE_STATES } from "./schema.ts";
+export { CORE_MIGRATIONS, ACTORS, RUN_STATES, NOTICE_STATES, PROPOSAL_STATES } from "./schema.ts";
 export { withCoreContext, withDefaultActor, coreContext, type Actor, type CoreContext } from "./context.ts";
 export { newId } from "./ids.ts";
+export { AREAS, AREA_IDS, isArea, areaName, type Area } from "./areas.ts";
 export {
-  recordDomainEvent, changedFields, listEvents, latestEventSeq, listRunReceipts, listRunActivity, RunLeaseLostError,
+  recordDomainEvent, changedFields, listEvents, latestEventSeq, lastChanges, listRunReceipts, listRunActivity, RunLeaseLostError,
   type CoreEvent, type EventInput, type EventQuery,
 } from "./events.ts";
 export {
@@ -32,3 +33,7 @@ export {
   executeNextRun, createRunDrain, localDate,
   type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext,
 } from "./executor.ts";
+export {
+  openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, ProposalStateError, PROPOSAL_TTL_MS,
+  type Proposal, type ProposalState, type ProposalStep,
+} from "./proposals.ts";

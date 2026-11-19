@@ -16,7 +16,7 @@ import type { AwayDigest, Notice, PresenceResponse, StateResponse } from "@alfre
 import { welcomeLines } from "@alfred/ui/welcome";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
-import { trayIcon } from "./icon.ts";
+import { appIcon, trayIcon } from "./icon.ts";
 
 const HOTKEY = "Alt+Space";
 const PRESENCE_SIZE = { width: 420, height: 116 };
@@ -104,7 +104,7 @@ function createMain(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1120, height: 760, minWidth: 720, minHeight: 480, show: false, title: "Alfred",
     titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 22 },
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#04060e" : "#f1f3f7",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#171613" : "#fcf9f6", // the paper theme's page colour (tokens.css)
     webPreferences: webPreferences("main"),
   });
   window.on("close", (event) => {
@@ -204,6 +204,7 @@ function notify(title: string, body: string, onClick: () => void): void {
 function resultText(notice: Notice): { title: string; body: string } {
   const goal = String(notice.payload.goal ?? "");
   if (notice.kind === "run_interrupted") return { title: "有一件事中断了", body: `「${goal}」没有办完，也没有自动重做。` };
+  if (notice.kind === "proposal") return { title: "Alfred 有个提议等你决定", body: String(notice.payload.title ?? "") };
   if (notice.kind === "run_request") {
     return { title: notice.payload.kind === "permission" ? "Alfred 需要你允许" : "Alfred 在等你回答", body: String(notice.payload.question ?? goal) };
   }
@@ -225,7 +226,7 @@ async function handleNotices(state: StateResponse): Promise<void> {
       if (notice.state === "pending" || (notice.state === "claimed" && notice.claimedBy === DEVICE)) await greet(notice);
       continue;
     }
-    if (notice.kind !== "run_result" && notice.kind !== "run_interrupted" && notice.kind !== "run_request") continue;
+    if (notice.kind !== "run_result" && notice.kind !== "run_interrupted" && notice.kind !== "run_request" && notice.kind !== "proposal") continue;
     if (notice.state !== "pending" || mainAttending) continue;
     const age = now - Date.parse(notice.createdAt);
     if (age < NOTIFY_GRACE_MS) {
@@ -242,16 +243,24 @@ async function handleNotices(state: StateResponse): Promise<void> {
   if (presented.length === 1) {
     const [notice] = presented;
     const { title, body } = resultText(notice);
-    // A question is closed by answering it, not by opening it.
-    notify(title, body, () => { if (notice.kind !== "run_request") acknowledge(notice.id); showMain({ runId: String(notice.payload.runId ?? "") }); });
+    // A question is closed by answering it, a proposal by deciding it; not by opening them.
+    const open = notice.kind === "run_request" || notice.kind === "proposal";
+    notify(title, body, () => { if (!open) acknowledge(notice.id); showMain({ runId: String(notice.payload.runId ?? "") }); });
   } else if (presented.length > 1) {
-    notify("Alfred", `有 ${presented.length} 件事等你看。`, () => { presented.filter((notice) => notice.kind !== "run_request").forEach((notice) => acknowledge(notice.id)); showMain(); });
+    notify("Alfred", `有 ${presented.length} 件事等你看。`, () => { presented.filter((notice) => notice.kind !== "run_request" && notice.kind !== "proposal").forEach((notice) => acknowledge(notice.id)); showMain(); });
   }
 }
 
 let refreshing: Promise<void> | null = null;
+/** The Dock shows how many things wait for the user (questions, interruptions), like unread messages. */
+function dockBadge(state: StateResponse): void {
+  const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0)
+    + (state.proposals ?? []).filter((proposal) => !proposal.stale).length;
+  app.dock?.setBadge(waiting ? String(waiting) : "");
+}
+
 function refresh(): Promise<void> {
-  refreshing ??= client.state().then(handleNotices).catch(() => {}).finally(() => { refreshing = null; });
+  refreshing ??= client.state().then((state) => { dockBadge(state); return handleNotices(state); }).catch(() => {}).finally(() => { refreshing = null; });
   return refreshing;
 }
 
@@ -388,6 +397,7 @@ app.whenReady().then(async () => {
   loadSettings();
   appMenu();
   wireIpc();
+  app.dock?.setIcon(appIcon());
   tray = new Tray(trayIcon());
   tray.on("click", () => tray?.popUpContextMenu());
   updateTray();

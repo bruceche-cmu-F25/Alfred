@@ -90,7 +90,7 @@ export function profiles(world: World, modules: readonly AlfredModule[]): Record
   return {
     [ASSISTANT_PROFILE]: {
       instructions: guidance ? `${PERSONA}\n\n${guidance}` : PERSONA,
-      tools: [...runTools(world, modules), ...assistantTools(modules)],
+      tools: [...runTools(world, modules), ...assistantTools(world, modules)],
     },
   };
 }

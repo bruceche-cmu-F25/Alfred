@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { AwayDigest, Notice, StateResponse } from "@alfred/protocol";
-import type { TodoSnapshot } from "@alfred/module-todo/types";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import type { AwayDigest, Notice } from "@alfred/protocol";
 import { api, deviceId } from "./api.ts";
-import { Conversation } from "./Conversation.tsx";
 import { desktop } from "./desktop.ts";
-import { Sidebar, type Place } from "./Sidebar.tsx";
-import { Todos } from "./Todos.tsx";
+import { AlfredPanel, figureState, statusLine } from "./shell/AlfredPanel.tsx";
+import { Dock } from "./shell/Dock.tsx";
+import { Figure } from "./shell/Figure.tsx";
+import { Icon } from "./shell/icons.tsx";
+import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
+import { MOD, Nav } from "./shell/Nav.tsx";
+import { availablePages, moduleOf } from "./shell/pages.tsx";
+import { Palette } from "./shell/Palette.tsx";
 import { useAlfred } from "./useAlfred.ts";
 import { welcomeLines } from "./welcome.ts";
 
@@ -32,20 +36,30 @@ function useAttention(): boolean {
   return attending;
 }
 
-/** The selected conversation lives in the address (#c=<id>), so a reload keeps it. */
-function useSelection(): [string | null, (id: string | null) => void] {
-  const read = () => new URLSearchParams(location.hash.slice(1)).get("c");
-  const [selected, setSelected] = useState<string | null>(read);
+/** The open page and conversation live in the address (#p=todo.list&c=<id>), so a reload keeps both. */
+function useRoute(): { page: string | null; selected: string | null; go(patch: { page?: string | null; selected?: string | null }): void } {
+  const read = () => {
+    const params = new URLSearchParams(location.hash.slice(1));
+    return { page: params.get("p"), selected: params.get("c") };
+  };
+  const [route, setRoute] = useState(read);
   useEffect(() => {
-    const update = () => setSelected(read());
+    const update = () => setRoute(read());
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
   }, []);
-  const select = useCallback((id: string | null) => {
-    history.replaceState(null, "", id ? `#c=${id}` : location.pathname);
-    setSelected(id);
+  const go = useCallback((patch: { page?: string | null; selected?: string | null }) => {
+    setRoute((current) => {
+      const next = { ...current, ...patch };
+      const params = new URLSearchParams();
+      if (next.page) params.set("p", next.page);
+      if (next.selected) params.set("c", next.selected);
+      const hash = params.toString();
+      history.replaceState(null, "", hash ? `#${hash}` : location.pathname);
+      return next;
+    });
   }, []);
-  return [selected, select];
+  return { ...route, go };
 }
 
 /** Notices are presented by one device only. This window claims a notice only
@@ -102,6 +116,7 @@ function noticeText(notice: Notice): string {
   if (notice.kind === "run_interrupted") return `「${goal}」中断了，没有自动重做。`;
   if (notice.kind === "run_request") return `「${goal}」在等你：${String(notice.payload.question ?? "")}`;
   if (notice.kind === "run_result") return `「${goal}」有结果了。`;
+  if (notice.kind === "proposal") return `Alfred 有个提议等你决定：「${String(notice.payload.title ?? "")}」`;
   if (notice.kind === "welcome") {
     const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, null);
     return `${greeting}${summary}`;
@@ -109,19 +124,35 @@ function noticeText(notice: Notice): string {
   return goal || notice.kind;
 }
 
-function places(state: StateResponse): Place[] {
-  return Object.entries(state.views).flatMap(([module, views]) => views.map((view) => ({
-    module, view: view.id, title: view.title,
-    count: module === "todo" ? (state.modules.todo as TodoSnapshot | undefined)?.todos.filter((todo) => !todo.done).length : undefined,
-  })));
+/** The value once it has held still for `ms`: a state that lasts a moment (a reply ends a beat before its run
+ * does) should not make the figure morph there and back. */
+function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
 }
 
+const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+/** The workspace: sidebar, one page at a time, and Alfred beside it (or across it, or folded to a button). */
 export function App() {
   const { state, connection, error, fresh, live, onEvent } = useAlfred();
-  const [selected, select] = useSelection();
-  const [pane, setPane] = useState<{ module: string; view: string } | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const route = useRoute();
+  const selected = route.selected;
+  const [layout, setLayout] = useLayout();
+  const phone = useMedia(PHONE);
+  const viewport = useViewportWidth();
+  const [sheet, setSheet] = useState<"alfred" | "nav" | null>(null);
+  const [palette, setPalette] = useState(false);
+  const [greeting, setGreeting] = useState(true);
   const [highlighted, setHighlighted] = useState<ReadonlySet<string>>(new Set());
+  const [inboxFocus, setInboxFocus] = useState<string | null>(null);
+  const navStart = useRef(layout.navW);
+
+  useEffect(() => { const timer = window.setTimeout(() => setGreeting(false), 2600); return () => window.clearTimeout(timer); }, []);
 
   const highlight = useCallback((runId: string) => {
     setHighlighted((current) => new Set(current).add(runId));
@@ -133,7 +164,28 @@ export function App() {
   }, [highlight]);
   const { shown, dismiss } = useNotices(state?.notices ?? [], selected, onPresented);
 
+  /** Bring Alfred's panel up: beside the page on a desktop, as a sheet on a phone. */
+  const showAlfred = useCallback(() => {
+    if (phone) setSheet("alfred");
+    else if (layout.alfred === "closed") setLayout({ alfred: "open" });
+  }, [phone, layout.alfred, setLayout]);
+
+  const select = useCallback((id: string | null) => {
+    route.go({ selected: id });
+    showAlfred();
+  }, [route, showAlfred]);
+
+  const showProposal = useCallback((proposalId: string) => {
+    route.go({ page: "core.inbox" });
+    setInboxFocus(`p:${proposalId}`);
+    setSheet(null);
+    if (layout.alfred === "wide") setLayout({ alfred: "open" });
+  }, [route, layout.alfred, setLayout]);
+
   const openRun = useCallback((runId: string, conversationId?: string) => {
+    // A run that left a proposal open: the decision is made in the inbox.
+    const proposal = state?.proposals?.find((candidate) => candidate.runId === runId);
+    if (proposal) { showProposal(proposal.id); return; }
     const go = (conversation: string) => {
       select(conversation);
       highlight(runId);
@@ -141,16 +193,64 @@ export function App() {
     };
     if (conversationId) go(conversationId);
     else api.run(runId).then(({ run }) => go(run.conversationId)).catch(() => {});
-  }, [select, highlight]);
+  }, [select, highlight, state?.proposals, showProposal]);
 
-  const onView = useCallback((module: string, view: string) => setPane({ module, view }), []);
-  const choose = useCallback((id: string | null) => { select(id); setSidebarOpen(false); }, [select]);
+  const openConversation = useCallback((conversationId: string, runId?: string) => {
+    select(conversationId);
+    if (runId) {
+      highlight(runId);
+      window.setTimeout(() => document.getElementById(`run-${runId}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 300);
+    }
+  }, [select, highlight]);
+  const onFocused = useCallback(() => setInboxFocus(null), []);
+
+  const goPage = useCallback((key: string) => {
+    route.go({ page: key });
+    setSheet(null);
+    if (layout.alfred === "wide") setLayout({ alfred: "open" });
+  }, [route, layout.alfred, setLayout]);
+
+  // A run opened a module's view: show that page.
+  const onView = useCallback((module: string, view: string) => goPage(`${module}.${view}`), [goPage]);
+  const onStarted = useCallback((id: string) => route.go({ selected: id }), [route]);
+
+  const toggleAlfred = useCallback(() => {
+    if (phone) setSheet((current) => current === "alfred" ? null : "alfred");
+    else setLayout({ alfred: layout.alfred === "closed" ? "open" : "closed" });
+  }, [phone, layout.alfred, setLayout]);
+  const toggleNav = useCallback(() => setLayout({ nav: layout.nav === "full" ? "rail" : "full" }), [layout.nav, setLayout]);
+
+  const ask = useCallback((text: string) => {
+    showAlfred();
+    api.submit(text, selected ?? undefined).then(({ run }) => { if (!selected) route.go({ selected: run.conversationId }); }).catch(() => {});
+  }, [showAlfred, selected, route]);
 
   // The Mac app: a notification was clicked, or the hotkey brought the window up.
   useEffect(() => desktop?.onFocusRun((runId) => openRun(runId)), [openRun]);
   useEffect(() => desktop?.onFocusComposer(() => {
+    showAlfred();
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
-  }), []);
+  }), [showAlfred]);
+
+  const pages = state ? availablePages(state) : [];
+  const figure = useSettled(state ? figureState(state, selected, live, greeting) : "rest", 250);
+  const current = pages.find((page) => page.key === route.page) ?? pages[0];
+
+  // Keyboard: ⌘K anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌥1–9 the pages (not while typing).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === "k") { event.preventDefault(); setPalette((open) => !open); return; }
+      if (mod && event.key === ".") { event.preventDefault(); toggleAlfred(); return; }
+      if (mod && event.key === "\\") { event.preventDefault(); toggleNav(); return; }
+      if (event.altKey && !mod && /^Digit[1-9]$/.test(event.code) && !editable(event.target)) {
+        const page = pages[Number(event.code.slice(5)) - 1];
+        if (page) { event.preventDefault(); goPage(page.key); }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleAlfred, toggleNav, goPage, pages]);
 
   if (!state) {
     return (
@@ -161,32 +261,80 @@ export function App() {
     );
   }
 
-  const todos = state.modules.todo as TodoSnapshot | undefined;
-  const paneTitle = pane ? state.views[pane.module]?.find((view) => view.id === pane.view)?.title ?? pane.module : "";
+  const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : layout.alfred;
+  const size = widths(layout, viewport);
+
+  // Sidebar divider: drag to resize; drag past the fold point to fold it to icons (keeping the width it had).
+  const navDrag = dragHandle(layout.nav === "rail" ? NAV.rail : layout.navW, "right", (width) => {
+    if (width < NAV.foldAt) setLayout({ nav: "rail", navW: navStart.current });
+    else setLayout({ nav: "full", navW: Math.min(NAV.max, Math.max(NAV.min, width)) });
+  });
+  const alfDrag = dragHandle(size.alf, "left", (width) => setLayout({ alfW: Math.min(ALF.max, Math.max(ALF.min, width)) }));
+
+  const panel = (
+    <AlfredPanel state={state} selected={selected} figure={figure} wide={alfredMode === "wide"} phone={phone}
+      live={live} highlighted={highlighted} onEvent={onEvent} onView={onView} onStarted={onStarted}
+      onWide={() => setLayout({ alfred: layout.alfred === "wide" ? "open" : "wide" })}
+      onClose={() => (phone ? setSheet(null) : setLayout({ alfred: "closed" }))} />
+  );
 
   return (
-    <div className="shell" data-pane={pane ? "open" : undefined} data-sidebar={sidebarOpen ? "open" : undefined}>
-      <Sidebar
-        conversations={state.conversations} selected={selected} places={places(state)}
-        openPlace={pane ? `${pane.module}.${pane.view}` : null} connection={connection}
-        onSelect={choose}
-        onPlace={(place) => { setPane((current) => current?.module === place.module && current.view === place.view ? null : { module: place.module, view: place.view }); setSidebarOpen(false); }}
-      />
-      <button type="button" className="sidebar-toggle" aria-label="对话列表" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(!sidebarOpen)}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h12" /></svg>
-      </button>
-      <main className="main">
-        <Conversation key={selected ?? "new"} id={selected} live={live} highlighted={highlighted} onEvent={onEvent} onView={onView} onStarted={select} />
-      </main>
-      {pane && (
-        <aside className="pane" aria-label={paneTitle}>
-          <header className="pane-head">
-            <h2>{paneTitle}</h2>
-            <button type="button" className="pane-close" aria-label="关掉面板" onClick={() => setPane(null)}>×</button>
-          </header>
-          {pane.module === "todo" && todos ? <Todos snapshot={todos} fresh={fresh} /> : <p className="quiet empty-list">这个视图还不能显示。</p>}
-        </aside>
+    <div className="workspace" data-nav={phone ? undefined : layout.nav} data-alfred={alfredMode} data-phone={phone || undefined}
+      data-sheet={sheet ?? undefined} style={{ "--nav-px": `${size.nav}px`, "--alf-px": `${size.alf}px` } as CSSProperties}>
+      {(!phone || sheet === "nav") && (
+        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : layout.nav} selected={selected} connection={connection}
+          onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onFold={phone ? () => setSheet(null) : toggleNav}
+          onPalette={() => { setSheet(null); setPalette(true); }} onConversations={showAlfred} sheet={phone} />
       )}
+      {phone && sheet === "nav" && <div className="scrim" onClick={() => setSheet(null)} />}
+
+      <main className="page" data-k={current?.k}>
+        {current ? (
+          <>
+            <header className="page-head">
+              <h1><Icon name={current.icon} />{current.title}</h1>
+              {current.summary && <p className="page-sub">{current.summary(state.modules[moduleOf(current)], state)}</p>}
+            </header>
+            <div className="page-body">{current.render({
+              snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, focus: inboxFocus, onFocused, openConversation,
+            })}</div>
+          </>
+        ) : (
+          <div className="empty"><p className="empty-title">这里还没有页面</p><p className="quiet">装上模块以后，它们的页面会出现在这里。</p></div>
+        )}
+      </main>
+
+      {alfredMode !== "closed" && panel}
+
+      {!phone && (
+        <>
+          <div className="resizer resizer-nav" onPointerDown={(event) => { navStart.current = layout.navW; navDrag(event); }}
+            onDoubleClick={toggleNav} title="拖动调整宽度，往里拖到底收成图标；双击切换" />
+          {alfredMode === "open" && (
+            <div className="resizer resizer-alf" onPointerDown={alfDrag} onDoubleClick={() => setLayout({ alfW: ALF.def })} title="拖动调整页面和 Alfred 的宽度；双击复原" />
+          )}
+        </>
+      )}
+
+      {!phone && alfredMode === "closed" && (
+        <button type="button" className="fab" onClick={showAlfred} title={`打开 Alfred（${MOD}.）`}>
+          <Figure state={figure} size={30} /><span>{statusLine(state, selected)}</span>
+        </button>
+      )}
+      {phone && sheet !== "alfred" && (
+        <Dock state={state} pages={pages} page={current?.key ?? ""} figure={figure} onPage={goPage}
+          onAlfred={() => setSheet("alfred")} onConversations={() => setSheet("nav")} />
+      )}
+
+      {palette && (
+        <Palette pages={pages} conversations={state.conversations} onPage={goPage} onSelect={select} onAsk={ask} onClose={() => setPalette(false)}
+          actions={[
+            { id: "new", label: "新对话", icon: "plus", run: () => select(null) },
+            { id: "alfred", label: alfredMode === "closed" ? "打开 Alfred" : "收起 Alfred", icon: "panel", hint: `${MOD}.`, run: toggleAlfred },
+            ...(phone ? [] : [{ id: "nav", label: layout.nav === "full" ? "侧栏收成图标" : "展开侧栏", icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
+          ]} />
+      )}
+
       {shown.length > 0 && (
         <aside className="notices" aria-live="polite">
           {shown.map((notice) => (
@@ -195,6 +343,9 @@ export function App() {
               <div className="notice-actions">
                 {notice.kind === "run_interrupted" && (
                   <button type="button" onClick={() => { api.resume(String(notice.payload.runId)).catch(() => {}); dismiss(notice); }}>继续</button>
+                )}
+                {notice.kind === "proposal" && (
+                  <button type="button" onClick={() => { showProposal(String(notice.payload.proposalId)); dismiss(notice); }}>去看看</button>
                 )}
                 {(notice.kind === "run_result" || notice.kind === "run_request") && notice.payload.runId ? (
                   <button type="button" onClick={() => { openRun(String(notice.payload.runId), String(notice.payload.conversationId ?? "") || undefined); dismiss(notice); }}>

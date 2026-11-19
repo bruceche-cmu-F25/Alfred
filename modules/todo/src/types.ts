@@ -17,14 +17,17 @@ export interface Todo {
   /** Abandoned, not completed; reversible and left out of ordinary lists. */
   archivedAt?: string;
   url?: string;
+  /** The area of life it belongs to (core's AREAS ids, e.g. `work`). */
+  area?: string;
   createdAt: string;
   completedAt?: string;
   /** Fields from Robin this version keeps but does not edit. */
   [kept: string]: unknown;
 }
 
-/** What a device draws: every non-archived todo with its revision, and the local date. */
+/** What a device draws: every non-archived todo with its revision, and the local date. `changedBy` says Alfred
+ * made the latest change to it (read from the event log), and which kind of change. */
 export interface TodoSnapshot {
   today: string;
-  todos: Array<Todo & { revision: string }>;
+  todos: Array<Todo & { revision: string; changedBy?: { actor: "alfred"; kind: string; at: string } }>;
 }

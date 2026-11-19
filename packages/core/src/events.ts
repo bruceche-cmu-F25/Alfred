@@ -108,6 +108,14 @@ export function listEvents(world: World, query: EventQuery = {}): { events: Core
   return { events, cursor: events.length ? events[events.length - 1].seq : query.after ?? 0 };
 }
 
+/** Who last changed each subject that starts with `prefix` (e.g. `todo:`), from the event log: provenance is read
+ * from what happened, not stored as a label. */
+export function lastChanges(world: World, prefix: string): Map<string, { actor: Actor | null; kind: string; at: string }> {
+  const rows = world.db.prepare(`SELECT subject, actor, kind, at FROM core_events WHERE seq IN (
+    SELECT MAX(seq) FROM core_events WHERE subject >= ? AND subject < ? GROUP BY subject)`).all(prefix, `${prefix}\uffff`);
+  return new Map(rows.map((row) => [row.subject as string, { actor: row.actor as Actor | null, kind: row.kind as string, at: row.at as string }]));
+}
+
 export function latestEventSeq(world: World): number {
   return (world.db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM core_events").get()!.seq as number);
 }

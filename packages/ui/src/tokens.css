@@ -1,0 +1,121 @@
+/*
+  Alfred colour tokens: the app (packages/ui) and the prototypes (prototype/tokens.css links here) use this one file.
+  Background and choices: docs/research/visual-style.md.
+
+  After Linear's theme generator: a theme is a few inputs, and every token is derived from them in OKLCH.
+    --h  --c     neutral hue and tint (how warm or cool the greys are)
+    --ah --ac    Alfred's colour (presence, things Alfred did, links)
+  The fixed meaning colours are warm (needs you), now (current time / destructive) and ok.
+  Dark is its own scale, not an inversion: surfaces get lighter as they rise, and accents lose chroma.
+  The tint tapers: the same chroma looks far stronger on a mid-grey or dark text than on near-white, so --c is used
+  at most at about half strength on the main surface and fades toward neutral for fills, lines and text.
+  (At full strength the paper theme's mid-tones read beige-khaki next to Alfred's indigo.)
+
+  Use: put data-theme="paper|graphite|mist|night" and data-scheme="light|dark" on any element.
+*/
+
+/* ── Inputs ── */
+:root, [data-theme] { --h: 75; --c: .009; --ah: 268; --ac: .15; }            /* 纸 paper (default) */
+[data-theme="graphite"] { --h: 265; --c: .004; --ah: 286; --ac: .17; }        /* 石 graphite */
+[data-theme="mist"] { --h: 245; --c: .007; --ah: 252; --ac: .18; }            /* 雾 mist */
+[data-theme="night"] { --h: 268; --c: .014; --ah: 274; --ac: .13; }           /* 夜 night */
+
+/* ── Light ── */
+:root, [data-theme] {
+  color-scheme: light;
+  --bg: oklch(.984 calc(var(--c) * .55) var(--h));
+  --paper: oklch(.962 calc(var(--c) * .6) var(--h));
+  --raise: oklch(.996 calc(var(--c) * .3) var(--h));
+  --wash: oklch(.93 calc(var(--c) * .5) var(--h));
+  --line-soft: oklch(.925 calc(var(--c) * .5) var(--h));
+  --line: oklch(.87 calc(var(--c) * .45) var(--h));
+  /* Text: ink 14:1, copy 7:1, muted ≥ 4.5:1 on bg and on the sidebar. Not pure black: firm, but easy on the eyes. Nearly neutral. */
+  --muted: oklch(.535 calc(var(--c) * .4) var(--h));
+  --copy: oklch(.44 calc(var(--c) * .35) var(--h));
+  --ink: oklch(.27 calc(var(--c) * .3) var(--h));
+  --alf: oklch(.54 var(--ac) var(--ah));
+  --alf-soft: oklch(.54 var(--ac) var(--ah) / .09);
+  --warm: oklch(.57 .12 70);
+  --now: oklch(.6 .2 25);
+  --ok: oklch(.58 .12 155);
+  --shadow: 0 1px 2px oklch(0 0 0 / .04), 0 12px 40px oklch(0 0 0 / .1);
+}
+
+/* ── Dark ── */
+[data-scheme="dark"] {
+  color-scheme: dark;
+  /* A soft dark (not near-black), so colour fills have room; text 14:1 / 11:1 / 7:1. */
+  --bg: oklch(.20 calc(var(--c) * .6) var(--h));
+  --paper: oklch(.18 calc(var(--c) * .6) var(--h));
+  --raise: oklch(.235 calc(var(--c) * .6) var(--h));
+  --wash: oklch(.275 calc(var(--c) * .5) var(--h));
+  --line-soft: oklch(.285 calc(var(--c) * .5) var(--h));
+  --line: oklch(.355 calc(var(--c) * .45) var(--h));
+  --muted: oklch(.74 calc(var(--c) * .4) var(--h));
+  --copy: oklch(.85 calc(var(--c) * .35) var(--h));
+  --ink: oklch(.93 calc(var(--c) * .3) var(--h));
+  --alf: oklch(.75 calc(var(--ac) * .75) var(--ah));
+  --alf-soft: oklch(.75 calc(var(--ac) * .75) var(--ah) / .12);
+  --warm: oklch(.79 .11 72);
+  --now: oklch(.68 .18 25);
+  --ok: oklch(.75 .12 155);
+  --shadow: 0 1px 2px oklch(0 0 0 / .3), 0 16px 50px oklch(0 0 0 / .5);
+}
+
+/* ── Per-theme adjustments ── */
+/* Graphite: crisper, higher contrast, near-neutral greys. */
+[data-theme="graphite"]:not([data-scheme="dark"]) {
+  --bg: oklch(.99 var(--c) var(--h)); --paper: oklch(.975 var(--c) var(--h)); --raise: oklch(1 0 0);
+  --wash: oklch(.945 var(--c) var(--h)); --line: oklch(.885 var(--c) var(--h));
+  --ink: oklch(.17 var(--c) var(--h)); --copy: oklch(.37 var(--c) var(--h)); --muted: oklch(.53 var(--c) var(--h));
+}
+[data-theme="graphite"][data-scheme="dark"] {
+  --bg: oklch(.155 var(--c) var(--h)); --paper: oklch(.135 var(--c) var(--h)); --raise: oklch(.19 var(--c) var(--h));
+  --wash: oklch(.23 var(--c) var(--h)); --line-soft: oklch(.24 var(--c) var(--h)); --line: oklch(.31 var(--c) var(--h));
+  --ink: oklch(.97 0 0); --copy: oklch(.83 var(--c) var(--h));
+}
+/* Night: dark is where it lives, a deep blue with a gold warm colour. */
+[data-theme="night"][data-scheme="dark"] {
+  --c: .035;
+  --bg: oklch(.15 var(--c) var(--h)); --paper: oklch(.13 var(--c) var(--h)); --raise: oklch(.19 var(--c) var(--h));
+  --wash: oklch(.23 var(--c) var(--h)); --line-soft: oklch(.25 var(--c) var(--h)); --line: oklch(.32 var(--c) var(--h));
+  --ink: oklch(.94 .02 var(--h)); --copy: oklch(.81 .025 var(--h)); --muted: oklch(.66 .03 var(--h));
+  --alf: oklch(.8 .1 var(--ah)); --alf-soft: oklch(.8 .1 var(--ah) / .13);
+  --warm: oklch(.82 .09 80);
+}
+[data-theme="night"]:not([data-scheme="dark"]) { --alf: oklch(.5 .14 var(--ah)); --alf-soft: oklch(.5 .14 var(--ah) / .09); }
+
+/* ── Category colours ──
+   Identity for calendars, areas, labels and each page's icon. Put data-k="<hue>" on an element; it gets four roles:
+     --k-solid  dot, stripe, icon            --k-fill  tinted background
+     --k-text   text on the fill or the page  --k-line  border
+   Fixed order: blue, green, violet, orange, teal, yellow, pink. Checked with the dataviz palette validator:
+   neighbours in this order stay apart for colour-blind readers (ΔE ≥ 13) and everyone else (ΔE ≥ 19), in both modes.
+   Any two together (a week view) can get close, e.g. blue↔violet, so every category also shows its name.
+   Red is not a category: it means now / danger. Amber is not either: it means "needs you". */
+[data-k="blue"]   { --k: 250; --k-sl: .60; --k-sd: .62; }
+[data-k="green"]  { --k: 142; --k-sl: .62; --k-sd: .63; }
+[data-k="violet"] { --k: 300; --k-sl: .58; --k-sd: .62; }
+[data-k="orange"] { --k: 45;  --k-sl: .63; --k-sd: .63; }
+[data-k="teal"]   { --k: 188; --k-sl: .64; --k-sd: .64; }
+[data-k="yellow"] { --k: 88;  --k-sl: .74; --k-sd: .66; --k-c: .14; }
+[data-k="pink"]   { --k: 355; --k-sl: .62; --k-sd: .63; }
+/* Status hues use the same four roles. */
+[data-k="warm"]   { --k: 70;  --k-sl: .68; --k-sd: .75; }   /* needs you: gold-amber, kept apart from the orange area */
+[data-k="now"]    { --k: 25;  --k-sl: .60; --k-sd: .66; --k-c: .19; }   /* now / danger */
+
+[data-k] {
+  --k-solid: oklch(var(--k-sl, .6) var(--k-c, .15) var(--k, 250));
+  --k-fill: oklch(.955 .035 var(--k, 250));
+  --k-text: oklch(.45 .13 var(--k, 250));
+  --k-line: oklch(.84 .07 var(--k, 250));
+}
+[data-scheme="dark"] [data-k], [data-scheme="dark"][data-k] {
+  --k-solid: oklch(var(--k-sd, .62) var(--k-c, .13) var(--k, 250));
+  --k-fill: oklch(.31 .055 var(--k, 250));
+  --k-text: oklch(.87 .085 var(--k, 250));
+  --k-line: oklch(.47 .09 var(--k, 250));
+}
+/* Alfred and neutral reuse the roles with their own colours. */
+[data-k="alfred"], [data-scheme="dark"] [data-k="alfred"] { --k-solid: var(--alf); --k-fill: var(--alf-soft); --k-text: var(--alf); --k-line: color-mix(in oklch, var(--alf) 50%, transparent); }
+[data-k="gray"], [data-scheme="dark"] [data-k="gray"] { --k-solid: var(--muted); --k-fill: var(--wash); --k-text: var(--copy); --k-line: var(--line); }

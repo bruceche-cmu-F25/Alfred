@@ -3,7 +3,7 @@
  * not edit yet (colour, estimate, work plan…) survive an import untouched.
  */
 import { createHash } from "node:crypto";
-import { changedFields, localDate, newId, recordDomainEvent, type World } from "@alfred/core";
+import { areaName, AREA_IDS, changedFields, isArea, localDate, newId, recordDomainEvent, type World } from "@alfred/core";
 import { TODO_STATUSES, type Todo, type TodoStatus } from "./types.ts";
 
 export { TODO_STATUSES, type Todo, type TodoStatus };
@@ -21,6 +21,8 @@ export interface TodoPatch {
   plannedOn?: string;
   /** Empty string clears it. */
   url?: string;
+  /** An area id (work, life…); empty string clears it. */
+  area?: string;
 }
 export type TodoResult<T> = T | { error: string };
 
@@ -96,6 +98,11 @@ function findTodo(todos: Todo[], ref: TodoRef): TodoResult<Todo> {
   return matches[0];
 }
 
+/** The todo a reference names now (by id, or a distinctive part of its title). */
+export function resolveTodo(world: World, ref: TodoRef): TodoResult<Todo> {
+  return findTodo(readAll(world), ref);
+}
+
 function applyPatch(todo: Todo, patch: TodoPatch): void {
   if (patch.status !== undefined && !TODO_STATUSES.includes(patch.status)) throw new Error("Unknown todo status");
   if (patch.status !== undefined && patch.done !== undefined && (patch.status === "done") !== patch.done) throw new Error("status and done conflict");
@@ -130,6 +137,11 @@ function applyPatch(todo: Todo, patch: TodoPatch): void {
   }
   if (patch.url !== undefined) {
     if (patch.url.trim()) todo.url = normalizeUrl(patch.url); else delete todo.url;
+  }
+  if (patch.area !== undefined) {
+    const area = patch.area.trim();
+    if (area && !isArea(area)) throw new Error(`area must be one of: ${AREA_IDS.join(", ")}`);
+    if (area) todo.area = area; else delete todo.area;
   }
 }
 
@@ -230,5 +242,6 @@ export function formatTodo(todo: Todo, today: string = localDate()): string {
   const progress = todoStatus(todo) === "doing" ? " (in progress)" : "";
   const plan = todo.plannedOn ? ` (planned ${todo.plannedOn}, not a deadline)` : "";
   const link = todo.url ? ` -> ${todo.url}` : "";
-  return `${box} ${todo.id}  ${todo.title}${progress}${date}${plan}${link}`;
+  const area = todo.area ? ` [${todo.area}: ${areaName(todo.area)}]` : "";
+  return `${box} ${todo.id}  ${todo.title}${area}${progress}${date}${plan}${link}`;
 }

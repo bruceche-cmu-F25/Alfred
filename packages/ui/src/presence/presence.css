@@ -1,25 +1,25 @@
-/* Night palette for the figure, copied from prototype/pi-web-sky. */
+/* Colours come from tokens.css (light or dark follows the system, set by public/scheme.js).
+   The figure sits on a small plate so it reads on any wallpaper; its far lines fade toward the plate. */
+@import "../tokens.css";
 :root {
-  --heat-1: #2c43a6; --heat-2: #4f7dff; --heat-3: #97b6ff; --heat-4: #fff4c0;
-  --sky-amber: #e3c08a; --sky-ink: #e8edff;
-  --paper: #10182af2; --ink: #e8edff; --copy: #c0c9e1; --line: #35435f;
+  --plate: color-mix(in oklch, var(--raise) 95%, transparent);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
-}
-@media (prefers-color-scheme: light) {
-  :root { --paper: #fcfdfff5; --ink: #273044; --copy: #4b5870; --line: #cfdae6; }
 }
 html, body, #root { margin: 0; height: 100%; background: transparent; overflow: hidden; }
 body { font: 13px/1.5 var(--sans); color: var(--ink); -webkit-user-select: none; user-select: none; }
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: left; }
 
 .presence { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end; gap: 10px; padding: 12px; }
-.figure { flex: none; width: 76px; height: 76px; border-radius: 50%; }
-.figure canvas { width: 100%; height: 100%; display: block; }
-.figure:focus-visible { outline: 2px solid var(--heat-3); outline-offset: 2px; }
+.figure {
+  flex: none; width: 76px; height: 76px; padding: 5px; border: 1px solid var(--line); border-radius: 22px;
+  background: var(--plate); box-shadow: 0 8px 24px #0000003d; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+}
+.figure svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.figure:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
 
 .bubble {
   position: relative; max-width: 310px; margin-bottom: 14px; display: flex; align-items: flex-start;
-  border: 1px solid var(--line); border-radius: 14px 14px 4px 14px; background: var(--paper);
+  border: 1px solid var(--line); border-radius: 14px 14px 4px 14px; background: var(--plate);
   box-shadow: 0 10px 30px #0000004d; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
   animation: arrive 360ms cubic-bezier(.23, 1, .32, 1);
 }

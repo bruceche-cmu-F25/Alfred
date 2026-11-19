@@ -20,6 +20,8 @@
  *   GET  /api/models                        ModelsResponse (models the engine can run)
  *   POST /api/ops/:op                       OpRequest -> OpResponse
  *   POST /api/notices/:id/(claim|present|acknowledge)   NoticeRequest -> Notice
+ *   POST /api/proposals/:id/(accept|decline)  ProposalRequest -> ProposalResponse (the user's decision; replays by request id)
+ *   POST /api/proposals/:id/revise          ReviseRequest -> ProposalResponse (supersedes it; a new run in its conversation revises it)
  *   POST /api/presence                      PresenceRequest -> PresenceResponse
  */
 export const PROTOCOL_VERSION = 1;
@@ -133,6 +135,34 @@ export interface Notice {
   payload: Record<string, unknown>;
 }
 
+export type ProposalState = "open" | "executed" | "declined" | "stale" | "failed" | "superseded" | "expired";
+/** One device operation a proposal will run, pinned to the exact records it names. */
+export interface ProposalStep { op: string; input: unknown; preview: string }
+/** Changes Alfred prepared that wait for the user's yes. Accepting runs exactly `steps`, once. */
+export interface Proposal {
+  id: string;
+  state: ProposalState;
+  title: string;
+  summary: string;
+  steps: ProposalStep[];
+  subjects: string[];
+  openedSeq: number;
+  runId: string | null;
+  conversationId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  outcome: { error?: string; receipts?: string[] } | null;
+  /** Open ones: something it touches changed since; accepting would run nothing. */
+  stale?: boolean;
+}
+export interface ProposalRequest { requestId: string }
+export interface ReviseRequest { requestId: string; text: string }
+export interface ProposalResponse { proposal: Proposal; replayed: boolean; run?: Run }
+
+/** A part of life things belong to (work, health…), shared by the modules that sort by it; `k` is its colour slot. */
+export interface Area { id: string; name: string; k: string }
 export interface StateResponse {
   protocol: typeof PROTOCOL_VERSION;
   /** The newest event seq this state reflects. Subscribe to events after it. */
@@ -149,6 +179,10 @@ export interface StateResponse {
   modules: Record<string, unknown>;
   /** The views devices can open, by module id. */
   views: Record<string, Array<{ id: string; title: string }>>;
+  /** The areas things can belong to, in their fixed order. */
+  areas: Area[];
+  /** Proposals waiting for the user's decision, oldest first. */
+  proposals: Proposal[];
 }
 
 export interface SubmitRunRequest { requestId: string; goal: string; conversationId?: string }
