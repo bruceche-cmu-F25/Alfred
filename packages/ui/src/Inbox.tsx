@@ -54,7 +54,9 @@ function Detail({ item, onDone, onOpenConversation, conversationTitle }: {
         <>
           <div className="card">
             <p className="card-label">{proposal.stale ? t("inbox.stepsStale") : t("inbox.steps", { n: proposal.steps.length })}</p>
-            <ol className="proposal-steps">{proposal.steps.map((step, n) => <li key={n}>{step.preview}</li>)}</ol>
+            <ol className="proposal-steps">{proposal.steps.map((step, n) => (
+              <li key={n}>{step.preview}{step.detail && <pre className="step-detail">{step.detail}</pre>}</li>
+            ))}</ol>
           </div>
           {proposal.stale ? (
             <>

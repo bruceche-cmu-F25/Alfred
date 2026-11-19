@@ -171,7 +171,13 @@ export interface SettingsRequest { requestId: string; patch: Partial<UserSetting
 
 export type ProposalState = "open" | "executed" | "declined" | "stale" | "failed" | "superseded" | "expired";
 /** One device operation a proposal will run, pinned to the exact records it names. */
-export interface ProposalStep { op: string; input: unknown; preview: string }
+export interface ProposalStep {
+  op: string;
+  input: unknown;
+  preview: string;
+  /** The whole of it, when there is more than a line to read (an email's text). */
+  detail?: string;
+}
 /** Changes Alfred prepared that wait for the user's yes. Accepting runs exactly `steps`, once. */
 export interface Proposal {
   id: string;

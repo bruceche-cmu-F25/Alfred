@@ -9,10 +9,12 @@ import { createHash } from "node:crypto";
 import { localDate, recordDomainEvent, withDefaultActor, type World } from "@alfred/core";
 import { defineModule, defineTool, ServiceError, Type, type ModuleServices } from "@alfred/module-kit";
 import { addDays, readAccount, type EventRow } from "./google.ts";
+import { calendarOps, calendarWriteTools, deliverCalendar } from "./write.ts";
 import type { CalendarEvent, CalendarSnapshot, CalendarSource } from "./types.ts";
 
 export type { CalendarEvent, CalendarSnapshot, CalendarSource } from "./types.ts";
 export { mapEvent, addDays, type GoogleEvent } from "./google.ts";
+export { deliverCalendar, newEventId, type AddInput, type MoveInput, type RespondInput } from "./write.ts";
 
 const WINDOW = { back: 7, ahead: 35 };
 /** Colour slots for calendars, in order: the first account's primary calendar is blue. */
@@ -50,6 +52,15 @@ CREATE TABLE calendar_sources (
   digest TEXT
 ) STRICT;
 `,
+}, {
+  // For writing (write.ts): each event's version and whether the user organizes it; whether an account may write.
+  id: "calendar:2",
+  sql: `
+ALTER TABLE calendar_events ADD COLUMN etag TEXT;
+ALTER TABLE calendar_events ADD COLUMN organizer_self INTEGER NOT NULL DEFAULT 0 CHECK (organizer_self IN (0, 1));
+ALTER TABLE calendar_sources ADD COLUMN can_write INTEGER NOT NULL DEFAULT 0 CHECK (can_write IN (0, 1));
+UPDATE calendar_sources SET digest = NULL;
+`,
 }];
 
 const canRead = (capabilities: readonly string[]) => capabilities.includes("calRead") || capabilities.includes("calWrite");
@@ -58,7 +69,9 @@ const canRead = (capabilities: readonly string[]) => capabilities.includes("calR
  * when something changed, so devices refresh without the log filling up every few minutes. */
 export async function syncCalendar(world: World, services: ModuleServices, signal?: AbortSignal, now: number = Date.now()): Promise<void> {
   const google = services.google;
-  const accounts = (google?.accounts() ?? []).filter((account) => canRead(account.capabilities)).map((account) => account.email);
+  const readable = (google?.accounts() ?? []).filter((account) => canRead(account.capabilities));
+  const accounts = readable.map((account) => account.email);
+  const writes = new Set(readable.filter((account) => account.capabilities.includes("calWrite")).map((account) => account.email));
   const today = localDate(new Date(now));
   withDefaultActor("system", () => world.tx((db) => {
     const gone = db.prepare("SELECT account FROM calendar_sources").all().map((row) => row.account as string).filter((account) => !accounts.includes(account));
@@ -82,22 +95,22 @@ export async function syncCalendar(world: World, services: ModuleServices, signa
     withDefaultActor("system", () => world.tx((db) => {
       const before = db.prepare("SELECT digest, error FROM calendar_sources WHERE account = ?").get(account);
       if (failure) {
-        db.prepare(`INSERT INTO calendar_sources (account, error, reconnect) VALUES (?, ?, ?)
-          ON CONFLICT(account) DO UPDATE SET error = excluded.error, reconnect = excluded.reconnect`).run(account, failure.error, failure.reconnect ? 1 : 0);
+        db.prepare(`INSERT INTO calendar_sources (account, error, reconnect, can_write) VALUES (?, ?, ?, ?)
+          ON CONFLICT(account) DO UPDATE SET error = excluded.error, reconnect = excluded.reconnect, can_write = excluded.can_write`).run(account, failure.error, failure.reconnect ? 1 : 0, writes.has(account) ? 1 : 0);
         if (before?.error !== failure.error) recordDomainEvent(world, { kind: "calendar.synced", subject: `calendar:${account}`, payload: { error: failure.error } });
         return;
       }
       const digest = createHash("sha256").update(JSON.stringify(result!)).digest("hex");
-      db.prepare(`INSERT INTO calendar_sources (account, synced_at, error, reconnect, calendars, digest) VALUES (?, ?, NULL, 0, ?, ?)
-        ON CONFLICT(account) DO UPDATE SET synced_at = excluded.synced_at, error = NULL, reconnect = 0, calendars = excluded.calendars, digest = excluded.digest`)
-        .run(account, new Date(now).toISOString(), JSON.stringify(result!.calendars), digest);
+      db.prepare(`INSERT INTO calendar_sources (account, synced_at, error, reconnect, calendars, digest, can_write) VALUES (?, ?, NULL, 0, ?, ?, ?)
+        ON CONFLICT(account) DO UPDATE SET synced_at = excluded.synced_at, error = NULL, reconnect = 0, calendars = excluded.calendars, digest = excluded.digest, can_write = excluded.can_write`)
+        .run(account, new Date(now).toISOString(), JSON.stringify(result!.calendars), digest, writes.has(account) ? 1 : 0);
       if (before?.digest === digest && !before?.error) return;
       db.prepare("DELETE FROM calendar_events WHERE account = ?").run(account);
       const insert = db.prepare(`INSERT OR REPLACE INTO calendar_events (account, id, calendar_id, calendar, title, all_day, start_date, end_date, start_at, end_at,
-        location, link, meeting, organizer, response, attendees) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        location, link, meeting, organizer, response, attendees, etag, organizer_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const event of result!.events) {
         insert.run(account, event.id, event.calendarId, event.calendar, event.title, event.allDay ? 1 : 0, event.startDate, event.endDate,
-          event.startAt, event.endAt, event.location, event.link, event.meeting, event.organizer, event.response, event.attendees);
+          event.startAt, event.endAt, event.location, event.link, event.meeting, event.organizer, event.response, event.attendees, event.etag, event.organizerSelf ? 1 : 0);
       }
       recordDomainEvent(world, { kind: "calendar.synced", subject: `calendar:${account}`, payload: { events: result!.events.length } });
     }));
@@ -111,13 +124,17 @@ export function calendarSources(world: World): CalendarSource[] {
     syncedAt: row.synced_at as string | null,
     error: row.error as string | null,
     reconnect: row.reconnect === 1,
-    calendars: (JSON.parse(row.calendars as string) as Array<{ id: string; name: string }>).map((calendar) => ({ ...calendar, k: KS[next++ % KS.length] })),
+    canWrite: row.can_write === 1,
+    calendars: (JSON.parse(row.calendars as string) as Array<{ id: string; name: string; writable?: boolean }>)
+      .map((calendar) => ({ id: calendar.id, name: calendar.name, writable: !!calendar.writable, k: KS[next++ % KS.length] })),
   }));
 }
 
 /** Events touching the days from `from` to `to` (inclusive), by start. */
 export function listEvents(world: World, from: string, to: string): CalendarEvent[] {
-  const colour = new Map(calendarSources(world).flatMap((source) => source.calendars.map((calendar) => [`${source.account}|${calendar.id}`, calendar.k] as const)));
+  const sources = calendarSources(world);
+  const colour = new Map(sources.flatMap((source) => source.calendars.map((calendar) => [`${source.account}|${calendar.id}`, calendar.k] as const)));
+  const writable = new Set(sources.flatMap((source) => source.canWrite ? source.calendars.filter((calendar) => calendar.writable).map((calendar) => `${source.account}|${calendar.id}`) : []));
   return world.db.prepare(`SELECT * FROM calendar_events WHERE end_date >= ? AND start_date <= ?
     ORDER BY start_date, all_day DESC, start_at, title`).all(from, to).map((row) => ({
     id: row.id as string, account: row.account as string, calendarId: row.calendar_id as string, calendar: row.calendar as string,
@@ -130,6 +147,8 @@ export function listEvents(world: World, from: string, to: string): CalendarEven
     ...(row.response ? { response: row.response as CalendarEvent["response"] } : {}),
     attendees: row.attendees as number,
     k: colour.get(`${row.account as string}|${row.calendar_id as string}`) ?? "gray",
+    editable: row.organizer_self === 1 && writable.has(`${row.account as string}|${row.calendar_id as string}`),
+    invited: !!row.response && row.organizer_self !== 1 && writable.has(`${row.account as string}|${row.calendar_id as string}`),
   }));
 }
 
@@ -150,7 +169,7 @@ export function describeEvents(world: World, from: string, to: string): string {
       const when = event.allDay || !event.start ? "all day" : `${event.startDate === day ? hhmm(event.start) : "…"}–${event.endDate === day ? hhmm(event.end!) : "…"}`;
       const extra = [event.location, event.response === "declined" ? "declined" : event.response === "needsAction" ? "not answered" : null, sources.length > 1 || sources[0].calendars.length > 1 ? event.calendar : null]
         .filter(Boolean).join("; ");
-      lines.push(`  ${when} ${event.title}${extra ? ` (${extra})` : ""}`);
+      lines.push(`  ${when} ${event.title}${extra ? ` (${extra})` : ""} [${event.id}]`);
     }
   }
   const notes = sources.map((source) => source.error ? `Could not read ${source.account} just now (${source.error}); this may be out of date.` : null).filter(Boolean);
@@ -164,12 +183,12 @@ export const calendarModule = defineModule({
   id: "calendar",
   title: "Calendar",
   migrations: MIGRATIONS,
-  ops: [],
+  ops: calendarOps,
   tools: [
     defineTool({
       name: "calendar_list",
       label: "Calendar",
-      description: "The user's schedule from their Google Calendar, day by day: times, titles, places, and invitations they declined or have not answered. Use it for questions about their day, free time, or what is coming up.",
+      description: "The user's schedule from their Google Calendar, day by day: times, titles, places, invitations they declined or have not answered, and each event's id in brackets (for calendar_move and calendar_respond). Use it for questions about their day, free time, or what is coming up.",
       level: "read",
       parameters: Type.Object({
         from: Day("First day, YYYY-MM-DD; today if left out"),
@@ -184,15 +203,17 @@ export const calendarModule = defineModule({
         return describeEvents(world, from, to);
       },
     }),
+    ...calendarWriteTools,
   ],
   views: [{ id: "week", title: "Calendar" }],
   guidance: [
     "Calendar: the user's Google Calendar is mirrored here and refreshed every few minutes; calendar_list reads it.",
-    "You cannot add, move or decline events yet. If asked to, say so, and offer to add a todo instead.",
+    "To add an event or hold time, move an event the user organizes, or answer an invitation, propose it (calendar_add, calendar_move, calendar_respond inside `propose`): nothing changes in their calendar until they accept.",
   ].join(" "),
   snapshot(world): CalendarSnapshot {
     const today = localDate();
     return { today, events: listEvents(world, addDays(today, -WINDOW.back), addDays(today, WINDOW.ahead)), sources: calendarSources(world) };
   },
-  sync: { everyMs: 5 * 60_000, run: (world, services, signal) => syncCalendar(world, services, signal) },
+  // Accepted changes go out first, so the read that follows already shows them.
+  sync: { everyMs: 5 * 60_000, run: async (world, services, signal) => { await deliverCalendar(world, services, signal); await syncCalendar(world, services, signal); } },
 });

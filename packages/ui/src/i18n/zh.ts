@@ -526,4 +526,9 @@ export const zh = {
   "sug.mail.reply": "哪些邮件需要我回？",
   "sug.mail.today": "总结一下今天的邮件",
   "sug.mail.important": "有没有重要的？",
+
+  // Calendar and mail writes, delivered after the user's yes
+  "inbox.sent.done": "办好了。",
+  "inbox.sent.failed": "没改成：{error}",
+  "inbox.sent.unknown": "不确定成没成：Google 没给准话。去 Gmail「已发送」或日历里看一眼，别直接再发一遍。",
 } as const;

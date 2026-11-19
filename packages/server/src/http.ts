@@ -12,7 +12,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { extname, join, normalize, sep } from "node:path";
 import {
-  AREAS, acceptProposal, declineProposal, getSettings, listOpenProposals, supersedeProposal, runCommand, updateSettings, userLocale, withCoreContext,
+  AREAS, acceptProposal, coreContext, declineProposal, getSettings, listOpenProposals, supersedeProposal, runCommand, updateSettings, userLocale, withCoreContext,
   createAutomation, deleteAutomation, listAutomations, runAutomationNow, updateAutomation, type World,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
@@ -380,7 +380,9 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   if (op && method === "POST") {
     const body = await readJson<OpRequest>(req);
     if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
-    return send(res, 200, invokeOp(home.world, home.modules, { op: op[1], requestId: body.requestId, input: body.input }));
+    const answer = invokeOp(home.world, home.modules, { op: op[1], requestId: body.requestId, input: body.input });
+    home.deliver();
+    return send(res, 200, answer);
   }
 
   // A module's read that is too big for the state (one mail's body). Changes nothing, so it is not a command.
@@ -462,11 +464,13 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     if (decision === "revise" && (typeof body.text !== "string" || !body.text.trim())) throw new HttpError(400, "Say what to change");
     const result = withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId: body.requestId, command: `proposal.${decision}`, input: { id, text: body.text ?? null } }, () => {
       if (decision === "accept") {
-        return { proposal: acceptProposal(home.world, id, (step) => withCoreContext({ actor: "alfred" }, () => applyStep(home.world, home.modules, step))) };
+        // Alfred's changes, made on the user's yes to this proposal (the context keeps which one).
+        return { proposal: acceptProposal(home.world, id, (step) => withCoreContext({ ...coreContext(), actor: "alfred" }, () => applyStep(home.world, home.modules, step))) };
       }
       if (decision === "decline") return { proposal: declineProposal(home.world, id) };
       const superseded = supersedeProposal(home.world, id, body.text);
-      const steps = superseded.steps.map((step) => step.preview);
+      // The whole of each step (an email's text), so the new version starts from what the user saw.
+      const steps = superseded.steps.map((step) => (step.detail ? `${step.preview}\n${step.detail}` : step.preview));
       const goal = userLocale(home.world) === "zh"
         ? `修改你之前的提议「${superseded.title}」：${body.text.trim()}\n原来的提议：${superseded.summary}\n步骤：${steps.join("；")}\n请按修改意见重新提议（用 propose），不要直接改。`
         : `Change your earlier proposal "${superseded.title}": ${body.text.trim()}\nThe proposal was: ${superseded.summary}\nSteps: ${steps.join("; ")}\nPropose again with the change (use propose); do not make the changes directly.`;
@@ -474,6 +478,7 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
       return { proposal: superseded, run };
     }));
     if (decision === "revise") home.kick();
+    if (decision === "accept") home.deliver();
     return send(res, 200, { ...result.result, replayed: result.replayed } satisfies ProposalResponse);
   }
 

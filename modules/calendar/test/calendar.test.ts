@@ -33,6 +33,7 @@ function fakeGoogle(events: Record<string, unknown[]>, options: { fail?: Service
     async session(email) {
       if (options.fail) throw options.fail;
       return {
+        async send(): Promise<{ status: number; body: Record<string, unknown> }> { throw new Error("no writes in this test"); },
         async get(url) {
           calls.push(`${email} ${url.split("?")[0].split("/v3/")[1]}`);
           if (url.includes("/calendarList")) {

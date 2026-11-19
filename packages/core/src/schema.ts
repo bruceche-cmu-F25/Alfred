@@ -185,4 +185,26 @@ CREATE TABLE core_projects (
 CREATE UNIQUE INDEX core_projects_path ON core_projects(path) WHERE removed_at IS NULL;
 ALTER TABLE core_conversations ADD COLUMN project_id TEXT CHECK (project_id IS NULL OR length(project_id) BETWEEN 1 AND 64);
 `,
+}, {
+  // Changes made outside the home node (outbound.ts): recorded with the decision, delivered after, never twice.
+  id: "core:11",
+  sql: `
+CREATE TABLE core_outbound (
+  id TEXT PRIMARY KEY NOT NULL,
+  module TEXT NOT NULL CHECK (length(module) BETWEEN 1 AND 32),
+  action TEXT NOT NULL CHECK (length(action) BETWEEN 1 AND 64),
+  payload TEXT NOT NULL CHECK (json_valid(payload)),
+  preview TEXT NOT NULL CHECK (length(preview) BETWEEN 1 AND 300),
+  detail TEXT,
+  idempotent INTEGER NOT NULL CHECK (idempotent IN (0, 1)),
+  proposal_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('queued', 'sending', 'done', 'failed', 'unknown')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  error TEXT,
+  result TEXT CHECK (result IS NULL OR json_valid(result)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX core_outbound_queue ON core_outbound(module, state, created_at);
+`,
 }];

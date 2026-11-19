@@ -443,6 +443,7 @@ test("calendar and mail over HTTP: a refresh reads Google, the state carries the
     accounts: () => [{ email: "me@example.com", capabilities: ["calRead", "mailRead"] }],
     async session() {
       return {
+        async send(): Promise<{ status: number; body: Record<string, unknown> }> { throw new Error("no writes in this test"); },
         async get(url: string): Promise<Record<string, unknown>> {
           if (url.includes("/calendarList")) return { items: [{ id: "primary", summary: "Me", primary: true }] };
           if (url.includes("/events")) return { items: [{ id: "e1", summary: "Design review", start: { dateTime: at(15) }, end: { dateTime: at(16) } }] };
@@ -476,6 +477,67 @@ test("calendar and mail over HTTP: a refresh reads Google, the state carries the
       const names = all[profile].tools.map((tool) => tool.name);
       assert.ok(["calendar_list", "mail_list", "mail_read"].every((name) => names.includes(name)), `${profile} can read the calendar and mail`);
     }
+  } finally {
+    server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("calendar and mail changes over HTTP: proposed by a run, delivered right after the user's yes, the outcome told", async () => {
+  const { calendarModule } = await import("@alfred/module-calendar");
+  const { mailModule } = await import("@alfred/module-mail");
+  const sent: string[] = [];
+  const google = {
+    accounts: () => [{ email: "me@example.com", capabilities: ["calRead", "calWrite", "mailRead", "mailSend"] }],
+    async session() {
+      return {
+        async get(url: string): Promise<Record<string, unknown>> {
+          if (url.includes("/calendarList")) return { items: [{ id: "primary", summary: "Me", primary: true, accessRole: "owner" }] };
+          if (url.includes("/events")) return { items: [] };
+          return { messages: [] };
+        },
+        async send(method: string, url: string): Promise<{ status: number; body: Record<string, unknown> }> {
+          sent.push(`${method} ${url.split("/v3")[1] ?? url.split("/v1")[1]}`);
+          return { status: 200, body: { id: "x" } };
+        },
+      };
+    },
+  };
+  const proposing: EnginePort = {
+    async submit(request) {
+      const propose = request.tools.find((tool) => tool.name === "propose")!;
+      const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+      return { reply: await propose.execute({ title: "Hold time and tell Ana?", summary: "", calls: [
+        { tool: "calendar_add", params: { title: "Write the plan", date: tomorrow } },
+        { tool: "mail_send", params: { to: ["ana@example.com"], subject: "Plan", body: "I'll have it tomorrow." } },
+      ] }, new AbortController().signal) };
+    },
+  };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: proposing, modules: [todoModule, calendarModule, mailModule], services: () => ({ google }) });
+  const { server, base } = await start(home);
+  try {
+    await home.syncModule("calendar");
+    await home.syncModule("mail");
+    const all = profiles(home.world, [todoModule, calendarModule, mailModule]);
+    for (const profile of Object.values(all)) {
+      assert.ok(!profile.tools.some((tool) => ["calendar_add", "calendar_move", "calendar_respond", "mail_send"].includes(tool.name)), "no profile calls them directly");
+    }
+    await post(base, "/api/runs", { requestId: "w-1", goal: "Hold tomorrow for the plan and tell Ana" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await home.idle();
+    assert.equal(sent.length, 0, "proposed only");
+    const [proposal] = ((await (await fetch(`${base}/api/state`)).json()) as StateResponse).proposals;
+    assert.equal(proposal.steps[1].detail, "To: ana@example.com\nSubject: Plan\n\nI'll have it tomorrow.");
+
+    assert.equal((await post(base, `/api/proposals/${proposal.id}/accept`, { requestId: "w-accept" })).status, 200);
+    for (let i = 0; i < 50 && sent.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    await home.syncModule("calendar");
+    await home.syncModule("mail");
+    assert.deepEqual(sent.map((line) => line.split(" ")[0]), ["POST", "POST"]);
+    assert.ok(sent.some((line) => line.includes("/calendars/primary/events")) && sent.some((line) => line.includes("/messages/send")));
+    const after = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    const told = after.notices.filter((notice) => notice.kind === "outbound").map((notice) => [notice.payload.state, notice.payload.proposalId]);
+    assert.deepEqual(told, [["done", proposal.id], ["done", proposal.id]]);
   } finally {
     server.close(); server.closeAllConnections();
     home.close();

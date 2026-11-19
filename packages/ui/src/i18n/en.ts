@@ -527,4 +527,9 @@ export const en: Record<keyof typeof zh, string> = {
   "sug.mail.reply": "Which emails need a reply?",
   "sug.mail.today": "Sum up today's mail",
   "sug.mail.important": "Anything important?",
+
+  // Calendar and mail writes, delivered after the user's yes
+  "inbox.sent.done": "Done.",
+  "inbox.sent.failed": "That didn't go through: {error}",
+  "inbox.sent.unknown": "Not sure it went through: Google didn't say. Check Gmail's Sent or your calendar before trying again.",
 };

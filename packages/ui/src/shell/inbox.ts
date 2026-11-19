@@ -51,6 +51,12 @@ export function inboxItems(state: StateResponse, userName: string | null = null)
       const status = notice.payload.status;
       const summary = status === "failed" ? t("inbox.failed") : status === "cancelled" ? t("inbox.cancelled") : String(notice.payload.reply ?? t("inbox.done"));
       items.push({ id: `n:${notice.id}`, kind: "result", title: goal, summary, at: notice.createdAt, conversationId, runId, notice });
+    } else if (notice.kind === "outbound") {
+      // A change outside Alfred (an event, an email) after the user's yes: how it went. Unknown needs them to check.
+      const state = notice.payload.state, preview = String(notice.payload.preview ?? "");
+      if (state === "unknown") items.push({ id: `n:${notice.id}`, kind: "decide", title: preview, summary: t("inbox.sent.unknown"), at: notice.createdAt, conversationId: null, runId: null, notice });
+      else items.push({ id: `n:${notice.id}`, kind: "result", title: preview, at: notice.createdAt, conversationId: null, runId: null, notice,
+        summary: state === "done" ? t("inbox.sent.done") : t("inbox.sent.failed", { error: String(notice.payload.error ?? "") }) });
     } else if (notice.kind === "welcome") {
       const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, userName);
       items.push({ id: `n:${notice.id}`, kind: "away", title: greeting, summary, at: notice.createdAt, conversationId: null, runId: null, notice });

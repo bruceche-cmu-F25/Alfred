@@ -46,6 +46,7 @@ function fakeGmail(state: { inbox: string[]; unread: string[]; messages: Record<
       if (options.fail) throw options.fail;
       assert.equal(email, "me@example.com", "an account without mail access is never asked");
       return {
+        async send(): Promise<{ status: number; body: Record<string, unknown> }> { throw new Error("no writes in this test"); },
         async get(url) {
           const parsed = new URL(url);
           if (parsed.pathname.endsWith("/messages")) {

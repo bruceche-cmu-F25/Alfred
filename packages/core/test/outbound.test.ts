@@ -1,0 +1,68 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+  acceptProposal, claimOutbound, CORE_MIGRATIONS, enqueueOutbound, finishOutbound, interruptOutbound, listNotices, listOutbound,
+  OUTBOUND_MAX_ATTEMPTS, openProposal, openWorld, retryOutbound, type World,
+} from "../src/index.ts";
+
+const world = (): World => openWorld(":memory:", CORE_MIGRATIONS);
+const outboundNotices = (w: World) => listNotices(w).filter((notice) => notice.kind === "outbound").map((notice) => notice.payload);
+
+test("a change accepted in a proposal is recorded with it, then claimed, delivered, and told", () => {
+  const w = world();
+  const proposal = openProposal(w, { title: "Hold time?", summary: "", steps: [{ op: "calendar.add", input: {}, preview: "Add “Focus” to Me" }] });
+  acceptProposal(w, proposal.id, () => { enqueueOutbound(w, { module: "calendar", action: "add", payload: { title: "Focus" }, preview: "Add “Focus” to Me", idempotent: true }); });
+  const [queued] = listOutbound(w);
+  assert.deepEqual([queued.state, queued.proposalId, queued.attempts], ["queued", proposal.id, 0]);
+
+  assert.equal(claimOutbound(w, "mail"), null, "each module claims its own");
+  const claimed = claimOutbound(w, "calendar")!;
+  assert.deepEqual([claimed.state, claimed.attempts], ["sending", 1]);
+  assert.equal(claimOutbound(w, "calendar"), null, "one delivery at a time");
+  finishOutbound(w, claimed.id, { state: "done", result: { id: "evt1" } });
+  assert.deepEqual(outboundNotices(w), [{ outboundId: claimed.id, module: "calendar", action: "add", state: "done", preview: "Add “Focus” to Me", proposalId: proposal.id }]);
+  assert.throws(() => finishOutbound(w, claimed.id, { state: "done" }), /done, not being sent/);
+});
+
+test("a declined or failed proposal leaves nothing to deliver", () => {
+  const w = world();
+  const proposal = openProposal(w, { title: "Send?", summary: "", steps: [{ op: "mail.send", input: {}, preview: "Email Leo" }] });
+  acceptProposal(w, proposal.id, () => {
+    enqueueOutbound(w, { module: "mail", action: "send", payload: {}, preview: "Email Leo", idempotent: false });
+    throw new Error("a later step failed");
+  });
+  assert.deepEqual(listOutbound(w), [], "it rolled back with the decision");
+});
+
+test("retries: an idempotent change waits for the next pass until it gives up; one that is not becomes unknown", () => {
+  const w = world();
+  const event = enqueueOutbound(w, { module: "calendar", action: "add", payload: {}, preview: "Add", idempotent: true });
+  const email = enqueueOutbound(w, { module: "mail", action: "send", payload: {}, preview: "Email Leo", idempotent: false });
+  const tried = new Set<string>();
+  for (let attempt = 1; attempt < OUTBOUND_MAX_ATTEMPTS; attempt++) {
+    const claimed = claimOutbound(w, "calendar", tried)!;
+    tried.add(claimed.id);
+    assert.equal(retryOutbound(w, claimed.id, "Google could not be reached").state, "queued");
+    assert.equal(claimOutbound(w, "calendar", tried), null, "not again in the same pass");
+    tried.clear();
+  }
+  retryOutbound(w, claimOutbound(w, "calendar")!.id, "Google could not be reached");
+  assert.equal(listOutbound(w, { module: "calendar" })[0].state, "failed");
+  assert.equal(listOutbound(w, { module: "calendar" })[0].id, event.id);
+
+  claimOutbound(w, "mail");
+  assert.equal(retryOutbound(w, email.id, "connection reset").state, "unknown", "an email is never sent twice");
+  assert.deepEqual(outboundNotices(w).map((payload) => payload.state), ["failed", "unknown"]);
+});
+
+test("a home node that stopped mid-delivery: idempotent changes go back in the queue, the rest are unknown and told", () => {
+  const w = world();
+  enqueueOutbound(w, { module: "calendar", action: "move", payload: {}, preview: "Move standup", idempotent: true });
+  enqueueOutbound(w, { module: "mail", action: "send", payload: {}, preview: "Email Leo", idempotent: false });
+  claimOutbound(w, "calendar");
+  claimOutbound(w, "mail");
+  assert.equal(interruptOutbound(w), 2);
+  assert.deepEqual(listOutbound(w).map((outbound) => [outbound.module, outbound.state]), [["calendar", "queued"], ["mail", "unknown"]]);
+  assert.deepEqual(outboundNotices(w), [{ outboundId: listOutbound(w)[1].id, module: "mail", action: "send", state: "unknown", preview: "Email Leo", error: "Alfred stopped while sending this" }]);
+  assert.equal(interruptOutbound(w), 0);
+});

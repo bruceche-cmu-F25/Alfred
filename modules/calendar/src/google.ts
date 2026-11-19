@@ -3,7 +3,7 @@
  * recurring ones come expanded. Adapted from Robin's extension/robin/google-calendar.ts.
  */
 import { localDate } from "@alfred/core";
-import type { GoogleService } from "@alfred/module-kit";
+import type { GoogleSession } from "@alfred/module-kit";
 
 const API = "https://www.googleapis.com/calendar/v3";
 const MAX_PAGES = 4;
@@ -11,6 +11,7 @@ const MAX_PAGES = 4;
 interface GoogleTime { date?: string; dateTime?: string }
 export interface GoogleEvent {
   id?: string;
+  etag?: string;
   status?: string;
   summary?: string;
   location?: string;
@@ -40,6 +41,10 @@ export interface EventRow {
   organizer: string | null;
   response: string | null;
   attendees: number;
+  /** Google's version of the event: a move is refused if it changed since. */
+  etag: string | null;
+  /** The user organizes it (only then can it be moved for everyone). */
+  organizerSelf: boolean;
 }
 
 export function addDays(date: string, days: number): string {
@@ -80,19 +85,21 @@ export function mapEvent(item: GoogleEvent, calendarId: string, calendar: string
     link: https(item.htmlLink), meeting, organizer: organizer?.slice(0, 200) ?? null,
     response: self && RESPONSES.has(self) ? self : null,
     attendees: item.attendees?.length ?? 0,
+    etag: item.etag?.slice(0, 200) ?? null,
+    organizerSelf: !!item.organizer?.self || (!item.organizer && !item.attendees?.length),
   };
 }
 
 /** One account's calendars the user shows in Google (primary first) and their events from `from` to `to` (local
  * dates, inclusive). */
 export async function readAccount(
-  session: Awaited<ReturnType<GoogleService["session"]>>, from: string, to: string, signal?: AbortSignal,
-): Promise<{ calendars: Array<{ id: string; name: string }>; events: EventRow[] }> {
+  session: Pick<GoogleSession, "get">, from: string, to: string, signal?: AbortSignal,
+): Promise<{ calendars: Array<{ id: string; name: string; writable: boolean }>; events: EventRow[] }> {
   const list = await session.get(`${API}/users/me/calendarList?${new URLSearchParams({ minAccessRole: "reader", maxResults: "100" })}`, signal);
-  const calendars = ((list.items as Array<{ id?: string; summary?: string; summaryOverride?: string; primary?: boolean; selected?: boolean; hidden?: boolean }> | undefined) ?? [])
+  const calendars = ((list.items as Array<{ id?: string; summary?: string; summaryOverride?: string; primary?: boolean; selected?: boolean; hidden?: boolean; accessRole?: string }> | undefined) ?? [])
     .filter((item) => item.id && (item.primary || (item.selected && !item.hidden)))
     .sort((a, b) => Number(!!b.primary) - Number(!!a.primary))
-    .map((item) => ({ id: item.id!, name: (item.summaryOverride || item.summary || item.id!).slice(0, 120) }));
+    .map((item) => ({ id: item.id!, name: (item.summaryOverride || item.summary || item.id!).slice(0, 120), writable: item.accessRole === "owner" || item.accessRole === "writer" }));
   const [fy, fm, fd] = from.split("-").map(Number);
   const [ty, tm, td] = to.split("-").map(Number);
   const window = {

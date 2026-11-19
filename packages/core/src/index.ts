@@ -37,7 +37,7 @@ export {
   openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, ProposalStateError, PROPOSAL_TTL_MS,
   type Proposal, type ProposalState, type ProposalStep,
 } from "./proposals.ts";
-export { getSettings, updateSettings, userLocale, LOCALES, SettingsError, type Locale, type UserSettings } from "./settings.ts";
+export { getSettings, updateSettings, userLocale, localeOf, LOCALES, SettingsError, type Locale, type UserSettings } from "./settings.ts";
 export {
   createAutomation, updateAutomation, deleteAutomation, getAutomation, listAutomations, fireDueAutomations, runAutomationNow, ensureTemplates,
   latestSlot, nextSlot, automationName, automationGoal, AutomationError, AUTOMATION_TEMPLATES, CATCH_UP_MS,
@@ -45,3 +45,7 @@ export {
 } from "./automations.ts";
 export { listProjects, getProject, addProject, trustProject, removeProject, ProjectError, PROJECT_ID, type Project } from "./projects.ts";
 export { listDevices, pairDevice, deviceForToken, revokeDevice, hashToken, DeviceError, DEVICE_KINDS, type Device, type DeviceKind } from "./devices.ts";
+export {
+  enqueueOutbound, claimOutbound, finishOutbound, retryOutbound, interruptOutbound, getOutbound, listOutbound, OUTBOUND_STATES, OUTBOUND_MAX_ATTEMPTS,
+  type Outbound, type OutboundState,
+} from "./outbound.ts";

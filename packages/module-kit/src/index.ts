@@ -14,8 +14,9 @@ import { Value } from "typebox/value";
 
 export { Type, type Static, type TSchema };
 
-/** How much consent an operation needs (ARCHITECTURE.md §5.2). */
-export const PERMISSION_LEVELS = ["read", "local", "batch", "irreversible"] as const;
+/** How much consent an operation needs (ARCHITECTURE.md §5.2). `external` changes something outside Alfred (the
+ * user's Google Calendar, an email sent from their Gmail): a run never does it directly, it can only propose it. */
+export const PERMISSION_LEVELS = ["read", "local", "batch", "irreversible", "external"] as const;
 export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
 /** What an unattended run may do without asking. */
 export const RUN_LEVELS: readonly PermissionLevel[] = ["read", "local"];
@@ -48,7 +49,7 @@ export interface ModuleTool<P extends TSchema = TSchema> {
    * records it names now (ids and revisions, not a title to search later), and the subjects it touches
    * (`todo:<id>`), so the proposal goes stale if they change. Tools without it cannot be proposed.
    */
-  pin?(world: World, params: Static<P>): { op: string; input: unknown; subjects?: string[]; preview?: string } | { error: string };
+  pin?(world: World, params: Static<P>): { op: string; input: unknown; subjects?: string[]; preview?: string; detail?: string } | { error: string };
 }
 
 /** A view a device can open for a module: a pane beside the conversation, or a page. */
@@ -88,7 +89,14 @@ export interface ModuleServices {
  * per account that makes authorised GETs. One session per pass: getting it may refresh the account's token. */
 export interface GoogleService {
   accounts(): Array<{ email: string; capabilities: readonly string[] }>;
-  session(email: string): Promise<{ get(url: string, signal?: AbortSignal): Promise<Record<string, unknown>> }>;
+  session(email: string): Promise<GoogleSession>;
+}
+export interface GoogleSession {
+  /** A read; throws ServiceError unless Google answers 2xx. */
+  get(url: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  /** A change. Answers whatever status Google gave (a 409 or 412 means something to the caller); throws ServiceError
+   * only when Google could not be asked or refused the account (401). */
+  send(method: "POST" | "PATCH" | "PUT" | "DELETE", url: string, body?: unknown, options?: { headers?: Record<string, string>; signal?: AbortSignal }): Promise<{ status: number; body: Record<string, unknown> }>;
 }
 
 /** Why an outside service could not be read: `reconnect` (the user must sign in again in Settings) or `unavailable`. */
@@ -262,7 +270,7 @@ export function assistantTools(world: World, modules: readonly AlfredModule[]): 
           // What the user reads: the module's own words for the pinned step, else the tool and what it names.
           let preview = pinned.preview ?? tool.label;
           if (!pinned.preview) try { preview = tool.describe ? `${tool.label}：${tool.describe(world, parsed as never)}` : tool.label; } catch { /* keep the label */ }
-          steps.push({ op: pinned.op, input: pinned.input, preview });
+          steps.push({ op: pinned.op, input: pinned.input, preview, ...(pinned.detail ? { detail: pinned.detail.slice(0, 8000) } : {}) });
           subjects.push(...(pinned.subjects ?? []));
         }
         const run = coreContext()?.run;

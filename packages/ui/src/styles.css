@@ -575,3 +575,6 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
   .mail-read { padding: 14px 18px 60px; }
   .mail-back { display: inline-flex; margin-bottom: 10px; }
 }
+
+/* A proposal step with more than a line to read (an email's whole text). */
+.step-detail { margin: 6px 0 2px; max-height: 320px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--wash); color: var(--copy); font: .8125rem/1.6 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }

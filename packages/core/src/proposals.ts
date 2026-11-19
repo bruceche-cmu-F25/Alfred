@@ -7,7 +7,7 @@
  * never a run's.
  */
 import type { DatabaseSync } from "node:sqlite";
-import { coreContext } from "./context.ts";
+import { coreContext, withCoreContext } from "./context.ts";
 import { latestEventSeq, recordDomainEvent, toEvent, type CoreEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { createNotice } from "./notices.ts";
@@ -23,6 +23,8 @@ export interface ProposalStep {
   input: unknown;
   /** What it does, in the user's words ("删除待办「交周报」"). */
   preview: string;
+  /** The whole of it, when there is more to read than a line (an email's text). */
+  detail?: string;
 }
 
 export interface Proposal {
@@ -154,7 +156,7 @@ export function acceptProposal(world: World, id: string, apply: (step: ProposalS
     }
     const decided = event(world, proposal, "proposal.decided", { decision: "accepted" }, now);
     try {
-      world.tx(() => { for (const step of proposal.steps) apply(step); });
+      withCoreContext({ ...(coreContext() ?? { actor: "user" }), proposalId: id }, () => world.tx(() => { for (const step of proposal.steps) apply(step); }));
     } catch (error) {
       const conflict = error instanceof Error && error.name.endsWith("ConflictError");
       const message = error instanceof Error ? error.message : String(error);

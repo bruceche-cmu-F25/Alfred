@@ -2,7 +2,7 @@
  * say unread, important, starred and category; a body is a tree of MIME parts, of which only text is read (never an
  * attachment). Adapted from Robin's extension/robin/gmail.ts.
  */
-import type { GoogleService } from "@alfred/module-kit";
+import type { GoogleSession } from "@alfred/module-kit";
 import type { MailCategory } from "./types.ts";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -117,14 +117,14 @@ async function inParallel<T, R>(items: T[], limit: number, work: (item: T) => Pr
   return results;
 }
 
-async function ids(session: Awaited<ReturnType<GoogleService["session"]>>, q: string, signal?: AbortSignal): Promise<string[]> {
+async function ids(session: Pick<GoogleSession, "get">, q: string, signal?: AbortSignal): Promise<string[]> {
   const body = await session.get(`${API}/messages?${new URLSearchParams({ q, maxResults: String(INBOX_MAX) })}`, signal);
   return ((body.messages as Array<{ id?: string }> | undefined) ?? []).map((message) => message.id).filter((id): id is string => !!id);
 }
 
 /** What is in the inbox now (ids, newest first), which of those are unread, and the new ones in full. */
 export async function readInbox(
-  session: Awaited<ReturnType<GoogleService["session"]>>, known: ReadonlySet<string>, signal?: AbortSignal,
+  session: Pick<GoogleSession, "get">, known: ReadonlySet<string>, signal?: AbortSignal,
 ): Promise<{ inbox: string[]; unread: Set<string>; added: MessageRow[] }> {
   const inbox = await ids(session, INBOX_QUERY, signal);
   const unread = new Set(await ids(session, `${INBOX_QUERY} is:unread`, signal));

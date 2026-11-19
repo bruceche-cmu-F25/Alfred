@@ -23,6 +23,10 @@ export interface CalendarEvent {
   attendees: number;
   /** The colour slot of its calendar (tokens.css `data-k`). */
   k: string;
+  /** Alfred may propose moving it: the user organizes it, in a calendar they may change. */
+  editable: boolean;
+  /** An invitation the user can answer. */
+  invited: boolean;
 }
 
 /** One connected account's calendars, and how its last read went. */
@@ -32,7 +36,9 @@ export interface CalendarSource {
   error: string | null;
   /** The account must be connected again in Settings. */
   reconnect: boolean;
-  calendars: Array<{ id: string; name: string; k: string }>;
+  /** The user let Alfred change this account's calendar (Settings: 日历：替你加和改). */
+  canWrite: boolean;
+  calendars: Array<{ id: string; name: string; k: string; writable: boolean }>;
 }
 
 export interface CalendarSnapshot {

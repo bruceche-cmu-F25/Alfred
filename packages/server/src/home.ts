@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CORE_MIGRATIONS, createRunDrain, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
+  CORE_MIGRATIONS, createRunDrain, interruptOutbound, listOutbound, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
   type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type World,
 } from "@alfred/core";
 import { assistantTools, moduleMigrations, runTools, type AlfredModule, type ModuleServices } from "@alfred/module-kit";
@@ -70,6 +70,8 @@ export interface Home {
   models(): Promise<EngineModel[]>;
   /** Refreshes a module's mirror of an outside service now (a device asked); resolves when done. */
   syncModule(id: string): Promise<void>;
+  /** Delivers accepted outside changes now (after a proposal is accepted, an op clicked), not at the next sync. */
+  deliver(): void;
   /** Starts the runs of automations that are due now (the clock calls it; tests call it with a time). */
   tickAutomations(now?: number): Run[];
   /** Waits for the current drain (tests). */
@@ -146,6 +148,9 @@ export function openHome(options: HomeOptions): Home {
   }
   const owner = `home-${process.pid}-${Date.now().toString(36)}`;
   const orphaned = interruptOrphanedRuns(world, owner);
+  // Changes outside (an event, an email) the last node was in the middle of delivering: retried if that is safe.
+  const cutOff = interruptOutbound(world);
+  if (cutOff) options.log?.(`${cutOff} outbound change(s) were being delivered when the last home node stopped`);
   if (orphaned) options.log?.(`${orphaned} run(s) were still running when the last home node stopped; marked interrupted, not re-run`);
   const live = new EventEmitter<{ update: [LiveUpdate] }>();
   live.setMaxListeners(0);
@@ -205,6 +210,10 @@ export function openHome(options: HomeOptions): Home {
     models: () => options.engine.models?.() ?? Promise.resolve([]),
     tickAutomations,
     syncModule,
+    deliver: () => {
+      const waiting = new Set(listOutbound(world, { states: ["queued"] }).map((outbound) => outbound.module));
+      for (const module of options.modules) if (module.sync && waiting.has(module.id)) void syncModule(module.id);
+    },
     idle: () => current,
     close() {
       clearInterval(clock);

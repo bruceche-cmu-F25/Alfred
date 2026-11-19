@@ -7,6 +7,8 @@ export interface CoreContext {
   actor: Actor;
   /** Set only by the run executor. Domain writes under it are fenced by the run's lease. */
   run?: { id: string; owner: string };
+  /** Set while an accepted proposal's steps run: what they do happened on the user's yes to it. */
+  proposalId?: string;
 }
 
 const storage = new AsyncLocalStorage<CoreContext>();
