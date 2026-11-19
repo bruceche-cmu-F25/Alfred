@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ATTENTION, claimNotice, CORE_MIGRATIONS, createNotice, listEvents, listNotices, openWorld, presentNotice, recordDomainEvent, type World } from "@alfred/core";
+import { ATTENTION, claimNotice, CORE_MIGRATIONS, createNotice, listEvents, listNotices, openWorld, presentNotice, recordDomainEvent, reportPresence, type AwayDigest, type World } from "@alfred/core";
 import { OUTLET_STALE_MS, Outlets, watchAttention, type Reach } from "../src/index.ts";
 
 /** The table, with a short wait before a notice nobody took is the phone's. */
@@ -13,7 +13,7 @@ const make = (w: World, kind = "run_request", payload: Record<string, unknown> =
 });
 /** The phones, as an outlet: `sent` gets what it was asked to tell; `goesOut` is whether a push service took it. */
 const phone = (sent: string[], goesOut = true): Reach => ({
-  outlet: { id: "push", kind: "push", attending: false }, holdMs: 60_000,
+  outlet: { id: "push", kind: "push", attending: false },
   send: async (notice) => { sent.push(notice.id); return goesOut; },
 });
 
@@ -30,6 +30,9 @@ test("a notice nobody took is handed where the table says, when it says, once, a
     assert.deepEqual(sent, [left.id]);
     assert.deepEqual(listEvents(w).events.filter((event) => event.kind === "notice.assigned").map((event) => [event.payload.noticeId, event.payload.to]),
       [[taken.id, "mac.figure"], [left.id, "push"]]);
+    // Once it went out it was told, on the phone: nothing shows it again when a hold runs out, since there is none.
+    const pushed = listNotices(w, { states: ["presented"] }).map((notice) => [notice.id, notice.claimedBy, notice.claimUntil]);
+    assert.deepEqual(pushed, [[left.id, "push", null]]);
     // Neither of these is the phone's: the welcome, and a change outside that simply went through.
     make(w, "welcome");
     make(w, "outbound", { state: "done" });
@@ -167,7 +170,8 @@ test("a window left in front and not touched is not shown things; touched again,
     const asked = make(w), news = make(w, "outbound", { state: "done" });
     await wait(150);
     assert.deepEqual(sent, [asked.id], "what needs the user goes to the phone");
-    assert.deepEqual(listNotices(w).map((notice) => [notice.kind, notice.state, notice.claimedBy]), [["run_request", "claimed", "push"], ["outbound", "pending", null]]);
+    assert.deepEqual(listNotices(w, { states: ["pending", "claimed", "presented"] }).map((notice) => [notice.kind, notice.state, notice.claimedBy]),
+      [["run_request", "presented", "push"], ["outbound", "pending", null]]);
     says(0); // the user is back at it
     assert.deepEqual(listNotices(w).find((notice) => notice.id === news.id)!.claimedBy, "mac.window");
     assert.deepEqual(handings(w), ["push", "mac.window"]);
@@ -191,5 +195,55 @@ test("a window that missed its chance is not asked over and over, and gets anoth
     assert.deepEqual(handings(w), ["mac.window", "mac.window"]);
     presentNotice(w, made.id, "mac.window");
     assert.equal(only(w).state, "presented");
+  } finally { attention.close(); w.close(); }
+});
+
+const welcomesOf = (w: World) => listNotices(w, { states: ["pending", "claimed", "presented"] }).filter((notice) => notice.kind === "welcome");
+
+test("back after a while: the welcome is made where the user turned up and tells what waited; nothing is handed out one by one", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const sent: string[] = [];
+  const attention = watchAttention({ world: w, outlets, reaches: () => [phone(sent)], policy: quick, presence: { awayReturnMs: 100 } });
+  try {
+    reportPresence(w, { clientId: "mac", kind: "active" });
+    reportPresence(w, { clientId: "mac", kind: "away" }); // the Mac was locked
+    const asked = make(w), news = make(w, "outbound", { state: "done" });
+    await wait(150);
+    assert.deepEqual(sent, [asked.id], "the question went to the phone; 'it went through' waits");
+    outlets.report("home", { client: "mac.window", kind: "window", attending: true, idleMs: 0 }); // back, and looking at Alfred
+    const [welcome] = welcomesOf(w);
+    assert.deepEqual([welcome.state, welcome.claimedBy, (welcome.payload as unknown as AwayDigest).waiting], ["claimed", "mac.window", 1]);
+    const told = listNotices(w, { states: ["presented"] }).map((notice) => [notice.id, notice.claimedBy]);
+    assert.deepEqual(told, [[asked.id, "push"], [news.id, "welcome"]]);
+    await wait(150);
+    assert.deepEqual(handings(w), ["push", "mac.window"], "the question to the phone, the welcome to the window, and nothing else to anyone");
+  } finally { attention.close(); w.close(); }
+});
+
+test("a phone in the hand is being here: opening the Mac after that is not a return", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const attention = watchAttention({ world: w, outlets, reaches: () => [], policy: quick, presence: { awayReturnMs: 100 } });
+  try {
+    const onPhone = () => outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: true, idleMs: 0 });
+    const atMac = () => outlets.report("home", { client: "mac", kind: "figure", attending: true, idleMs: 0 });
+    reportPresence(w, { clientId: "mac", kind: "active" });
+    reportPresence(w, { clientId: "mac", kind: "away" }); // the Mac was locked,
+    onPhone(); // and the phone picked up straight away
+    const made = make(w, "run_result", { status: "completed" });
+    await wait(15);
+    assert.deepEqual([only(w).id, only(w).claimedBy], [made.id, "phone.tab"], "what happens meanwhile is shown on the phone");
+    presentNotice(w, made.id, "phone.tab");
+    await wait(150);
+    onPhone();
+    atMac();
+    assert.deepEqual(welcomesOf(w), [], "the user never left");
+    // Without the phone, the same time away from a locked Mac is a return, and the Mac's figure greets.
+    outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: false });
+    reportPresence(w, { clientId: "mac", kind: "away" });
+    await wait(150);
+    atMac();
+    assert.deepEqual(welcomesOf(w).map((notice) => notice.claimedBy), ["mac"]);
   } finally { attention.close(); w.close(); }
 });

@@ -3,12 +3,19 @@
  *
  * There are two ways to hand one over. A window or the Mac's figure is named as the notice's holder: the device
  * sees that, shows the notice and says so; if it does not within the table's time, the next row is tried. Push the
- * home node sends by itself (push.ts), and then holds the notice as `push`.
+ * home node sends by itself (push.ts); once it went out the phone has told the user, and nothing shows it again.
+ *
+ * An outlet in use is also how the home node knows the user is here, on whichever device (core presence.ts). When
+ * that is a return after a while, the welcome is made there and then, and tells what waited: so on a return
+ * nothing is handed out one by one.
  *
  * A device no longer takes notices for itself. One from before this still can (`POST /api/notices/:id/claim`):
  * what it takes is held, so it does not come up here until that hold runs out.
  */
-import { ATTENTION, attends, claimNotice, decide, isOpen, releaseNotice, undeliveredNotices, type AttentionPolicy, type Notice, type Outlet, type World } from "@alfred/core";
+import {
+  ATTENTION, attends, claimNotice, decide, isOpen, presentNotice, releaseNotice, reportPresence, undeliveredNotices,
+  type AttentionPolicy, type Notice, type Outlet, type PresenceOptions, type World,
+} from "@alfred/core";
 
 /** An outlet as it last described itself, and the device it spoke from. */
 export interface SeenOutlet extends Outlet {
@@ -60,10 +67,9 @@ export class Outlets {
 /** An outlet the home node can tell the user through by itself. */
 export interface Reach {
   outlet: Outlet;
-  /** Tells the user there. True when it went out, which is not proof they saw it. */
+  /** Tells the user there. True when it went out: that counts as told, though it is no proof they saw it. What
+   * still needs them stays in the list, and the welcome says how many things wait. */
   send(notice: Notice): Promise<boolean>;
-  /** How long the notice stays this outlet's once it went out, before another may show it after all. */
-  holdMs: number;
 }
 
 export interface AttentionOptions {
@@ -73,6 +79,8 @@ export interface AttentionOptions {
   /** The outlets the home node tells through by itself, right now. */
   reaches(): Reach[];
   policy?: AttentionPolicy;
+  /** When being seen again counts as a return (core presence.ts). */
+  presence?: PresenceOptions;
   log?: (message: string) => void;
 }
 
@@ -112,8 +120,11 @@ export function watchAttention(options: AttentionOptions): { look(): void; close
     sending.delete(notice.id);
     if (closed) return;
     if (out) {
-      // It is that outlet's now, so no other shows it again later. A device may have taken it meanwhile.
-      try { claimNotice(world, notice.id, reach.outlet.id, { ttlMs: reach.holdMs }); } catch { /* taken */ }
+      // It was told there, and that is recorded like any other showing. A device may have taken it meanwhile.
+      try {
+        claimNotice(world, notice.id, reach.outlet.id, { ttlMs: policy.presentWithinMs });
+        presentNotice(world, notice.id, reach.outlet.id);
+      } catch { /* taken */ }
       return;
     }
     // It did not go out there: that outlet is passed over, and the table is asked once more.
@@ -166,8 +177,17 @@ export function watchAttention(options: AttentionOptions): { look(): void; close
   const unsubscribe = world.onCommit(() => setImmediate(look));
   const unfollow = options.outlets?.onReport((outlet, was) => {
     const now = Date.now();
-    // The user turned back to it: it gets another chance at what it did not show before.
-    if (attends(outlet, now, policy) && !(was && attends(was, now, policy))) for (const set of tried.values()) set.delete(outlet.id);
+    if (attends(outlet, now, policy)) {
+      // Where the user can be told is where the user is: a phone in the hand counts like the Mac. Said before
+      // anything is handed out below: if this is a return, the welcome is made here and tells what waited.
+      try {
+        reportPresence(world, { clientId: outlet.id, kind: "active", now, ...options.presence });
+      } catch (error) {
+        options.log?.(`noting the user at ${outlet.id} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      // The user turned back to it: it gets another chance at what it did not show before.
+      if (!(was && attends(was, now, policy))) for (const set of tried.values()) set.delete(outlet.id);
+    }
     look();
   });
   look();

@@ -1,8 +1,9 @@
 /** Web Push to paired devices (docs/research/remote-access.md): the phones' notifications, as one outlet the home node
  * can reach by itself. This file knows how to send; it does not decide. Which notices go to the phone, and when, is
  * the attention table's to say (core attention.ts), and the home node's attention (attention.ts) does the handing: a
- * notice nobody took is pushed to every subscribed device and then held as `push`, so the Mac does not show it again
- * later. A push service accepting it is not proof the user saw it, so it is held, not presented.
+ * notice nobody took is pushed to every subscribed device, and from then on it was told on the phone, so no other
+ * place shows it again later. A push service accepting it is not proof the user saw it: what still needs them stays
+ * in the list, and the welcome says how many things wait when they come back.
  *
  * Lessons carried over from Robin: Apple refuses a VAPID subject that is not a valid URL; urgency `high`, or an idle
  * iPhone delays delivery; a 404/410 means the subscription is gone. Subscriptions live in <data>/push.json (0600),
@@ -34,8 +35,8 @@ type Subscriptions = Record<string, PushSubscriptionJson & { at: string }>;
 /** Sends one payload; rejects with an error carrying `statusCode` when the push service refuses. */
 export type PushSender = (subscription: PushSubscriptionJson, payload: string, keys: VapidKeys) => Promise<void>;
 
-/** How long a pushed notice stays push's before the Mac may show it after all. */
-const PUSH_CLAIM_MS = 12 * 3600_000;
+/** How long a push service keeps a message for a phone that is off. */
+const PUSH_KEEP_MS = 12 * 3600_000;
 const SECRET = "push:vapid";
 export const PUSH_CLIENT = "push";
 /** The phones' push notifications, as the attention table sees them: one outlet, which nobody is ever looking at. */
@@ -54,7 +55,7 @@ export function subject(): string {
 const defaultSender: PushSender = async (subscription, payload, keys) => {
   await webpush.sendNotification(subscription, payload, {
     vapidDetails: { subject: subject(), publicKey: keys.publicKey, privateKey: keys.privateKey },
-    TTL: PUSH_CLAIM_MS / 1000, urgency: "high", timeout: 15_000,
+    TTL: PUSH_KEEP_MS / 1000, urgency: "high", timeout: 15_000,
   });
 };
 
@@ -183,7 +184,6 @@ export class PushService {
     if (!Object.keys(this.#subscriptions).length) return [];
     return [{
       outlet: PUSH_OUTLET,
-      holdMs: PUSH_CLAIM_MS,
       send: async (notice) => (await this.sendTo(noticeMessage(notice, userLocale(this.#options.world)))).accepted > 0,
     }];
   }

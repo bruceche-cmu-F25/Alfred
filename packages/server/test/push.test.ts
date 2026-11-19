@@ -62,7 +62,7 @@ test("a notice reads on a lock screen as on the Mac, in the user's language", ()
   assert.ok(noticeMessage({ id: "n4", kind: "run_result", payload: { reply: "x".repeat(500) } }, "en").body.length <= 200);
 });
 
-test("a notice nobody takes within the grace period goes to the phone once, and is then claimed by push", async () => {
+test("a notice nobody takes within the grace period goes to the phone once, and from then on it was told there", async () => {
   const sent: string[] = [];
   const { dataDir, world, secrets, push, phone, watch, close } = setUp(async (subscription, payload) => { sent.push(`${subscription.endpoint} ${payload}`); });
   try {
@@ -77,8 +77,8 @@ test("a notice nobody takes within the grace period goes to the phone once, and 
     assert.equal(sent.length, 1);
     assert.match(sent[0], /Booked for Friday 3pm/);
     assert.ok(JSON.parse(secrets.values.get("push:vapid")!).privateKey);
-    const [after] = listNotices(world, { states: ["claimed"] }).filter((item) => item.id === left.id);
-    assert.equal(after.claimedBy, "push");
+    const [after] = listNotices(world, { states: ["presented"] }).filter((item) => item.id === left.id);
+    assert.deepEqual([after.claimedBy, after.claimUntil], ["push", null], "told on the phone: there is no hold to run out and show it again");
     // A later commit does not push it again.
     notice(world, "welcome", {});
     await wait(80);
@@ -101,7 +101,8 @@ test("a change outside that failed or may not have happened reaches the phone; o
     assert.match(unsure.body, /^Email ana@example.com: Plan\. Google didn't confirm it/);
     assert.deepEqual([unsure.url, unsure.ack], ["/#p=core.inbox", false], "it opens the inbox, and stays there until looked at");
     assert.equal(sent.find((message) => message.title === "That didn't go through")!.body, "Reply to leo@example.com: Contract: Gmail answered 400");
-    assert.deepEqual(listNotices(world, { states: ["pending", "claimed"] }).map((item) => [item.payload.state, item.claimedBy]).sort(), [["done", null], ["failed", "push"], ["unknown", "push"]]);
+    assert.deepEqual(listNotices(world, { states: ["pending", "claimed", "presented"] }).map((item) => [item.payload.state, item.state, item.claimedBy]).sort(),
+      [["done", "pending", null], ["failed", "presented", "push"], ["unknown", "presented", "push"]]);
   } finally { close(); world.close(); }
 });
 

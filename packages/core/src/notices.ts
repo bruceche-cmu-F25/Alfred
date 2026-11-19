@@ -82,6 +82,23 @@ export function handNotice(db: DatabaseSync, notice: Pick<Notice, "id" | "kind">
   appendEvent(db, { kind: "notice.assigned", subject: `notice:${notice.id}`, actor: "system", runId: null, now, payload: { noticeId: notice.id, kind: notice.kind, to } });
 }
 
+/** Who holds what the welcome told (`claimed_by`). It is no outlet's name, so no window shows any of it again. */
+export const WELCOME_HOLDER = "welcome";
+
+/** The user is back after a while, and the welcome is about to say so. Everything not shown anywhere yet (nobody's,
+ * or handed to someone who has not shown it) is told by that welcome, once: it says what was done and how many
+ * things wait, and none of them is said one by one afterwards. They stay in the list until dismissed. Only inside
+ * a world transaction, next to the welcome. Returns how many there were. */
+export function tellInWelcome(db: DatabaseSync, now: number): number {
+  expire(db, now);
+  const waiting = db.prepare("SELECT id, kind FROM core_notices WHERE state IN ('pending', 'claimed') AND kind != 'welcome' ORDER BY created_at, rowid").all() as { id: string; kind: string }[];
+  for (const notice of waiting) {
+    db.prepare("UPDATE core_notices SET state = 'presented', claimed_by = ?, claim_until = NULL, updated_at = ? WHERE id = ?").run(WELCOME_HOLDER, iso(now), notice.id);
+    appendEvent(db, { kind: "notice.presented", subject: `notice:${notice.id}`, actor: "system", runId: null, now, payload: { noticeId: notice.id, kind: notice.kind, by: WELCOME_HOLDER } });
+  }
+  return waiting.length;
+}
+
 /** The notices not shown anywhere yet, oldest first: nobody's (`pending`), or handed to someone who has not shown
  * it (`claimed`). Unlike `listNotices` it only reads (no expiry pass), so it can be called after every commit
  * without causing one. */

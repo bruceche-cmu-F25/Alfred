@@ -21,7 +21,7 @@ export {
   type Conversation, type ThinkingLevel,
 } from "./conversations.ts";
 export {
-  listNotices, undeliveredNotices, isOpen, claimNotice, releaseNotice, presentNotice, acknowledgeNotice, createNotice, NoticeStateError,
+  listNotices, undeliveredNotices, isOpen, claimNotice, releaseNotice, presentNotice, acknowledgeNotice, createNotice, NoticeStateError, WELCOME_HOLDER,
   type Notice, type NoticeState,
 } from "./notices.ts";
 export { runCommand, commandReplay, CommandConflictError } from "./commands.ts";

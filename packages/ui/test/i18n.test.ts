@@ -29,5 +29,5 @@ test("the language follows the system until the user has chosen", () => {
 test("the welcome is written from the digest, in either language", () => {
   const digest = { since: "", awayMs: 25 * 60_000, runs: { completed: 2, failed: 0, interrupted: 0, goals: [] }, changes: {}, waiting: 1 };
   assert.deepEqual(welcomeLines(digest, "Bruce", "en"), { greeting: "Welcome back, Bruce.", summary: "You were away for 25 minutes: finished 2 things, 1 thing waits for you." });
-  assert.deepEqual(welcomeLines(digest, null, "zh"), { greeting: "欢迎回来。", summary: "你离开了 25 分钟：办完了 2 件事，有 1 件等你看。" });
+  assert.deepEqual(welcomeLines(digest, null, "zh"), { greeting: "欢迎回来。", summary: "你离开了 25 分钟：办完了 2 件事，有 1 件事等你。" });
 });

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  CORE_MIGRATIONS, finishRun, claimNextRun, listEvents, listNotices, openWorld, recordDomainEvent, reportPresence, submitRun,
-  withCoreContext, type World,
+  acknowledgeNotice, CORE_MIGRATIONS, claimNotice, createNotice, finishRun, claimNextRun, listEvents, listNotices, openWorld, presentNotice, recordDomainEvent,
+  reportPresence, submitRun, undeliveredNotices, withCoreContext, type AwayDigest, type World,
 } from "../src/index.ts";
 
 const MIN = 60_000;
@@ -109,7 +109,56 @@ test("the welcome says what Alfred did while the user was away, not what the use
   assert.equal(digest.runs.completed, 1);
   assert.deepEqual(digest.runs.goals, ["add a kite"]);
   assert.deepEqual(digest.changes, { toy: 1 });
-  assert.equal(digest.waiting, 1, "the run's result notice still waits");
+  assert.equal(digest.waiting, 0, "a result is news, and the runs above say it: nothing here waits on the user");
+});
+
+const tell = (w: World, kind: string, payload: Record<string, unknown>, now: number) => w.tx((db) => {
+  const event = recordDomainEvent(w, { kind: "run.completed", payload: {}, now });
+  return createNotice(db, { eventSeq: event.seq, kind, payload, now });
+});
+
+test("on a return the welcome tells what waited, once: nothing is left to say one by one, and it says how many things need the user", () => {
+  const w = world();
+  reportPresence(w, { clientId: "mac", kind: "active", now: T0 });
+  // Before leaving: an interrupted run was shown on the Mac and left there.
+  const old = tell(w, "run_interrupted", {}, T0);
+  claimNotice(w, old.id, "mac", { now: T0 });
+  presentNotice(w, old.id, "mac", { now: T0 });
+  reportPresence(w, { clientId: "mac", kind: "away", now: T0 + MIN });
+  // While away: a result and "it went through" nobody was told of, a question the phone was told of, a proposal
+  // handed to a window that never showed it, and a failed change the user has dealt with on the phone.
+  const result = tell(w, "run_result", { status: "completed" }, T0 + 2 * MIN);
+  const sent = tell(w, "outbound", { state: "done" }, T0 + 3 * MIN);
+  const question = tell(w, "run_request", { kind: "input" }, T0 + 4 * MIN);
+  claimNotice(w, question.id, "push", { now: T0 + 4 * MIN });
+  presentNotice(w, question.id, "push", { now: T0 + 4 * MIN });
+  const proposal = tell(w, "proposal", {}, T0 + 5 * MIN);
+  claimNotice(w, proposal.id, "phone.tab", { now: T0 + 5 * MIN, ttlMs: 8_000 });
+  const refused = tell(w, "outbound", { state: "failed" }, T0 + 6 * MIN);
+  acknowledgeNotice(w, refused.id, { now: T0 + 7 * MIN });
+
+  const before = listEvents(w).cursor;
+  const back = reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 40 * MIN });
+  assert.equal((back.notice!.payload as unknown as AwayDigest).waiting, 3, "the question, the proposal, and the interrupted run from before");
+  // Nothing is anybody's to hand out any more, except the welcome itself.
+  assert.deepEqual(undeliveredNotices(w, T0 + 40 * MIN).map((notice) => [notice.kind, notice.claimedBy]), [["welcome", "mac"]]);
+  const where = (id: string) => { const row = w.db.prepare("SELECT state, claimed_by FROM core_notices WHERE id = ?").get(id)!; return [row.state, row.claimed_by]; };
+  assert.deepEqual([result, sent, proposal].map((notice) => where(notice.id)), [["presented", "welcome"], ["presented", "welcome"], ["presented", "welcome"]]);
+  assert.deepEqual([where(question.id), where(old.id), where(refused.id)], [["presented", "push"], ["presented", "mac"], ["acknowledged", null]], "what was told already is left as it was");
+  // That the welcome told them is recorded, like any other showing.
+  assert.deepEqual(listEvents(w, { after: before }).events.filter((event) => event.kind.startsWith("notice.")).map((event) => [event.kind, event.payload.kind, event.payload.to ?? event.payload.by]),
+    [["notice.assigned", "welcome", "mac"], ["notice.presented", "run_result", "welcome"], ["notice.presented", "outbound", "welcome"], ["notice.presented", "proposal", "welcome"]]);
+  // They stay in the list until dismissed.
+  assert.equal(listNotices(w, { states: ["presented"], now: T0 + 40 * MIN }).length, 5);
+});
+
+test("a short break greets nobody, so what waited is still handed out", () => {
+  const w = world();
+  reportPresence(w, { clientId: "mac", kind: "active", now: T0 });
+  reportPresence(w, { clientId: "mac", kind: "away", now: T0 + MIN });
+  const result = tell(w, "run_result", { status: "completed" }, T0 + 2 * MIN);
+  assert.equal(reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 5 * MIN }).returned, false);
+  assert.deepEqual(undeliveredNotices(w, T0 + 5 * MIN).map((notice) => [notice.id, notice.state]), [[result.id, "pending"]]);
 });
 
 test("a newer return replaces a welcome nobody saw", () => {

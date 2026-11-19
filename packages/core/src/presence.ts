@@ -13,12 +13,14 @@
  * new local day. A return records `presence.returned` and one `welcome`
  * notice, in one transaction, handed to the device that saw the user come
  * back. A second window, a reload or another device reporting a moment later
- * finds fresh presence and greets nobody.
+ * finds fresh presence and greets nobody. What still waited to be told is told
+ * by that welcome (docs/design/attention.md): it is not said one by one after.
  */
 import type { DatabaseSync } from "node:sqlite";
 import { appendEvent } from "./events.ts";
 import { iso } from "./ids.ts";
-import { createNotice, handNotice, type Notice } from "./notices.ts";
+import { noticeClass } from "./attention.ts";
+import { createNotice, handNotice, tellInWelcome, type Notice } from "./notices.ts";
 import type { World } from "./world.ts";
 
 export const PRESENCE_KINDS = ["active", "away"] as const;
@@ -46,7 +48,9 @@ export interface AwayDigest {
   runs: { completed: number; failed: number; interrupted: number; goals: string[] };
   /** World changes Alfred or the system made, by module (`todo`, …). Yours are not news. */
   changes: Record<string, number>;
-  /** Notices that arrived while away and still wait (welcomes excluded). */
+  /** Things that wait on the user right now (a question, a proposal, an interrupted run, a change outside that
+   * failed or may not have happened), whether or not a phone was told, and from before they left too. News is not
+   * counted: the runs above are the news. */
   waiting: number;
 }
 export interface PresenceResult { returned: boolean; notice: Notice | null }
@@ -64,8 +68,9 @@ function digest(db: DatabaseSync, since: { seq: number; at: string }, now: numbe
     const module = row.kind.split(".")[0];
     changes[module] = (changes[module] ?? 0) + row.n;
   }
-  const waiting = db.prepare(`SELECT count(*) AS n FROM core_notices WHERE created_at > ? AND kind != 'welcome'
-    AND state IN ('pending', 'claimed', 'presented')`).get(since.at) as { n: number };
+  const open = db.prepare(`SELECT kind, payload FROM core_notices WHERE kind != 'welcome'
+    AND state IN ('pending', 'claimed', 'presented') AND (expires_at IS NULL OR expires_at > ?)`).all(iso(now)) as { kind: string; payload: string }[];
+  const waiting = open.filter((row) => noticeClass(row.kind, JSON.parse(row.payload) as Record<string, unknown>) === "needs_you").length;
   return {
     since: since.at,
     awayMs: now - Date.parse(since.at),
@@ -76,7 +81,7 @@ function digest(db: DatabaseSync, since: { seq: number; at: string }, now: numbe
       goals: runs.filter((run) => run.state === "completed").slice(-3).map((run) => run.goal.slice(0, 80)),
     },
     changes,
-    waiting: waiting.n,
+    waiting,
   };
 }
 
@@ -145,6 +150,8 @@ export function reportPresence(world: World, input: { clientId: string; kind: Pr
     const notice = createNotice(db, { eventSeq: event.seq, kind: "welcome", payload: { ...away }, ttlMs: WELCOME_TTL_MS, now });
     // The device that saw the user come back is the one that greets them.
     handNotice(db, notice, input.clientId, now + CLAIM_MS, now);
+    // And the greeting is where they hear of what waited: nothing is handed out one by one after it.
+    tellInWelcome(db, now);
     here();
     return { returned: true, notice: { ...notice, state: "claimed", claimedBy: input.clientId, claimUntil: iso(now + CLAIM_MS) } };
   });

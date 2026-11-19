@@ -249,7 +249,7 @@ export const zh = {
   "welcome.failed": "{n} 件没办成",
   "welcome.interrupted": "{n} 件中断了",
   "welcome.todos": "改动了 {n} 条待办",
-  "welcome.waiting": "有 {n} 件等你看",
+  "welcome.waiting": "有 {n} 件事等你",
   "welcome.summary": "{away}：{parts}。",
   "welcome.quiet": "{away}，这段时间没有新动静。",
 

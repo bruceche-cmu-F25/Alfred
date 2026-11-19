@@ -237,7 +237,7 @@ export function openHome(options: HomeOptions): Home {
   // Who tells the user about a notice, where and when: decided here, once, for every device.
   const outlets = new Outlets();
   const reaches: Array<() => Reach[]> = [];
-  const attention = watchAttention({ world, outlets, reaches: () => reaches.flatMap((list) => list()), policy: options.attention, log: options.log });
+  const attention = watchAttention({ world, outlets, reaches: () => reaches.flatMap((list) => list()), policy: options.attention, presence: options.presence, log: options.log });
   return {
     world,
     modules: options.modules,

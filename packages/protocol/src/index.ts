@@ -184,7 +184,8 @@ export interface Notice {
   createdAt: string;
   updatedAt: string;
   /** The outlet it was handed to (docs/design/attention.md): the one that is to show it, or that did. A device
-   * shows only the notices handed to its own outlets. */
+   * shows only the notices handed to its own outlets. Two names are no device's: `push` (a phone's notification
+   * told it) and `welcome` (it waited until the user came back, and the welcome told it). */
   claimedBy: string | null;
   /** Until when that outlet has to show it; after that the home node hands it on. */
   claimUntil: string | null;
@@ -312,6 +313,8 @@ export interface AwayDigest {
   awayMs: number;
   runs: { completed: number; failed: number; interrupted: number; goals: string[] };
   changes: Record<string, number>;
+  /** How many things wait on the user right now (questions, proposals, interrupted runs, changes outside that
+   * failed or may not have happened). What only waited to be told is told by this welcome and not said again. */
   waiting: number;
 }
 

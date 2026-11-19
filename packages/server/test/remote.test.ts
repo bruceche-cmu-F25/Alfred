@@ -196,7 +196,7 @@ test("a device pairs with a one-time code, then reaches everything but credentia
   } finally { close(); }
 });
 
-test("an outlet's report is filed under the device it came from, and is not an event", async () => {
+test("an outlet's report is filed under the device it came from, and is not an event; an outlet in use says the user is here", async () => {
   const { home, local, ingress, close } = await setUp();
   try {
     await ask(local, "/api/remote", { body: { enabled: true } });
@@ -223,7 +223,12 @@ test("an outlet's report is filed under the device it came from, and is not an e
         ["mac", "figure", "home", false, 300],
       ]);
     }
-    assert.equal(listEvents(home.world).cursor, before, "what a device sees right now is not something that happened");
+    // What a device sees right now is not something that happened. That the user is here is: the phone in their
+    // hand is the first sign of them, and saying it again is not news.
+    const happened = () => listEvents(home.world, { after: before }).events.map((event) => [event.kind, event.payload.client]);
+    assert.deepEqual(happened(), [["presence.active", "tab-1"]]);
+    assert.equal((await ask(ingress, "/api/outlets", { headers: as, body: { client: "tab-1", kind: "window", attending: true, idleMs: 0 } })).status, 200);
+    assert.deepEqual(happened(), [["presence.active", "tab-1"]]);
   } finally { close(); }
 });
 
