@@ -18,7 +18,7 @@ export interface InboxProps {
 }
 
 /** What one decision did, said back briefly. */
-function outcomeText(state: string, error?: string): string {
+export function outcomeText(state: string, error?: string): string {
   if (state === "executed") return t("inbox.done");
   if (state === "stale") return t("inbox.out.stale");
   if (state === "expired") return t("inbox.out.expired");

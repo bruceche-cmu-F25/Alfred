@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Conversation } from "@alfred/protocol";
 import { t } from "../i18n/index.ts";
-import { Icon, type IconName } from "./icons.tsx";
+import { findItems, type FindCommand } from "./find.ts";
+import { Icon } from "./icons.tsx";
 import { MicButton } from "../voice/MicButton.tsx";
 import { appendDictation } from "../voice/wav.ts";
 import type { PageDef } from "./pages.tsx";
 
-interface Item { id: string; label: string; icon: IconName; hint?: string; run(): void }
+type Item = FindCommand;
 
 export interface PaletteProps {
   pages: PageDef[];
   conversations: Conversation[];
   /** Extra commands, e.g. "new conversation", "close Alfred". */
-  actions: Array<{ id: string; label: string; icon: IconName; hint?: string; run(): void }>;
+  actions: FindCommand[];
   onPage(key: string): void;
   onSelect(id: string): void;
   /** Ask Alfred in words: the text becomes a message in the open conversation (or a new one). */
@@ -20,7 +21,8 @@ export interface PaletteProps {
   onClose(): void;
 }
 
-/** ⌘K: go anywhere, run a command, or just say it to Alfred. */
+/** ⌘K where the ask bar is not on screen (Alfred's panel is open, or the page is Code): go anywhere, run a command,
+ * or just say it to Alfred. Where the bar is, ⌘K goes to the bar, which finds the same things (shell/find.ts). */
 export function Palette({ pages, conversations, actions, onPage, onSelect, onAsk, onClose }: PaletteProps) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -28,14 +30,8 @@ export function Palette({ pages, conversations, actions, onPage, onSelect, onAsk
   useEffect(() => { input.current?.focus(); }, []);
 
   const items = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const match = (text: string) => !q || text.toLowerCase().includes(q);
-    const list: Item[] = [
-      ...pages.filter((page) => match(page.title)).map((page, n) => ({ id: `page:${page.key}`, label: t("pal.go", { title: page.title }), icon: page.icon, hint: n < 9 ? `⌥${n + 1}` : undefined, run: () => onPage(page.key) })),
-      ...actions.filter((action) => match(action.label)),
-      ...conversations.filter((conversation) => match(conversation.title)).slice(0, q ? 8 : 5)
-        .map((conversation) => ({ id: `conv:${conversation.id}`, label: conversation.title, icon: "chat" as const, hint: t("pal.conversation"), run: () => onSelect(conversation.id) })),
-    ];
+    const q = query.trim();
+    const list: Item[] = findItems(query, { pages, commands: actions, conversations, onPage, onSelect });
     if (q) {
       const ask: Item = { id: "ask", label: t("pal.ask", { text: query.trim() }), icon: "chat", hint: "↵", run: () => onAsk(query.trim()) };
       // Saying it is the default when nothing else matches.

@@ -1,0 +1,71 @@
+/* The ask bar under the page (shell/AskBar.tsx). Colours from tokens.css and styles.css.
+   The bar is a row of the page; the card, the suggestions and what was found sit over the page above it, for a
+   while. */
+.ask { position: relative; z-index: 6; flex: none; width: min(640px, calc(100% - 32px)); margin: 6px auto calc(14px + env(safe-area-inset-bottom, 0px)); }
+/* Just above the bar the page fades out across its whole width, the way turns fade under the panel's head: lists
+   and the lines between columns dissolve into the bar's row instead of being cut at its edge. Every list keeps
+   its own space at the end, so its last row scrolls clear of the fade. */
+.ask::before { content: ""; position: absolute; left: 50%; bottom: calc(100% + 6px); width: 100cqw; height: 36px; transform: translateX(-50%); background: linear-gradient(to top, var(--bg), color-mix(in oklab, var(--bg) 70%, transparent) 40%, transparent); pointer-events: none; }
+.ask-form { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 5px 6px 5px 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--field); box-shadow: 0 1px 2px oklch(0 0 0 / .04), 0 6px 20px oklch(0 0 0 / .06); transition: border-color .15s, box-shadow .15s; }
+/* Alfred's colour is on the bar only while you are in it. */
+.ask-form:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--alf-soft); }
+.ask-figure { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; }
+.ask-figure:hover { background: var(--wash); }
+.ask-form input { flex: 1; min-width: 0; height: 34px; padding: 0 4px; border: 0; background: none; outline: none; }
+.ask-form input::placeholder { color: var(--muted); }
+.ask-form kbd { flex: none; min-width: 20px; padding: 0 6px; border-radius: 6px; background: var(--wash); color: var(--muted); font: .6875rem/1.7 var(--mono); text-align: center; }
+.ask-form .send { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--accent-solid); color: var(--accent-ink); }
+.ask-form .send:disabled { opacity: 1; background: color-mix(in oklab, var(--field), var(--ink) 9%); color: var(--muted); }
+html.desktop .ask { -webkit-app-region: no-drag; }
+
+/* Over the page, above the bar: the card, then the suggestions or what was found, next to the field. */
+.ask-over { position: absolute; left: 0; right: 0; bottom: calc(100% + 10px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.ask-over > * { pointer-events: auto; }
+.ask-chips { display: flex; gap: 6px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
+.ask-chips .suggestion { background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), 0 2px 8px oklch(0 0 0 / .06); }
+/* What the words name: pages, commands, conversations, and asking Alfred last, as in ⌘K's palette. */
+.ask-found { margin: 0; padding: 6px; list-style: none; border: 1px solid var(--line); border-radius: 14px; background: var(--raise); box-shadow: var(--shadow); }
+.ask-found button { width: 100%; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: 9px; color: var(--copy); text-align: left; }
+.ask-found button span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ask-found button[aria-selected="true"] { background: var(--wash); color: var(--ink); }
+.ask-found kbd { flex: none; color: var(--muted); font: .6875rem var(--mono); }
+.ask-error { align-self: center; padding: 4px 12px; border-radius: 999px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); }
+
+/* The answer comes out of the bar, its tail pointing back at the figure. */
+.ask-card { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 11px 14px 8px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--raise); color: var(--copy); box-shadow: var(--shadow); transform-origin: 26px calc(100% + 24px); animation: ask-unfurl 380ms var(--ease) both; }
+.ask-card::after { content: ""; position: absolute; bottom: -7px; left: 19px; width: 12px; height: 12px; border: 1px solid var(--line); border-left: 0; border-top: 0; border-radius: 0 0 3px 0; background: inherit; transform: rotate(45deg); }
+.ask-card[data-state="waiting"] { border-color: var(--warm); }
+.ask-card[data-state="waiting"]::after { border-color: var(--warm); }
+@keyframes ask-unfurl { from { opacity: 0; transform: scale(.6); } }
+.ask-asked { padding-right: 28px; color: var(--muted); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ask-body { display: flex; flex-direction: column; gap: 8px; max-height: min(44vh, 360px); overflow-y: auto; overflow-wrap: anywhere; }
+.ask-body .reply-text { color: var(--ink); }
+.ask-did { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--accent); font-size: .8125rem; }
+ul.ask-did li::before { content: "✓ "; }
+.ask-decide { display: flex; flex-direction: column; gap: 8px; }
+.ask-decide ol { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 10px; background: var(--wash); font-size: .875rem; }
+.ask-decide li::before { content: "· "; color: var(--muted); }
+.ask-decide .turn-actions { flex-wrap: wrap; }
+.ask-decide .turn-actions button { min-height: 30px; white-space: nowrap; }
+.ask-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 24px; font-size: .8125rem; }
+.ask-foot .grow { flex: 1; }
+.ask-foot button { color: var(--muted); white-space: nowrap; }
+.ask-foot button:hover:not(:disabled) { color: var(--ink); }
+.ask-close { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
+.ask-close:hover { background: var(--wash); color: var(--ink); }
+.ask-close svg { width: 14px; height: 14px; }
+
+/* A narrow page: the key hint goes first. */
+@container page (max-width: 420px) { .ask-form kbd { display: none; } }
+
+/* A phone: the bar takes the place of the dock's tabs, beside the dock's own figure; the card and the suggestions
+   sit above the dock, the card's tail pointing down at that figure. */
+.ask[data-dock] { flex: 1; min-width: 0; width: auto; margin: 9px 0 0 6px; position: static; }
+.ask[data-dock] .ask-form { padding: 4px 5px 4px 4px; box-shadow: none; }
+.ask[data-dock]::before { display: none; }
+.ask[data-dock] .ask-over { position: fixed; left: 10px; right: 10px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+.ask[data-dock] .ask-card { transform-origin: calc(100% - 28px) calc(100% + 24px); }
+.ask[data-dock] .ask-card::after { left: auto; right: 22px; }
+
+/* A question in the card: the card is its box already. */
+.ask-card .request { padding: 0; border: 0; border-radius: 0; background: none; }

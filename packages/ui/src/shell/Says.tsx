@@ -58,12 +58,18 @@ function placeBeside(anchor: DOMRect, card: { width: number; height: number }): 
   return { top: anchor.top + anchor.height / 2 - card.height / 2, left: Math.max(12, anchor.left - BAR_PAD - 12 - card.width), tail: "right", tailAt: card.height / 2 };
 }
 
-/** Below the figure when it is in the top half, above it otherwise; starting near it and kept on screen. */
-function placeCard(anchor: DOMRect, card: { width: number; height: number }): Placement {
+/** What the ask bar has up over the page (its answer, its suggestions), when the figure is the bar's or the dock's. */
+const askOver = (): DOMRect | null => document.querySelector<HTMLElement>(".ask-over")?.getBoundingClientRect() ?? null;
+
+/** Below the figure when it is in the top half, above it otherwise; starting near it and kept on screen. Either
+ * way it keeps clear of what the ask bar has up (`clear`): Alfred says it past the answer, not across it. */
+function placeCard(anchor: DOMRect, card: { width: number; height: number }, clear: DOMRect | null = null): Placement {
   const below = anchor.top + anchor.height / 2 < innerHeight / 2;
   const centre = anchor.left + anchor.width / 2;
   const left = Math.max(12, Math.min(innerWidth - card.width - 12, centre - 30));
-  const top = below ? anchor.bottom + 16 : anchor.top - 16 - card.height;
+  const top = below
+    ? Math.min(innerHeight - card.height - 12, Math.max(anchor.bottom, clear?.bottom ?? -Infinity) + 16)
+    : Math.max(12, Math.min(anchor.top, clear?.top ?? Infinity) - 16 - card.height);
   return { top, left, tail: below ? "top" : "bottom", tailAt: Math.max(18, Math.min(card.width - 18, centre - left)) };
 }
 
@@ -127,7 +133,7 @@ export function Says<T>({ items, id, lines, stayMs, done, remove, onMood }: Prop
         setBrief(!!head || !!bar);
         const size = { width: card.current.offsetWidth, height: card.current.offsetHeight };
         const rect = target.getBoundingClientRect();
-        const next = head ? placeBrief(rect, head.getBoundingClientRect(), size) : mine && bar ? placeBeside(rect, size) : placeCard(rect, size);
+        const next = head ? placeBrief(rect, head.getBoundingClientRect(), size) : mine && bar ? placeBeside(rect, size) : placeCard(rect, size, askOver());
         const key = `${next.top}|${next.left}|${next.tail}|${next.tailAt}`;
         if (key !== last) { last = key; setPlacement(next); }
       }

@@ -130,7 +130,7 @@ function sayAttention(window: BrowserWindow | null = main, locked: boolean = scr
 function createMain(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1120, height: 760, minWidth: 720, minHeight: 480, show: false, title: "Alfred",
-    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 22 },
+    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 19 }, // centred in the 52 px top bar (styles.css --top-h)
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#171613" : "#fcf9f6", // the paper theme's page colour (tokens.css)
     webPreferences: webPreferences("main"),
   });

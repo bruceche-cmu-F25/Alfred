@@ -1,4 +1,4 @@
-import type { CoreEvent, Run, StateResponse } from "@alfred/protocol";
+import type { CoreEvent, StateResponse } from "@alfred/protocol";
 import type { FigureState } from "../entity/tesseract.js";
 import { Conversation } from "../Conversation.tsx";
 import { Figure } from "./Figure.tsx";
@@ -7,8 +7,6 @@ import { waitingCount } from "./inbox.ts";
 import { t } from "../i18n/index.ts";
 import { MOD } from "./Nav.tsx";
 import type { PageView } from "./pages.tsx";
-
-const WAITING = new Set<Run["state"]>(["waiting_permission", "waiting_input"]);
 
 /** What the figure shows, from the world as this device sees it: greeting on open, amber when anything waits for
  * you (a question, a proposal), speaking while a reply streams in the open conversation, the turning nut while any
@@ -22,19 +20,7 @@ export function figureState(state: StateResponse, selected: string | null, live:
   return "rest";
 }
 
-/** One line under Alfred's name: what the open conversation is doing, or, while it is doing nothing, what Alfred
- * makes of the page you are on. */
-export function statusLine(state: StateResponse, selected: string | null, idle?: string): string {
-  const runs = state.runs.filter((run) => run.conversationId === selected);
-  const waiting = runs.find((run) => WAITING.has(run.state));
-  if (waiting) return t("panel.waiting", { what: waiting.request?.question ?? waiting.goal });
-  const working = runs.find((run) => run.state === "running" || run.state === "queued");
-  if (working) return t("panel.working", { goal: working.goal });
-  return idle ?? state.conversations.find((candidate) => candidate.id === selected)?.title ?? t("conv.emptyTitle");
-}
-
 export interface AlfredPanelProps {
-  state: StateResponse;
   selected: string | null;
   figure: FigureState;
   wide: boolean;
@@ -54,16 +40,13 @@ export interface AlfredPanelProps {
   onClose(): void;
 }
 
-/** Alfred beside the page: the figure, one line on what it is doing, and the open conversation. */
-export function AlfredPanel({ state, selected, figure, wide, phone, live, highlighted, view, pageTitle, automationTitle, onEvent, onView, onStarted, onWide, onClose }: AlfredPanelProps) {
+/** Alfred beside the page: one row with the figure and the page it is looking at, then the open conversation. */
+export function AlfredPanel({ selected, figure, wide, phone, live, highlighted, view, pageTitle, automationTitle, onEvent, onView, onStarted, onWide, onClose }: AlfredPanelProps) {
   return (
     <aside className="alfred" aria-label="Alfred">
       <header className="alf-head">
-        <Figure state={figure} size={36} anchor />
-        <div className="alf-who">
-          <p className="alf-name">Alfred{view && !wide && <span className="alf-looking">{t("panel.looking", { page: view.title })}</span>}</p>
-          <p className="alf-line">{statusLine(state, selected, view?.headline)}</p>
-        </div>
+        <Figure state={figure} size={28} anchor />
+        <p className="alf-name">Alfred{view && !wide && <span className="alf-looking">{t("panel.looking", { page: view.title })}</span>}</p>
         <div className="alf-tools">
           {!phone && (
             <button type="button" className="icon-btn" onClick={onWide} aria-label={t(wide ? "panel.narrow" : "panel.wide")} title={t(wide ? "panel.narrow" : "panel.wide")}>
@@ -75,7 +58,7 @@ export function AlfredPanel({ state, selected, figure, wide, phone, live, highli
           </button>
         </div>
       </header>
-      <Conversation key={selected ?? "new"} id={selected} live={live} highlighted={highlighted}
+      <Conversation key={selected ?? "new"} id={selected} live={live} highlighted={highlighted} slim
         context={wide ? undefined : view?.context} suggestions={wide ? [] : view?.suggestions ?? []} pageTitle={pageTitle} automationTitle={automationTitle}
         onEvent={onEvent} onView={onView} onStarted={onStarted} />
     </aside>

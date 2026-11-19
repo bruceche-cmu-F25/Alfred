@@ -1,0 +1,817 @@
+<!doctype html>
+<!--
+  Alfred: four ways to talk to it on the daily pages. A prototype: no build step, sample data, scripted replies.
+  The strip at the top switches between them (or press 1–4). The conversation is shared, so the same request can be
+  looked at in each one.
+    A  the panel as it is in the app today
+    B  the same panel with less in it
+    C  an ask bar at the bottom of the page; the answer comes out of the bar, and the page shows the change
+    D  ask at the figure in the top right corner, where Alfred's notices already come out
+  In C and D a conversation that grows opens as the panel of B ("open the conversation").
+  Only a few requests are scripted: the chips. Anything else gets a line saying so.
+-->
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alfred：怎么和它说话</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { height: 100dvh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; text-align: inherit; }
+h1, h2, h3, p, ul, ol, blockquote { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+.grow { flex: 1; min-width: 0; }
+
+/* ── The prototype's own strip: which way of talking is on show ── */
+.proto { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--ink); color: var(--bg); font-size: 12px; overflow-x: auto; }
+.proto button { flex: none; height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 8px; white-space: nowrap; opacity: .72; }
+.proto button b { font: 600 11px var(--mono); }
+.proto button:hover { opacity: 1; }
+.proto button[aria-pressed="true"] { background: var(--bg); color: var(--ink); opacity: 1; }
+.proto .what { flex: 1; min-width: 0; padding: 0 8px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 900px) { .proto .what { display: none; } .proto .gap { flex: 1; } }
+@media (max-width: 620px) { .proto button[data-v]:not([aria-pressed="true"]) span { display: none; } }
+
+/* ── Shell: rail | page | Alfred ── */
+.app { flex: 1; min-height: 0; position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr) var(--alf-w, 0px); grid-template-rows: minmax(0, 1fr); }
+.app[data-panel] { --alf-w: 400px; }
+.app[data-panel][data-slim] { --alf-w: 340px; }
+.rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; background: var(--paper); border-right: 1px solid var(--line-soft); }
+.rail button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); }
+.rail button:hover { background: var(--wash); }
+.rail button[aria-current="page"] { background: var(--wash); color: var(--k-solid); }
+.rail .count { position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: var(--raise); font-size: 10px; }
+
+.page { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; container: page / inline-size; }
+.page-head { flex: none; padding: 22px 28px 12px; }
+.page-head h1 { display: flex; align-items: center; gap: 10px; font-size: 1.625rem; line-height: 1.25; font-weight: 650; letter-spacing: -.01em; }
+.page-head h1 svg { width: 24px; height: 24px; color: var(--k-solid); }
+.page-head p { margin-top: 6px; color: var(--muted); font-size: .875rem; }
+/* The page's title keeps clear of the figure in the corner. */
+.app[data-variant="d"]:not([data-panel]) .page-head { padding-right: min(330px, 46cqw); }
+.page-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 40px; }
+/* Room for the ask bar, so the last row can be scrolled clear of it. */
+.app[data-variant="c"]:not([data-panel]) .page-body { padding-bottom: 130px; }
+@container page (max-width: 520px) {
+  .page-head { padding: 16px 16px 10px; }
+  .app[data-variant="d"]:not([data-panel]) .page-head { padding-right: 68px; }
+  .page-body { padding-left: 8px; padding-right: 8px; }
+}
+
+/* Todos */
+.group { padding-top: 14px; }
+.group h3 { padding: 4px 12px 4px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+.group[data-g="late"] h3 { color: var(--warm); }
+.group h3 span { opacity: .7; margin-left: 4px; }
+.todo { display: flex; align-items: flex-start; gap: 12px; padding: 8px 12px; border-radius: 12px; transition: background-color 700ms var(--ease); }
+.todo[data-fresh] { background: var(--alf-soft); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--alf) 25%, transparent); }
+.todo .box { flex: none; width: 20px; height: 20px; margin-top: 2px; border-radius: 50%; box-shadow: inset 0 0 0 1.8px var(--k-solid); }
+.todo[data-done] .box { background: var(--k-solid); }
+.todo-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.todo[data-done] .todo-title { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.todo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; color: var(--muted); font-size: .75rem; }
+.tag { padding: 0 7px; border-radius: 6px; background: var(--k-fill); color: var(--k-text); font-weight: 500; }
+.by { color: var(--alf); }
+
+/* Mail */
+.mail { height: 100%; display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
+.page-body:has(.mail) { padding: 0; overflow: hidden; }
+.mail-list { min-height: 0; overflow-y: auto; padding: 0 8px 24px 12px; border-right: 1px solid var(--line-soft); }
+.mail-row { width: 100%; display: block; padding: 9px 12px; border-radius: 12px; transition: background-color 700ms var(--ease); }
+.mail-row:hover { background: var(--wash); }
+.mail-row[aria-current="true"] { background: var(--wash); }
+.mail-row[data-fresh] { background: var(--alf-soft); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--alf) 25%, transparent); }
+.mail-row .who { display: flex; align-items: center; gap: 6px; font-size: .875rem; font-weight: 600; }
+.mail-row .who span:first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mail-row .sub { display: block; color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mail-row .flag { flex: none; padding: 0 6px; border-radius: 6px; font-size: .6875rem; font-weight: 500; background: var(--k-fill); color: var(--k-text); }
+.mail-read { min-height: 0; overflow-y: auto; padding: 4px 28px 150px; }
+.mail-read h2 { font-size: 1.125rem; line-height: 1.35; overflow-wrap: anywhere; }
+.mail-read .from { margin-top: 4px; color: var(--muted); font-size: .8125rem; }
+.mail-read .text { margin-top: 16px; max-width: 64ch; color: var(--copy); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-read .sent { margin-top: 18px; max-width: 64ch; padding: 10px 14px; border-left: 2px solid var(--alf); border-radius: 0 10px 10px 0; background: var(--alf-soft); color: var(--copy); font-size: .875rem; }
+.mail-read .sent b { display: block; color: var(--alf); font-size: .75rem; font-weight: 500; }
+@container page (max-width: 620px) {
+  .mail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .mail-list { max-height: 34cqh; padding: 0 8px 8px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .mail-read { padding: 14px 16px 150px; }
+}
+
+/* ── Alfred's figure ── */
+.fig { display: block; width: 28px; height: 28px; flex: none; }
+.app:not([data-slim]) .panel .fig { width: 36px; height: 36px; }
+
+/* ── What Alfred did or proposes: shared by the panel and the ask card ── */
+.work { display: flex; align-items: baseline; gap: 8px; font-size: .875rem; }
+.work span { background: linear-gradient(90deg, var(--muted) 0 35%, var(--ink) 50%, var(--muted) 65% 100%) 0 0 / 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.2s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.text { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.text.live::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -3px; border-radius: 1px; background: var(--alf); animation: caret 1s steps(2, jump-none) infinite; }
+@keyframes caret { from { opacity: 1; } to { opacity: 0; } }
+.prop { display: flex; flex-direction: column; gap: 8px; }
+.prop ul { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 10px; background: var(--wash); color: var(--copy); font-size: .875rem; }
+.prop li { overflow-wrap: anywhere; }
+.prop li::before { content: "· "; color: var(--muted); }
+.prop blockquote { padding: 8px 12px; border-radius: 10px; background: var(--wash); color: var(--copy); font-size: .875rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.acts button { min-height: 30px; padding: 0 13px; border-radius: 999px; font-size: .8125rem; white-space: nowrap; }
+.acts .primary { background: var(--alf-solid); color: var(--on-alf); }
+.acts .ghost { color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
+.acts .ghost:hover { color: var(--ink); background: var(--wash); }
+.did { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--alf); font-size: .8125rem; }
+.did li::before { content: "✓ "; }
+.did[data-undone] { color: var(--muted); }
+.did[data-undone] li::before { content: "↩ "; }
+@media (prefers-reduced-motion: reduce) { .work span { animation: none; color: var(--copy); } .text.live::after { animation: none; } }
+
+/* ── A and B: the panel ── */
+.panel { display: none; min-width: 0; min-height: 0; flex-direction: column; background: var(--raise); border-left: 1px solid var(--line-soft); }
+.app[data-panel] .panel { display: flex; }
+.app[data-slim] .only-a, .app:not([data-slim]) .only-b, .app:not([data-light]) .only-light { display: none !important; }
+.p-head { flex: none; display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px 12px 20px; border-bottom: 1px solid var(--line-soft); }
+.p-who { flex: 1; min-width: 0; }
+.p-name { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-weight: 600; }
+.p-looking { min-width: 0; max-width: 100%; padding: 1px 7px; border-radius: 999px; background: var(--wash); color: var(--muted); font-size: .6875rem; font-weight: 400; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.p-line { margin-top: 2px; color: var(--copy); font-size: .875rem; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.p-tools { display: flex; gap: 2px; }
+.ic { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
+.ic:hover { background: var(--wash); color: var(--ink); }
+.p-title { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px 0; }
+.p-title h2 { min-width: 0; font-size: .8125rem; font-weight: 500; color: var(--copy); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.stats { flex: none; display: flex; align-items: center; gap: 9px; font: .6875rem var(--mono); color: var(--muted); white-space: nowrap; }
+.stats i { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--alf); }
+.turns { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; padding: 16px 20px 12px; }
+.turn { display: flex; flex-direction: column; gap: 8px; }
+.said { align-self: flex-end; max-width: 85%; padding: 9px 14px; border-radius: 18px 18px 5px 18px; background: color-mix(in oklab, var(--alf) 16%, var(--raise)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--alf) 22%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; }
+.reply-row { display: flex; align-items: flex-start; gap: 10px; }
+.dot { flex: none; width: 7px; height: 7px; margin: 18px 0 0 2px; border-radius: 50%; background: var(--alf); opacity: .35; }
+.dot[data-phase="busy"] { opacity: 1; animation: breathe 1.4s ease-in-out infinite; }
+.dot[data-phase="waiting"] { opacity: 1; background: var(--warm); }
+@keyframes breathe { 50% { opacity: .3; transform: scale(.8); } }
+.reply-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.reply { max-width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-radius: 5px 18px 18px 18px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-soft), 0 1px 2px #0000000a; color: var(--copy); }
+.steps { font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; }
+.reply .did { flex-direction: column; padding: 8px 12px; border-left: 2px solid var(--alf); border-radius: 0 8px 8px 0; background: var(--alf-soft); color: var(--copy); }
+.meta { display: flex; flex-wrap: wrap; gap: 0 6px; padding-left: 4px; font: .6875rem var(--mono); color: var(--muted); }
+.meta span + span::before { content: "·"; margin-right: 6px; opacity: .6; }
+.p-empty { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6px; padding: 24px; text-align: center; }
+.p-empty b { font-size: 1.25rem; font-weight: 600; }
+.p-empty span { color: var(--muted); font-size: .875rem; }
+.p-chips { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px; }
+.chip { flex: none; max-width: 100%; height: 28px; padding: 0 11px; border-radius: 999px; color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; box-shadow: inset 0 0 0 1px var(--line); }
+.chip:hover { color: var(--ink); background: var(--wash); }
+.composer { flex: none; display: flex; flex-direction: column; gap: 2px; margin: 8px 20px 18px; padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: 18px; background: var(--field); box-shadow: 0 1px 2px oklch(0 0 0 / .04), 0 6px 20px oklch(0 0 0 / .05); }
+.composer:focus-within { border-color: var(--alf); box-shadow: 0 0 0 3px var(--alf-soft); }
+.composer textarea { min-width: 0; resize: none; border: 0; background: none; outline: none; padding: 4px 2px; line-height: 1.5; }
+.composer textarea::placeholder, .ask-form input::placeholder { color: var(--muted); }
+.c-bar { display: flex; align-items: center; gap: 2px; min-width: 0; margin-left: -6px; }
+.pick { height: 28px; min-width: 0; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 8px; color: var(--copy); font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick svg { width: 14px; height: 14px; color: var(--muted); }
+.send { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--alf-solid); color: var(--on-alf); }
+.send:disabled { background: color-mix(in oklab, var(--field), var(--ink) 9%); color: var(--muted); cursor: default; }
+
+/* B: the same panel with less in it. One row on top, no bubbles on Alfred's side, no figures about the model, the
+   composer is one row, and the chips are only there before the first question, in one row. */
+.app[data-slim] .p-head { align-items: center; padding: 10px 8px 10px 16px; border-bottom: 0; }
+.app[data-slim] .p-name { font-weight: 600; flex-wrap: nowrap; }
+.p-on { min-width: 0; color: var(--muted); font-weight: 400; font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.app[data-slim] .turns { gap: 18px; padding: 8px 16px 12px; }
+.app[data-slim] .said { padding: 6px 12px; border-radius: 14px; background: var(--wash); box-shadow: none; color: var(--copy); font-size: .9375rem; }
+.app[data-slim] .dot, .app[data-slim] .meta, .app[data-slim] .steps { display: none; }
+.app[data-slim] .reply { padding: 0; border-radius: 0; background: none; box-shadow: none; }
+.app[data-slim] .reply .did { flex-direction: row; padding: 0; border: 0; background: none; color: var(--alf); }
+.app[data-slim] .p-chips { flex-wrap: nowrap; overflow-x: auto; padding: 0 16px; scrollbar-width: none; }
+.app[data-slim] .composer { flex-direction: row; align-items: flex-end; gap: 4px; margin: 8px 16px 14px; padding: 6px 6px 6px 14px; box-shadow: none; }
+.app[data-slim] .composer textarea { flex: 1; padding: 4px 2px; }
+.app[data-slim] .c-bar { margin-left: 0; }
+.app[data-slim] .c-bar .grow { display: none; }
+
+/* ── C and D: the ask bar. One element; C puts it at the bottom of the page, D in the top right corner. ── */
+.ask { display: none; position: absolute; z-index: 10; flex-direction: column; gap: 8px; }
+.app[data-light]:not([data-panel]) .ask { display: flex; }
+.ask-form { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 8px 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--raise); box-shadow: 0 1px 2px oklch(0 0 0 / .05), 0 8px 28px oklch(0 0 0 / .1); transition: border-color .15s, box-shadow .15s; }
+.ask-form:focus-within { border-color: var(--alf); box-shadow: 0 0 0 3px var(--alf-soft), 0 8px 28px oklch(0 0 0 / .1); }
+.ask-fig { flex: none; display: grid; place-items: center; border-radius: 50%; }
+.ask-form input { flex: 1; min-width: 0; height: 30px; border: 0; background: none; outline: none; }
+.ask-about { flex: 0 1 auto; min-width: 0; max-width: 34%; padding: 1px 8px; border-radius: 999px; background: var(--wash); color: var(--muted); font-size: .75rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ask-line { flex: 1; min-width: 0; height: 30px; color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ask kbd { flex: none; padding: 0 5px; border-radius: 5px; background: var(--wash); color: var(--muted); font: .6875rem var(--mono); }
+.ask-chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
+.ask-chips .chip { background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), 0 2px 8px oklch(0 0 0 / .06); }
+
+/* C: along the bottom, centred in the page's column. The card opens upward. */
+.app[data-variant="c"] .ask { left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: min(600px, calc(100% - 24px)); transform: translateX(-50%); }
+.app[data-variant="c"] .ask-line { display: none; }
+/* D: the figure waits in the corner with its line; asking opens it into a field there. The card opens downward. */
+.app[data-variant="d"] .ask { top: 14px; right: 16px; flex-direction: column-reverse; align-items: flex-end; max-width: min(300px, 42cqw); }
+.app[data-variant="d"] .ask[data-open] { width: min(440px, calc(100cqw - 32px)); max-width: none; align-items: stretch; }
+.app[data-variant="d"] .ask-form { max-width: 100%; padding: 6px 7px 6px 14px; }
+.app[data-variant="d"] .ask-fig { order: 9; }
+.app[data-variant="d"] .ask:not([data-open]) :is(input, .mic, .send, .ask-about, kbd) { display: none; }
+.app[data-variant="d"] .ask[data-open] .ask-line { display: none; }
+@container page (max-width: 520px) {
+  .app[data-variant="d"] .ask { right: 10px; }
+  .app[data-variant="d"] .ask:not([data-open]) .ask-line { display: none; }
+  .app[data-variant="d"] .ask:not([data-open]) .ask-form { padding: 6px; }
+  .app[data-variant="d"] .ask[data-open] { width: calc(100cqw - 20px); }
+  .ask kbd, .ask-about { display: none; }
+}
+
+/* The answer: a card that comes out of the bar, its tail pointing back at the figure. */
+.ask-card { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 11px 14px 10px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--raise); box-shadow: var(--shadow); animation: unfurl 380ms var(--ease) both; }
+.ask-card::after { content: ""; position: absolute; width: 12px; height: 12px; background: inherit; border: 1px solid var(--line); transform: rotate(45deg); }
+.app[data-variant="c"] .ask-card { transform-origin: 26px calc(100% + 24px); }
+.app[data-variant="c"] .ask-card::after { bottom: -7px; left: 20px; border-left: 0; border-top: 0; border-radius: 0 0 3px 0; }
+.app[data-variant="d"] .ask-card { transform-origin: calc(100% - 22px) -24px; }
+.app[data-variant="d"] .ask-card::after { top: -7px; right: 16px; border-right: 0; border-bottom: 0; border-radius: 3px 0 0 0; }
+@keyframes unfurl { from { opacity: 0; transform: scale(.6); } }
+.c-asked { padding-right: 26px; color: var(--muted); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.c-body { display: flex; flex-direction: column; gap: 8px; max-height: min(42cqh, 320px); overflow-y: auto; }
+.c-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 22px; font-size: .8125rem; }
+.c-foot button { color: var(--muted); white-space: nowrap; }
+.c-foot button:hover { color: var(--ink); }
+.c-close { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); font-size: 16px; line-height: 1; }
+.c-close:hover { background: var(--wash); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .ask-card { animation: none; } }
+
+/* ── Narrow windows: the rail lies along the top, and the panel is a sheet over the lower part of the page. ── */
+@media (max-width: 760px) {
+  .app, .app[data-panel], .app[data-panel][data-slim] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .rail { flex-direction: row; justify-content: center; gap: 12px; padding: 4px 0; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 12; height: 62%; border-left: 0; border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 40px oklch(0 0 0 / .14); }
+  .app[data-panel] .page-body { padding-bottom: 64cqh; }
+}
+</style>
+</head>
+<body>
+
+<div class="proto" id="proto" role="toolbar" aria-label="Prototype"></div>
+
+<div class="app" id="app">
+  <nav class="rail" id="rail"></nav>
+
+  <main class="page" id="page">
+    <header class="page-head" id="page-head"></header>
+    <div class="page-body" id="page-body"></div>
+
+    <div class="ask" id="ask">
+      <div class="ask-card" id="card" role="status" aria-live="polite" hidden></div>
+      <div class="ask-chips" id="ask-chips" hidden></div>
+      <form class="ask-form" id="ask-form">
+        <button type="button" class="ask-fig" id="ask-fig" aria-label="Alfred"><span data-fig="ask"></span></button>
+        <button type="button" class="ask-line" id="ask-line"></button>
+        <span class="ask-about" id="ask-about" hidden></span>
+        <input id="ask-input" autocomplete="off" maxlength="400">
+        <kbd>⌘K</kbd>
+        <button type="button" class="ic mic" aria-label="Dictate"><svg class="i" viewBox="0 0 20 20"><rect x="7.5" y="3" width="5" height="9" rx="2.5"/><path d="M4.5 10a5.5 5.5 0 0 0 11 0M10 15.5V18"/></svg></button>
+        <button type="submit" class="send" aria-label="Send"><svg class="i" viewBox="0 0 20 20"><path d="M4 10h11M11 5l5 5-5 5"/></svg></button>
+      </form>
+    </div>
+  </main>
+
+  <aside class="panel" id="panel" aria-label="Alfred">
+    <header class="p-head">
+      <span data-fig="panel"></span>
+      <div class="p-who">
+        <p class="p-name">Alfred<span class="p-looking only-a" id="p-looking"></span><span class="p-on only-b" id="p-on"></span></p>
+        <p class="p-line only-a" id="p-line"></p>
+      </div>
+      <div class="p-tools">
+        <button type="button" class="ic only-a" aria-label="Wide" tabindex="-1"><svg class="i" viewBox="0 0 20 20"><path d="M4 8V4h4M16 8V4h-4M4 12v4h4M16 12v4h-4"/></svg></button>
+        <button type="button" class="ic only-a" aria-label="Close" tabindex="-1"><svg class="i" viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M12.5 4v12"/></svg></button>
+        <button type="button" class="ic only-light" id="p-close"><svg class="i" viewBox="0 0 20 20"><path d="M5 8l5 5 5-5"/></svg></button>
+      </div>
+    </header>
+    <div class="p-title only-a"><h2 id="p-title"></h2><span class="stats" id="p-stats" hidden><span>↑87k</span><span>↓6.0k</span><span>$0.15</span><i></i>8%</span></div>
+    <ol class="turns" id="turns" hidden></ol>
+    <div class="p-empty" id="p-empty"></div>
+    <div class="p-chips" id="p-chips"></div>
+    <form class="composer" id="p-form">
+      <textarea id="p-input" rows="1" maxlength="400"></textarea>
+      <div class="c-bar">
+        <span class="pick only-a"><svg class="i" viewBox="0 0 20 20"><path d="M10 3l6 3.5v7L10 17l-6-3.5v-7z"/></svg><span id="pick-model"></span></span>
+        <span class="pick only-a"><svg class="i" viewBox="0 0 20 20"><path d="M7.5 14.5h5M8 17h4M10 3a5 5 0 0 0-3 9c.5.5.8 1 .8 2.5h4.4c0-1.5.3-2 .8-2.5A5 5 0 0 0 10 3z"/></svg><span id="pick-think"></span></span>
+        <span class="grow"></span>
+        <button type="button" class="ic mic" aria-label="Dictate"><svg class="i" viewBox="0 0 20 20"><rect x="7.5" y="3" width="5" height="9" rx="2.5"/><path d="M4.5 10a5.5 5.5 0 0 0 11 0M10 15.5V18"/></svg></button>
+        <button type="submit" class="send" aria-label="Send"><svg class="i" viewBox="0 0 20 20"><path d="M4 10h11M11 5l5 5-5 5"/></svg></button>
+      </div>
+    </form>
+  </aside>
+</div>
+
+<script type="module">
+/* Alfred's figure lives in packages/ui/src/entity/tesseract.js (linked here as figure.js). */
+import { createFigure } from "./figure.js";
+
+const $ = (selector) => document.querySelector(selector);
+const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const params = new URLSearchParams(location.search);
+
+/* ── State ── */
+const S = {
+  variant: "abcd".includes(params.get("v") ?? "?") ? params.get("v") : "a",
+  lang: params.get("lang") === "en" ? "en" : "zh",
+  page: params.get("p") === "mail" ? "mail" : "todos",
+  /** C and D: the conversation is open as a panel. */
+  expanded: false,
+  /** C and D: the answer card is showing; the field has the caret; D's corner is open into a field. */
+  card: false, focus: false, open: false,
+  turns: [],
+  mail: "lin",
+  fresh: new Set(),
+};
+const t = (zh, en) => (S.lang === "en" ? en : zh);
+const light = () => S.variant === "c" || S.variant === "d";
+const last = () => S.turns.at(-1);
+const busy = () => { const turn = last(); return !!turn && (turn.state === "thinking" || turn.state === "speaking"); };
+
+/* ── Sample data: Thursday 19 November ── */
+const TODAY = "2026-11-19";
+const AREAS = {
+  money: ["财务", "Money", "yellow"], work: ["工作", "Work", "blue"], people: ["家人", "People", "pink"],
+  learn: ["学习", "Learning", "violet"], travel: ["出行", "Travel", "orange"], life: ["生活", "Life", "green"],
+};
+const sample = () => ({
+  todos: [
+    { id: "exp", zh: "整理报销", en: "File the expenses", area: "money", due: "2026-11-17" },
+    { id: "stripe", zh: "回 Stripe 续约邮件", en: "Answer Stripe about the renewal", area: "work", due: "2026-11-18" },
+    { id: "layout", zh: "写 Alfred 布局方案", en: "Write the Alfred layout plan", area: "work", due: "2026-11-19" },
+    { id: "mum", zh: "给妈妈打电话", en: "Call mum", area: "people", due: "2026-11-19" },
+    { id: "voice", zh: "看完语音转写调研", en: "Finish the voice input research", area: "learn", due: "2026-11-19" },
+    { id: "passport", zh: "预约续签护照", en: "Book the passport renewal", area: "travel", due: "2026-11-20" },
+    { id: "report", zh: "交季度报告", en: "Hand in the quarterly report", area: "work", due: "2026-11-20" },
+    { id: "dinner", zh: "订周末的餐厅", en: "Book a table for the weekend", area: "life", due: "2026-11-21" },
+  ],
+  mails: [
+    { id: "lin", who: ["陈琳", "Lin Chen"], sub: ["周五的评审能改到下午吗？", "Could Friday's review move to the afternoon?"], at: "09:12", unread: true,
+      body: ["Bruce，\n\n周五上午我临时要去客户那边，评审能不能改到下午？三点以后我都可以。\n\n琳", "Bruce,\n\nI have to be at a client's on Friday morning. Could the review move to the afternoon? Any time after three works for me.\n\nLin"],
+      draft: ["可以，改到周五下午 3 点。日程我一起挪了。", "Sure, let's make it Friday at 3 pm. I have moved the calendar event too."], also: ["评审挪到周五 15:00", "Review moved to Friday 15:00"] },
+    { id: "rent", who: ["房东 王先生", "Mr Wang (landlord)"], sub: ["下月起房租调整", "Rent change from next month"], at: "08:40", unread: true,
+      body: ["你好，\n\n合同到期续签，下月起房租每月上调 200，其余条款不变。没问题的话回复确认一下。\n\n王", "Hello,\n\nWith the renewal, the rent goes up by 200 a month from next month; nothing else changes. Please reply to confirm.\n\nWang"],
+      draft: ["收到，新的房租我确认，下月起按新的金额转。", "Got it. I confirm the new rent and will pay the new amount from next month."] },
+    { id: "stripe", who: ["Stripe", "Stripe"], sub: ["你的订阅已自动续订", "Your subscription has renewed"], at: "07:55", unread: true,
+      body: ["你的年度订阅已于 11 月 18 日自动续订，收据见附件。", "Your annual subscription renewed automatically on 18 November. The receipt is attached."] },
+    { id: "gh", who: ["GitHub", "GitHub"], sub: ["[alfred] CI 通过：alfred-harness", "[alfred] CI passed: alfred-harness"], at: "昨天",
+      body: ["alfred-harness 分支上的检查全部通过。", "All checks have passed on the alfred-harness branch."] },
+    { id: "news", who: ["设计周刊", "Design Weekly"], sub: ["本周：界面里的留白", "This week: white space in interfaces"], at: "昨天",
+      body: ["本周我们聊留白：什么时候是呼吸，什么时候是浪费。", "This week is about white space: when it lets a page breathe and when it is waste."] },
+  ],
+});
+let D = sample();
+const name = (item) => item[S.lang] ?? item.zh;
+const pick = (pair) => pair[S.lang === "en" ? 1 : 0];
+const todo = (id) => D.todos.find((item) => item.id === id);
+const mail = (id) => D.mails.find((item) => item.id === id);
+const late = () => D.todos.filter((item) => !item.done && item.due < TODAY);
+
+/* ── Pages ── */
+const ICON = {
+  todos: '<svg class="i" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M7 10.2l2 2 4-4.2"/></svg>',
+  mail: '<svg class="i" viewBox="0 0 20 20"><rect x="3" y="4.5" width="14" height="11" rx="2"/><path d="M3.5 6.5l6.5 5 6.5-5"/></svg>',
+};
+const PAGES = {
+  todos: {
+    k: "blue", title: () => t("待办", "Todos"),
+    count: () => D.todos.filter((item) => !item.done).length,
+    summary: () => { const open = D.todos.filter((item) => !item.done).length, n = late().length; return t(`${open} 条未完成` + (n ? `，${n} 条逾期` : ""), `${open} open` + (n ? `, ${n} overdue` : "")); },
+    line: () => { const n = late().length, today = D.todos.filter((item) => !item.done && item.due === TODAY).length; return n ? t(`${n} 条逾期，${today} 条今天到期`, `${n} overdue, ${today} due today`) : t(`${today} 条今天到期`, `${today} due today`); },
+    about: () => null,
+    chips: () => [t("今天先做哪件？", "What first today?"), t("把报销挪到下周一", "Move the expenses to next Monday"), t("把逾期的清掉", "Clear the overdue ones")],
+  },
+  mail: {
+    k: "teal", title: () => t("邮件", "Mail"),
+    count: () => D.mails.filter((item) => item.unread).length,
+    summary: () => { const unread = D.mails.filter((item) => item.unread).length; return t(`${unread} 封未读，共 ${D.mails.length} 封`, `${unread} unread of ${D.mails.length}`); },
+    line: () => { const unread = D.mails.filter((item) => item.unread).length; return t(`${unread} 封未读`, `${unread} unread`); },
+    about: () => pick(mail(S.mail).who),
+    chips: () => [t("哪些要我回？", "Which need a reply?"), t("帮我回这封", "Reply to this one")],
+  },
+};
+const page = () => PAGES[S.page];
+
+function dueText(item) {
+  const day = Number(item.due.slice(8)), month = Number(item.due.slice(5, 7));
+  if (item.due === TODAY) return t("今天", "Today");
+  if (item.due === "2026-11-20") return t("明天", "Tomorrow");
+  if (item.due === "2026-11-23") return t("下周一", "Next Monday");
+  return t(`${month}月${day}日`, `${month}/${day}`);
+}
+function renderPage() {
+  const def = page();
+  $("#page").dataset.k = def.k;
+  $("#page-head").innerHTML = `<h1 data-k="${def.k}">${ICON[S.page]}${esc(def.title())}</h1><p>${esc(def.summary())}</p>`;
+  $("#page-body").innerHTML = S.page === "todos" ? todosHtml() : mailHtml();
+  $("#rail").innerHTML = Object.entries(PAGES).map(([key, item]) =>
+    `<button type="button" data-page="${key}" data-k="${item.k}" aria-label="${esc(item.title())}" title="${esc(item.title())}" ${S.page === key ? 'aria-current="page"' : ""}>${ICON[key]}${item.count() ? `<span class="count">${item.count()}</span>` : ""}</button>`).join("");
+}
+function todosHtml() {
+  const groups = [
+    ["late", t("逾期", "Overdue"), (item) => !item.done && item.due < TODAY],
+    ["today", t("今天", "Today"), (item) => !item.done && item.due === TODAY],
+    ["tomorrow", t("明天", "Tomorrow"), (item) => !item.done && item.due === "2026-11-20"],
+    ["week", t("本周", "This week"), (item) => !item.done && item.due > "2026-11-20" && item.due <= "2026-11-22"],
+    ["next", t("下周", "Next week"), (item) => !item.done && item.due > "2026-11-22"],
+    ["done", t("已完成", "Done"), (item) => item.done],
+  ];
+  return groups.map(([key, title, test]) => {
+    const items = D.todos.filter(test);
+    if (!items.length) return "";
+    return `<section class="group" data-g="${key}"><h3>${esc(title)}<span>${items.length}</span></h3>${items.map((item) => {
+      const [zh, en, k] = AREAS[item.area];
+      return `<div class="todo" data-k="${k}" ${item.done ? "data-done" : ""} ${S.fresh.has(item.id) ? "data-fresh" : ""}>
+        <button type="button" class="box" data-toggle="${item.id}" aria-label="${esc(name(item))}"></button>
+        <div class="todo-body"><div class="todo-title">${esc(name(item))}</div>
+        <div class="todo-meta"><span class="tag">${esc(t(zh, en))}</span><span>${esc(dueText(item))}</span>${item.by ? `<span class="by">${esc(t("Alfred 改的", "Changed by Alfred"))}</span>` : ""}</div></div></div>`;
+    }).join("")}</section>`;
+  }).join("");
+}
+function mailHtml() {
+  const open = mail(S.mail);
+  return `<div class="mail"><div class="mail-list">${D.mails.map((item) => `
+    <button type="button" class="mail-row" data-mail="${item.id}" ${item.id === S.mail ? 'aria-current="true"' : ""} ${S.fresh.has(item.id) ? "data-fresh" : ""}>
+      <span class="who"><span>${esc(pick(item.who))}</span>${item.replied ? `<span class="flag" data-k="green">${esc(t("已回", "Replied"))}</span>` : item.need ? `<span class="flag" data-k="warm">${esc(t("要回", "Reply"))}</span>` : ""}</span>
+      <span class="sub">${esc(pick(item.sub))}</span>
+    </button>`).join("")}</div>
+    <article class="mail-read"><h2>${esc(pick(open.sub))}</h2><p class="from">${esc(pick(open.who))} · ${esc(open.at === "昨天" ? t("昨天", "Yesterday") : open.at)}</p>
+      <p class="text">${esc(pick(open.body))}</p>
+      ${open.replied ? `<div class="sent"><b>${esc(t("Alfred 代你回复", "Alfred replied for you"))}</b>${esc(pick(open.draft))}</div>` : ""}
+    </article></div>`;
+}
+/** What Alfred touched lights up on the page for a moment. */
+function flash(ids) {
+  for (const id of ids) S.fresh.add(id);
+  renderPage();
+  // Bring it into view, clear of the ask bar and its card.
+  const body = $("#page-body"), row = body.querySelector(".todo[data-fresh]");
+  if (row) {
+    const r = row.getBoundingClientRect(), b = body.getBoundingClientRect();
+    if (r.top < b.top + 8 || r.bottom > b.bottom - 220) body.scrollTo({ top: body.scrollTop + r.top - b.top - (b.height - r.height) / 3, behavior: "smooth" });
+  }
+  setTimeout(() => { for (const id of ids) S.fresh.delete(id); renderPage(); }, 2600);
+}
+
+/* ── The scripted Alfred: a handful of requests it understands, by page ── */
+function intent(text) {
+  const q = text.toLowerCase();
+  if (S.page === "todos") {
+    if (/先做|first/.test(q)) return {
+      work: t("在看今天的待办…", "Looking at today's todos…"),
+      effect: () => flash(["layout"]),
+      text: t("先做「写 Alfred 布局方案」：今天到期，也是最大的一件。两条逾期的各十分钟，可以插在午饭前。", "Start with “Write the Alfred layout plan”: it is due today and it is the big one. The two overdue ones take ten minutes each and fit before lunch."),
+    };
+    if (/挪|下周一|move|monday/.test(q)) {
+      const item = todo("exp");
+      if (!item || item.done) return { work: t("在找那条待办…", "Looking for that todo…"), text: t("「整理报销」已经不在未完成里了。", "“File the expenses” is no longer open.") };
+      return {
+        work: t("在改待办…", "Changing the todo…"), step: t("改待办：整理报销", "Change todo: File the expenses"), brief: true,
+        effect: () => { item.due = "2026-11-23"; item.by = true; flash(["exp"]); },
+        text: t("好，「整理报销」挪到下周一了。", "Done. “File the expenses” is now due next Monday."),
+        did: [t("改了 1 条待办", "1 todo changed")],
+      };
+    }
+    if (/逾期|清|overdue|clear/.test(q)) {
+      const items = late();
+      if (!items.length) return { work: t("在看逾期的…", "Looking at what is overdue…"), text: t("没有逾期的了。", "Nothing is overdue.") };
+      const lines = items.map((item) => item.id === "stripe" ? t(`删除「${item.zh}」`, `Delete “${item.en}”`) : t(`完成「${item.zh}」`, `Complete “${item.en}”`));
+      return {
+        work: t("在看逾期的…", "Looking at what is overdue…"),
+        text: items.length === 2
+          ? t("两条逾期的：报销的发票已经交了，建议标成完成；Stripe 已经自动续约，那条可以删。", "Two are overdue. The receipts for the expenses are already in, so mark that one done. Stripe renewed by itself, so that one can go.")
+          : t("还有一条逾期的，这样处理：", "One is still overdue. I would do this:"),
+        prop: {
+          items: lines, label: t(`同意 ${lines.length} 项`, lines.length === 1 ? "Accept" : `Accept all ${lines.length}`),
+          effect: () => { const ids = items.map((item) => item.id); for (const item of items) { if (item.id === "stripe") D.todos = D.todos.filter((other) => other !== item); else { item.done = true; item.by = true; } } flash(ids); },
+          did: lines.map((line) => line.replace(/^(完成|删除|Complete|Delete)/, (verb) => ({ 完成: "已完成", 删除: "已删除", Complete: "Completed", Delete: "Deleted" }[verb]))),
+        },
+      };
+    }
+  }
+  if (S.page === "mail") {
+    if (/哪些|要我回|which|need/.test(q)) return {
+      work: t("在看未读的邮件…", "Reading the unread mail…"),
+      effect: () => { mail("lin").need = true; mail("rent").need = true; flash(["lin", "rent"]); },
+      text: t("两封：陈琳问周五的评审能不能改到下午；房东说下月起房租上调，要你确认。其余三封是通知。", "Two. Lin asks whether Friday's review can move to the afternoon, and your landlord wants you to confirm a rent change from next month. The other three are notifications."),
+    };
+    if (/回|reply|answer/.test(q)) {
+      const item = mail(S.mail);
+      if (!item.draft) return { work: t("在看这封邮件…", "Reading this one…"), text: t("这封是通知，不用回。", "This one is a notification. It needs no reply.") };
+      if (item.replied) return { work: t("在看这封邮件…", "Reading this one…"), text: t("这封已经回过了。", "This one has been answered.") };
+      const who = pick(item.who);
+      return {
+        work: t("在写回信…", "Writing the reply…"),
+        text: t(`给${who}的回信，这样写行吗？`, `A reply to ${who}. Does this read right?`),
+        prop: {
+          quote: pick(item.draft), label: t("发送", "Send"), change: true,
+          effect: () => { item.replied = true; item.need = false; item.unread = false; flash([item.id]); },
+          did: [t(`已回复${who}`, `Replied to ${who}`), ...(item.also ? [pick(item.also)] : [])],
+        },
+      };
+    }
+  }
+  return { work: t("在想…", "Thinking…"), text: t("原型里我只认得那几句示例，点一下输入框就能看到。", "In this prototype I only understand the example requests. Click the field to see them.") };
+}
+
+let serial = 0;
+async function ask(text) {
+  text = text.trim();
+  if (!text || busy()) return;
+  const plan = intent(text);
+  const turn = { id: ++serial, q: text, state: "thinking", work: plan.work, step: plan.step, text: "", did: [], prop: null, undo: null };
+  S.turns.push(turn);
+  S.card = true;
+  clearTimeout(folding);
+  update(true);
+  await sleep(900);
+  if (plan.effect) { if (plan.brief) turn.undo = structuredClone(D); plan.effect(); }
+  turn.state = "speaking";
+  for (let i = 2; i <= plan.text.length + 1; i += 2) { turn.text = plan.text.slice(0, i); update(); await sleep(34); }
+  if (plan.prop) { turn.prop = plan.prop; turn.state = "waiting"; } else { turn.did = plan.did ?? []; turn.state = "done"; }
+  update();
+  if (turn.state === "done") settle(plan.brief);
+}
+async function decide(turn, accept) {
+  const prop = turn.prop;
+  if (!prop) return;
+  turn.prop = null;
+  if (!accept) { turn.state = "done"; turn.did = []; turn.note = t("好，没动。", "All right, left as it is."); update(); settle(true); return; }
+  turn.state = "thinking"; turn.work = t("在做…", "Doing it…"); turn.kept = prop;
+  update();
+  await sleep(700);
+  prop.effect();
+  turn.state = "done"; turn.did = prop.did;
+  update();
+  settle(true);
+}
+function undo(turn) {
+  if (!turn.undo) return;
+  D = turn.undo; turn.undo = null; turn.undone = true; turn.did = [t("已撤销", "Undone")];
+  renderPage(); update();
+}
+/** After Alfred finishes, the figure shows it for a moment; a card that only confirmed something done folds away by
+ * itself, unless the pointer is on it or the user is writing. */
+let folding = 0, hovering = false;
+function settle(brief) {
+  figures.mood = "done";
+  setTimeout(() => { figures.mood = null; syncFigure(); }, 1400);
+  syncFigure();
+  clearTimeout(folding);
+  if (!brief || !light()) return;
+  const fold = () => {
+    if (hovering || $("#ask-input").value || busy()) { folding = setTimeout(fold, 2000); return; }
+    S.card = false; if (!S.focus) S.open = false; update();
+  };
+  folding = setTimeout(fold, 7000);
+}
+
+/* ── Alfred's figure: one in the panel's head, one in the ask bar ── */
+const isDark = () => document.documentElement.dataset.scheme === "dark";
+const figures = { mood: null, all: [] };
+document.querySelectorAll("span[data-fig]").forEach((slot) => {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 120 120"); svg.setAttribute("class", "fig"); svg.setAttribute("aria-hidden", "true");
+  slot.replaceWith(svg);
+  figures.all.push(createFigure(svg, { width: 5.6, small: true, dark: isDark() }));
+});
+function syncFigure() {
+  const turn = last();
+  const state = turn?.state === "thinking" ? "think" : turn?.state === "speaking" ? "speak" : turn?.state === "waiting" ? "notice"
+    : figures.mood ?? (S.focus && light() && !S.expanded ? "listen" : "rest");
+  for (const figure of figures.all) { figure.setState(state); figure.refresh(); }
+}
+
+/* ── Drawing a turn: the same parts in the panel and in the card ── */
+function partsHtml(turn) {
+  const working = turn.state === "thinking";
+  const prop = turn.prop ?? (working ? turn.kept : null);
+  return [
+    turn.text ? `<p class="text${turn.state === "speaking" ? " live" : ""}">${esc(turn.text)}</p>` : "",
+    prop ? `<div class="prop">${prop.quote ? `<blockquote>${esc(prop.quote)}</blockquote>` : `<ul>${prop.items.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>`}
+      ${turn.prop ? `<div class="acts"><button type="button" class="primary" data-accept="${turn.id}">${esc(prop.label)}</button>${prop.change ? `<button type="button" class="ghost" data-change="${turn.id}">${esc(t("改一下", "Change it"))}</button>` : ""}<button type="button" class="ghost" data-decline="${turn.id}">${esc(t("不用", "No thanks"))}</button></div>` : ""}</div>` : "",
+    working ? `<p class="work"><span>${esc(turn.work)}</span></p>` : "",
+    turn.note ? `<p class="text" style="color:var(--copy)">${esc(turn.note)}</p>` : "",
+    turn.did.length ? `<ul class="did" ${turn.undone ? "data-undone" : ""}>${turn.did.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>` : "",
+  ].join("");
+}
+function turnHtml(turn) {
+  const phase = turn.state === "waiting" ? "waiting" : turn.state === "done" ? "" : "busy";
+  return `<li class="turn">
+    <p class="said">${esc(turn.q)}</p>
+    <div class="reply-row"><span class="dot" data-phase="${phase}"></span><div class="reply-col">
+      <div class="reply">${turn.step ? `<p class="steps">${turn.state === "thinking" ? "…" : "✓"} ${esc(turn.step)}</p>` : ""}${partsHtml(turn)}</div>
+      ${turn.state === "done" ? `<p class="meta"><span>claude-sonnet-5-5</span><span>1.8s</span><span>↑12k ↓860</span><span>$0.02</span></p>` : ""}
+    </div></div></li>`;
+}
+function cardHtml(turn) {
+  const earlier = S.turns.length - 1;
+  return `<p class="c-asked">${esc(turn.q)}</p>
+    <div class="c-body" id="c-body">${partsHtml(turn)}</div>
+    <div class="c-foot">
+      ${turn.undo ? `<button type="button" data-undo="${turn.id}">${esc(t("撤销", "Undo"))}</button>` : ""}
+      <span class="grow"></span>
+      <button type="button" data-expand>${esc(earlier ? t(`之前 ${earlier} 轮 · 展开对话`, `${earlier} earlier · open the conversation`) : t("展开对话", "Open the conversation"))} ↗</button>
+    </div>
+    <button type="button" class="c-close" data-fold aria-label="${esc(t("收起", "Close"))}">×</button>`;
+}
+
+/* ── Putting it on screen ── */
+const VARIANTS = {
+  a: ["现在的面板", "The panel today", "和 app 里现在一样：六层，三成多的宽度。", "As in the app now: six layers, over a third of the window."],
+  b: ["减重面板", "A lighter panel", "同一个面板：没有气泡、模型和 token，输入框一行，提示词只在开头。", "The same panel without bubbles, model or tokens; a one-row field; chips only at the start."],
+  c: ["底部问答条", "Ask bar below", "没有面板。问在底部，答从那里冒出来，改动直接显示在页面里。", "No panel. Ask at the bottom; the answer comes out there and the page shows the change."],
+  d: ["对着小人说", "Ask at the figure", "没有面板。小人在右上角，点它（或 ⌘K）就地问，答案从它那里出来。", "No panel. The figure waits top right; click it (or ⌘K) to ask there, and it answers there."],
+};
+function renderProto() {
+  $("#proto").innerHTML = Object.entries(VARIANTS).map(([key, [zh, en]]) =>
+    `<button type="button" data-v="${key}" aria-pressed="${S.variant === key}"><b>${key.toUpperCase()}</b><span>${esc(t(zh, en))}</span></button>`).join("")
+    + `<span class="what">${esc(t(VARIANTS[S.variant][2], VARIANTS[S.variant][3]))}</span><span class="gap"></span>`
+    + `<button type="button" data-reset>${esc(t("重来", "Reset"))}</button>`
+    + `<button type="button" data-lang>${S.lang === "en" ? "中文" : "EN"}</button>`
+    + `<button type="button" data-scheme aria-label="${esc(t("深浅", "Light or dark"))}">◐</button>`;
+}
+/** The panel's list stays at its end while you are there, and stays put once you scroll up. */
+let atEnd = true;
+$("#turns").addEventListener("scroll", (event) => { const el = event.currentTarget; atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 40; });
+
+function update(asked = false) {
+  const app = $("#app"), def = page(), turn = last();
+  const panel = !light() || S.expanded;
+  app.dataset.variant = S.variant;
+  app.toggleAttribute("data-light", light());
+  app.toggleAttribute("data-slim", S.variant !== "a");
+  app.toggleAttribute("data-panel", panel);
+  document.documentElement.lang = S.lang === "en" ? "en" : "zh-CN";
+
+  // The panel
+  $("#p-looking").textContent = t(`正在看 ${def.title()}`, `Looking at ${def.title()}`);
+  $("#p-on").textContent = `· ${def.title()}${def.about() ? ` · ${def.about()}` : ""}`;
+  $("#p-line").textContent = turn?.state === "waiting" ? t(`等你：${turn.text}`, `Waiting for you: ${turn.text}`) : busy() ? t(`在做：${turn.q}`, `Working on: ${turn.q}`) : def.line();
+  $("#p-title").textContent = S.turns[0]?.q ?? t("新对话", "New conversation");
+  $("#p-stats").hidden = !S.turns.some((item) => item.state === "done");
+  $("#pick-model").textContent = t("默认模型", "Default model");
+  $("#pick-think").textContent = t("默认思考", "Default thinking");
+  $("#p-close").setAttribute("aria-label", t("收回成问答条", "Back to the ask bar"));
+  $("#p-close").title = t("收回成问答条", "Back to the ask bar");
+  const turns = $("#turns");
+  if (asked) atEnd = true;
+  turns.hidden = !S.turns.length;
+  turns.innerHTML = S.turns.map(turnHtml).join("");
+  if (atEnd) turns.scrollTop = turns.scrollHeight;
+  $("#p-empty").hidden = !!S.turns.length;
+  $("#p-empty").innerHTML = `<b>${esc(t("要我做什么？", "What can I do for you?"))}</b><span>${esc(t("直接说，或者点下面的一句。", "Just say it, or pick one below."))}</span>`;
+  const input = $("#p-input");
+  input.placeholder = t(busy() ? "接着说…" : S.turns.length ? "继续说…" : "告诉 Alfred…", busy() ? "Add to it…" : S.turns.length ? "Go on…" : "Tell Alfred…");
+  // A (as today): the chips come back whenever the field is empty and nothing runs. B: only before the first question.
+  const chips = !input.value.trim() && !busy() && (S.variant === "a" || !S.turns.length);
+  $("#p-chips").hidden = !chips;
+  $("#p-chips").innerHTML = def.chips().map((text) => `<button type="button" class="chip" data-chip>${esc(text)}</button>`).join("");
+  $("#p-form .send").disabled = !input.value.trim();
+
+  // The ask bar
+  const bar = $("#ask"), field = $("#ask-input");
+  bar.toggleAttribute("data-open", S.variant === "c" || S.open || S.card);
+  $("#ask-line").textContent = def.line();
+  field.placeholder = turn?.state === "waiting" && S.card ? t("或者说怎么改…", "Or say what to change…") : t("问 Alfred，或者说要做什么", "Ask Alfred, or say what to do");
+  const about = def.about();
+  $("#ask-about").hidden = !about;
+  $("#ask-about").textContent = about ? t(`这封：${about}`, `This one: ${about}`) : "";
+  $("#ask-form .send").disabled = !field.value.trim() || busy();
+  const card = $("#card"), show = S.card && !!turn;
+  if (show) {
+    const body = $("#c-body"), stuck = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+    const again = card.hidden || card.dataset.turn !== String(turn.id);
+    card.innerHTML = cardHtml(turn);
+    card.dataset.turn = String(turn.id);
+    card.hidden = false;
+    if (again) { card.style.animation = "none"; void card.offsetWidth; card.style.animation = ""; }
+    if (stuck) $("#c-body").scrollTop = $("#c-body").scrollHeight;
+  } else card.hidden = true;
+  const askChips = S.focus && (S.variant === "c" || S.open) && !field.value.trim() && !busy() && !show;
+  $("#ask-chips").hidden = !askChips;
+  $("#ask-chips").innerHTML = def.chips().map((text) => `<button type="button" class="chip" data-chip>${esc(text)}</button>`).join("");
+  syncFigure();
+}
+
+function setVariant(next) {
+  S.variant = next; S.expanded = false; S.open = false; S.focus = false; S.card = light() && !!last() && last().state !== "done";
+  renderProto(); update();
+}
+function reset() {
+  D = sample(); S.turns = []; S.card = false; S.expanded = false; S.open = false; S.fresh.clear(); clearTimeout(folding);
+  $("#ask-input").value = ""; $("#p-input").value = "";
+  renderProto(); renderPage(); update();
+}
+function focusAsk() {
+  if (!light() || S.expanded) { $("#p-input").focus(); return; }
+  S.open = true; S.focus = true; update();
+  $("#ask-input").focus();
+}
+
+/* ── Events ── */
+$("#proto").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.v) setVariant(button.dataset.v);
+  else if ("reset" in button.dataset) reset();
+  else if ("lang" in button.dataset) { S.lang = S.lang === "en" ? "zh" : "en"; reset(); }
+  else if ("scheme" in button.dataset) {
+    document.documentElement.dataset.scheme = isDark() ? "light" : "dark";
+    for (const figure of figures.all) figure.setDark(isDark());
+  }
+});
+$("#rail").addEventListener("click", (event) => {
+  const key = event.target.closest("button")?.dataset.page;
+  if (key) { S.page = key; renderPage(); update(); }
+});
+$("#page-body").addEventListener("click", (event) => {
+  const row = event.target.closest("[data-mail]"), box = event.target.closest("[data-toggle]");
+  if (row) { S.mail = row.dataset.mail; mail(S.mail).unread = false; renderPage(); update(); }
+  if (box) { const item = todo(box.dataset.toggle); item.done = !item.done; renderPage(); update(); }
+});
+/* Buttons inside what Alfred says, in the panel or in the card. */
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  const data = button.dataset, find = (id) => S.turns.find((turn) => turn.id === Number(id));
+  if (data.accept) decide(find(data.accept), true);
+  else if (data.decline) decide(find(data.decline), false);
+  else if (data.change) focusAsk();
+  else if (data.undo) undo(find(data.undo));
+  else if ("chip" in data) { focusAsk(); ask(button.textContent); }
+  else if ("expand" in data) { S.expanded = true; S.card = false; S.open = false; S.focus = false; atEnd = true; update(); $("#p-input").focus(); }
+  else if ("fold" in data) { S.card = false; S.open = S.focus; update(); }
+});
+/* Chips must not take the caret out of the field on the way to being clicked. */
+document.addEventListener("mousedown", (event) => { if (event.target.closest("[data-chip]")) event.preventDefault(); });
+$("#p-close").addEventListener("click", () => { S.expanded = false; S.focus = false; S.open = false; S.card = !!last() && last().state !== "done"; update(); });
+
+$("#ask-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const field = $("#ask-input"), text = field.value;
+  if (!text.trim() || busy()) return;
+  field.value = "";
+  ask(text);
+});
+$("#ask-input").addEventListener("input", () => update());
+$("#ask-input").addEventListener("focus", () => { S.focus = true; S.open = true; update(); });
+$("#ask-line").addEventListener("click", focusAsk);
+$("#ask-fig").addEventListener("click", focusAsk);
+$("#ask").addEventListener("pointerenter", () => { hovering = true; });
+$("#ask").addEventListener("pointerleave", () => { hovering = false; });
+/* Clicking away: the chips go, D's corner closes, and a card that has finished folds. One still waiting stays. */
+document.addEventListener("pointerdown", (event) => {
+  if (!light() || S.expanded || event.target.closest("#ask") || event.target.closest("#proto")) return;
+  const turn = last();
+  S.focus = false;
+  if (!turn || turn.state === "done") S.card = false;
+  S.open = false;
+  $("#ask-input").blur();
+  update();
+});
+
+$("#p-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const field = $("#p-input"), text = field.value;
+  if (!text.trim() || busy()) return;
+  field.value = "";
+  ask(text);
+});
+$("#p-input").addEventListener("input", () => update());
+$("#p-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); $("#p-form").requestSubmit(); }
+});
+
+document.addEventListener("keydown", (event) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "");
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); focusAsk(); return; }
+  if (event.key === "Escape") {
+    if (S.expanded) { S.expanded = false; S.focus = false; S.open = false; update(); return; }
+    if (S.card && last()?.state === "done") S.card = false; else { S.focus = false; S.open = false; document.activeElement?.blur(); }
+    update();
+    return;
+  }
+  if (!typing && !event.metaKey && !event.ctrlKey && "1234".includes(event.key)) setVariant("abcd"["1234".indexOf(event.key)]);
+  if (!typing && event.key === "/") { event.preventDefault(); focusAsk(); }
+});
+
+/* ── Start ── */
+const scheme = params.get("scheme");
+document.documentElement.dataset.scheme = scheme === "dark" || scheme === "light" ? scheme : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+for (const figure of figures.all) figure.setDark(isDark());
+renderProto(); renderPage(); update();
+</script>
+</body>
+</html>

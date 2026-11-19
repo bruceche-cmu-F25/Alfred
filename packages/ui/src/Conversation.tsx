@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, SessionMode, ThinkingLevel, ViewContext } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
 import { Logo, modelMark } from "./brand/Logo.tsx";
@@ -75,7 +75,7 @@ function steps(activity: CoreEvent[]): Array<{ id: string; label: string; about:
 
 const STEP_MARK: Record<string, string> = { started: "…", done: "✓", failed: "✗", declined: "—" };
 
-function Request({ run, request }: { run: Run; request: RunRequest }) {
+export function Request({ run, request }: { run: Run; request: RunRequest }) {
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -300,9 +300,12 @@ export interface ConversationProps {
   /** A run in this conversation opened a module view. */
   onView(module: string, view: string): void;
   onStarted(conversationId: string): void;
+  /** In Alfred's panel beside a daily page: the words and what was done, and nothing about the model. No title and
+   * usage row, no model and thinking under the composer, and suggestions only before the first question. */
+  slim?: boolean;
 }
 
-export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, automationTitle, onEvent, onView, onStarted }: ConversationProps) {
+export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, automationTitle, onEvent, onView, onStarted, slim }: ConversationProps) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -310,6 +313,10 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   const list = useRef<HTMLOListElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<number | null>(null);
+  // The latest onView, without being a reason to load again: the parent hands a new function on every render, and
+  // reloading for it emptied the list on every streamed word.
+  const view = useRef(onView);
+  view.current = onView;
 
   useEffect(() => {
     setDetail(null);
@@ -322,18 +329,32 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
       if (event.subject !== `conversation:${id}` && !event.runId) return;
       if (event.kind === "run.view" && event.runId) {
         // Only views opened now, by a run here: not ones replayed from history.
-        api.run(event.runId).then(({ run }) => { if (run.conversationId === id) onView(String(event.payload.module), String(event.payload.view)); }).catch(() => {});
+        api.run(event.runId).then(({ run }) => { if (run.conversationId === id) view.current(String(event.payload.module), String(event.payload.view)); }).catch(() => {});
       }
       if (timer.current === null) timer.current = window.setTimeout(() => { timer.current = null; void load(); }, 100);
     });
     return () => { alive = false; off(); };
-  }, [id, onEvent, onView]);
+  }, [id, onEvent]);
 
   const runs = detail?.runs ?? [];
   const last = runs.at(-1);
-  useEffect(() => {
-    list.current?.lastElementChild?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [last?.id, last?.state, last && live[last.id]?.length]);
+  // The stream ends a moment before the finished reply loads. The words stay up for that moment, so the reply does
+  // not empty and fill again.
+  const spoken = useRef<Record<string, string>>({});
+  for (const [runId, text] of Object.entries(live)) spoken.current[runId] = text;
+  const liveOf = (run: Run) => live[run.id] ?? (BUSY.has(run.state) ? spoken.current[run.id] : undefined);
+  // The list stays at its end while you are there, and stays put once you scroll up to read. A new turn takes you
+  // back to the end. Set, not animated: an animation restarted on every streamed word never arrives.
+  const atEnd = useRef(true);
+  const onScroll = () => {
+    const el = list.current;
+    if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
+  useLayoutEffect(() => { atEnd.current = true; }, [last?.id]);
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+  });
 
   // While a run works, what you say joins it, as in Claude; otherwise it is the next request.
   const working = last?.state === "running" ? last : null;
@@ -367,21 +388,21 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
     : undefined;
   const askedOn = (run: Run, previous: Run | undefined) =>
     run.context && run.context.view !== previous?.context?.view ? pageTitle(run.context.view) ?? run.context.title ?? run.context.view : undefined;
-  const offer = !draft.trim() && !working && !sending && suggestions.length > 0;
+  const offer = !draft.trim() && !working && !sending && suggestions.length > 0 && (!slim || runs.length === 0);
 
   return (
-    <section className="conversation" aria-label={detail?.conversation.title ?? t("conv.new")}>
-      <ConversationHead title={id ? detail?.conversation.title ?? "…" : t("conv.new")} detail={detail} />
+    <section className="conversation" data-slim={slim || undefined} aria-label={detail?.conversation.title ?? t("conv.new")}>
+      {!slim && <ConversationHead title={id ? detail?.conversation.title ?? "…" : t("conv.new")} detail={detail} />}
       {!id || runs.length === 0 ? (
         <div className="empty">
           <p className="empty-title">{t("conv.emptyTitle")}</p>
           <p className="quiet">{t("conv.emptyHint")}</p>
         </div>
       ) : (
-        <ol className="turns" ref={list}>
+        <ol className="turns" ref={list} onScroll={onScroll}>
           {runs.map((run, index) => (
             <Turn key={run.id} run={run} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
-              live={live[run.id]} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />
+              live={liveOf(run)} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />
           ))}
         </ol>
       )}
@@ -402,7 +423,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
           maxLength={8000}
         />
         <div className="composer-bar">
-          <ComposerBar conversation={detail?.conversation} onError={setError} />
+          {!slim && <ComposerBar conversation={detail?.conversation} onError={setError} />}
           <span className="grow" />
           <MicButton onText={(words) => { setDraft((now) => appendDictation(now, words)); field.current?.focus(); }} />
           <button type="submit" className="send" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>

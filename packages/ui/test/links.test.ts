@@ -31,6 +31,7 @@ test("only web addresses are linked", () => {
 test("the workspace always opens with Alfred's panel closed, and keeps the sidebar as it was left", () => {
   assert.equal(startLayout(null, 1400).alfred, "closed");
   const left = startLayout(JSON.stringify({ nav: "rail", navW: 250, alfW: 500, alfred: "open", v: 2 }), 1400);
-  assert.deepEqual(left, { nav: "rail", navW: 250, alfW: 500, alfred: "closed" });
-  assert.equal(startLayout("not json", 1000).nav, "rail");
+  assert.deepEqual(left, { nav: "hidden", navW: 250, alfW: 500, alfred: "closed" });
+  assert.equal(startLayout("not json", 800).nav, "hidden");
+  assert.equal(startLayout("not json", 1000).nav, "full");
 });

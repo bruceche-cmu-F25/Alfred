@@ -4,7 +4,7 @@ import { getLocale, intlLocale, t } from "../i18n/index.ts";
 import { origin, setAppearance, useScheme } from "../scheme.ts";
 import { Icon } from "./icons.tsx";
 import { moduleOf, type PageDef } from "./pages.tsx";
-import type { NavMode } from "./layout.ts";
+import type { Mode } from "./Topbar.tsx";
 
 const CONNECTION = { connecting: "nav.connecting", live: "nav.live", reconnecting: "nav.reconnecting" } as const;
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -24,7 +24,8 @@ export interface NavProps {
   state: StateResponse;
   pages: PageDef[];
   page: string;
-  mode: NavMode;
+  /** Daily: the workspace, modules and conversations. Dev: the Code page and its projects' sessions. All: both (phone). */
+  mode: Mode | "all";
   selected: string | null;
   /** The development session open on the Code page, if any. */
   session: string | null;
@@ -32,20 +33,29 @@ export interface NavProps {
   connection: Connection;
   onPage(key: string): void;
   onSelect(id: string | null): void;
-  onFold(): void;
-  onPalette(): void;
-  /** Rail only: the conversations live in Alfred's panel. */
-  onConversations(): void;
-  /** Shown as a sheet (phone): the top button closes it instead of folding. */
-  sheet?: boolean;
+  /** Shown as a sheet (phone): a button closes it. */
+  onClose?: () => void;
   /** Switch between Chinese and English. */
   onLanguage(): void;
 }
 
-/** The sidebar: the workspace's pages, then the conversations, like a session list. Folds to a rail of icons. */
-export function Nav({ state, pages, page, mode, selected, session, onSession, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet, onLanguage }: NavProps) {
+/** The sidebar: the workspace's pages, then the conversations, like a session list; in Code, the projects' sessions. */
+/** Light or dark, and 中文 / English: in the top bar, or at the foot of the phone's sidebar. */
+export function ViewButtons({ onLanguage }: { onLanguage(): void }) {
   const scheme = useScheme();
   const other = scheme === "dark" ? "light" : "dark";
+  return (
+    <span className="view-btns">
+      <button type="button" className="icon-btn scheme" onClick={(event) => setAppearance(other, origin(event))}
+        aria-label={t(`scheme.to.${other}`)} title={t(`scheme.to.${other}`)}>
+        <Icon name={other === "dark" ? "moon" : "sun"} />
+      </button>
+      <button type="button" className="lang" onClick={onLanguage} title={t("nav.languageTitle")} lang={getLocale() === "zh" ? "en" : "zh"}>{t("nav.language")}</button>
+    </span>
+  );
+}
+
+export function Nav({ state, pages, page, mode, selected, session, onSession, connection, onPage, onSelect, onClose, onLanguage }: NavProps) {
   const rename = (conversation: Conversation) => {
     const title = window.prompt(t("nav.rename"), conversation.title);
     if (title && title.trim() && title.trim() !== conversation.title) api.updateConversation(conversation.id, { title }).catch(() => {});
@@ -55,28 +65,24 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
   };
   // Everyday conversations here; development sessions are listed under their projects in the Code group.
   const daily = state.conversations.filter((conversation) => !conversation.projectId);
-  const waiting = daily.reduce((sum, conversation) => sum + conversation.attention, 0);
   const groups: Array<[string, PageDef[]]> = [
-    [t("nav.g.work"), pages.filter((item) => item.group === "work")], [t("nav.g.modules"), pages.filter((item) => item.group === "modules")],
-    [t("nav.g.dev"), pages.filter((item) => item.group === "dev")], [t("nav.g.system"), pages.filter((item) => item.group === "system")],
+    [t("nav.g.work"), mode === "dev" ? [] : pages.filter((item) => item.group === "work")],
+    [t("nav.g.modules"), mode === "dev" ? [] : pages.filter((item) => item.group === "modules")],
+    [t("nav.g.dev"), mode === "daily" ? [] : pages.filter((item) => item.group === "dev")],
+    // Settings sits in the top bar; the phone has none, so there it stays here.
+    [t("nav.g.system"), mode === "all" ? pages.filter((item) => item.group === "system") : []],
   ];
   const projects = (state.projects ?? []).filter((project) => project.trustedAt);
   const sessionsIn = (projectId: string) => state.conversations.filter((conversation) => conversation.projectId === projectId).slice(0, 4);
 
   return (
-    <nav className="nav" data-mode={mode} aria-label={t("nav.label")}>
-      <div className="nav-top">
-        <button type="button" className="find" onClick={onPalette} title={t("nav.findTitle", { key: `${MOD}K` })}>
-          <Icon name="search" /><span>{t("nav.find")}</span><kbd>{MOD}K</kbd>
-        </button>
-        {sheet ? (
-          <button type="button" className="icon-btn" onClick={onFold} aria-label={t("common.close")} title={t("common.close")}><Icon name="close" /></button>
-        ) : (
-          <button type="button" className="icon-btn" onClick={onFold} aria-label={t(mode === "full" ? "nav.fold" : "nav.unfold")} title={`${t(mode === "full" ? "nav.fold" : "nav.unfold")} (${MOD}\\)`}>
-            <Icon name="rail" />
-          </button>
-        )}
-      </div>
+    <nav className="nav" aria-label={t("nav.label")}>
+      {/* Searching is done in the ask bar (⌘K goes there); the sheet on a phone only needs its way out. */}
+      {onClose && (
+        <div className="nav-top">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")} title={t("common.close")}><Icon name="close" /></button>
+        </div>
+      )}
 
       {groups.map(([label, items]) => items.length > 0 && (
         <div className="nav-group" key={label}>
@@ -85,13 +91,13 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
             const count = item.badge?.(state.modules[moduleOf(item)], state);
             return (
               <button type="button" key={item.key} className="nav-item" data-k={item.k} aria-current={page === item.key ? "page" : undefined}
-                onClick={() => onPage(item.key)} title={mode === "rail" ? item.title : undefined}>
+                onClick={() => onPage(item.key)}>
                 <Icon name={item.icon} /><span className="label">{item.title}</span>
                 {count ? <span className="count">{count}</span> : null}
               </button>
             );
           })}
-          {items.some((item) => item.group === "dev") && mode === "full" && projects.map((project) => (
+          {items.some((item) => item.group === "dev") && projects.map((project) => (
             <div className="nav-project" key={project.id}>
               <p className="nav-project-name" title={project.path}>{project.name}</p>
               <ul className="conv-list">
@@ -115,6 +121,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
 
       <div className="nav-spacer" />
 
+      {mode !== "dev" && <>
       <div className="conv-head">
         <span>{t("nav.conversations")}</span>
         <button type="button" className="icon-btn" aria-label={t("nav.newConversation")} title={t("nav.newConversation")} onClick={() => onSelect(null)}><Icon name="plus" /></button>
@@ -139,19 +146,12 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
           </li>
         ))}
       </ul>
-      <button type="button" className="nav-item conv-rail" onClick={onConversations} title={t("nav.conversations")} aria-label={t("nav.conversations")}>
-        <Icon name="chat" />{waiting ? <span className="count">{waiting}</span> : null}
-      </button>
+      </>}
 
       <div className="nav-foot">
         <p className="connection" data-state={connection} title={t(CONNECTION[connection])}><span aria-hidden="true" /><b>{t(CONNECTION[connection])}</b></p>
-        <span className="nav-foot-end">
-          <button type="button" className="icon-btn scheme" onClick={(event) => setAppearance(other, origin(event))}
-            aria-label={t(`scheme.to.${other}`)} title={t(`scheme.to.${other}`)}>
-            <Icon name={other === "dark" ? "moon" : "sun"} />
-          </button>
-          <button type="button" className="lang" onClick={onLanguage} title={t("nav.languageTitle")} lang={getLocale() === "zh" ? "en" : "zh"}>{t("nav.language")}</button>
-        </span>
+        {/* On a phone, which has no top bar, the theme and language buttons live here. */}
+        {onClose && <ViewButtons onLanguage={onLanguage} />}
       </div>
     </nav>
   );

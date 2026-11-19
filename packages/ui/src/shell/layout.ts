@@ -1,16 +1,17 @@
-/** The workspace's arrangement: sidebar full or folded to icons, its width, and Alfred's panel (beside the page,
+/** The workspace's arrangement: sidebar shown or folded away, its width, and Alfred's panel (beside the page,
  * across the whole page, or closed to a floating button). The sidebar and the widths are remembered per device in
  * localStorage, which may be unavailable: then they simply start from the defaults each time. Whether Alfred's panel
  * is open is not remembered: the workspace always opens with it closed.
  */
 import { useCallback, useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-export type NavMode = "full" | "rail";
+export type NavMode = "full" | "hidden";
 export type AlfredMode = "open" | "wide" | "closed";
 export interface Layout { nav: NavMode; navW: number; alfW: number; alfred: AlfredMode }
 
-/** railMac: in the Mac app the window buttons sit over the rail's top and run to about 72 px; the rail fits them. */
-export const NAV = { min: 168, max: 300, def: 208, rail: 56, railMac: 84, foldAt: 120 };
+/** min: the top bar's lead sits over the sidebar at the same width, and in the Mac app it holds the window buttons,
+ * the sidebar button and the Daily | Code switch (styles.css .topbar-lead): 200px. */
+export const NAV = { min: 200, max: 300, def: 208, foldAt: 120 };
 /** pageMin: what the page keeps while Alfred has width to give. pageFloor: what it keeps at any window size (a phone's width). */
 export const ALF = { min: 300, max: 640, def: 400, pageMin: 420, pageFloor: 320 };
 /** Below this width the workspace is a phone: one column, a dock, Alfred as a sheet. The Mac window never gets this narrow. */
@@ -23,12 +24,13 @@ type Saved = Omit<Layout, "alfred">;
 /** `saved`: what localStorage holds, as text. Alfred always starts closed, whatever it was left as: the page has the
  * room, and the figure waits in the top right corner until it is asked something or has something to say. */
 export function startLayout(saved: string | null, windowWidth: number): Layout {
-  const fallback: Layout = { nav: windowWidth < 1200 ? "rail" : "full", navW: NAV.def, alfW: ALF.def, alfred: "closed" };
+  const fallback: Layout = { nav: windowWidth < 900 ? "hidden" : "full", navW: NAV.def, alfW: ALF.def, alfred: "closed" };
   try {
     const kept = JSON.parse(saved ?? "null") as Partial<Saved> | null;
     if (!kept || typeof kept !== "object") return fallback;
     return {
-      nav: kept.nav === "rail" || kept.nav === "full" ? kept.nav : fallback.nav,
+      // "rail" is what a folded sidebar was saved as before it folded away entirely.
+      nav: kept.nav === "full" ? "full" : kept.nav === "hidden" || (kept.nav as unknown) === "rail" ? "hidden" : fallback.nav,
       navW: typeof kept.navW === "number" ? Math.min(NAV.max, Math.max(NAV.min, kept.navW)) : NAV.def,
       alfW: typeof kept.alfW === "number" ? Math.min(ALF.max, Math.max(ALF.min, kept.alfW)) : ALF.def,
       alfred: "closed",
@@ -67,15 +69,15 @@ export function useLayout(): [Layout, (patch: Partial<Layout>) => void] {
 
 /**
  * What to draw: the page never drops below ALF.pageMin unless Alfred is already at its minimum. In a window too small
- * for a full sidebar, Alfred and a page of ALF.pageFloor, the sidebar gives way: it narrows, then draws as its rail
+ * for a full sidebar, Alfred and a page of ALF.pageFloor, the sidebar gives way: it narrows, then folds away
  * (`navMode`; the remembered choice in `layout.nav` is left alone, so it comes back when there is room).
  */
-export function widths(layout: Layout, viewport: number, alfredBeside = false, rail = NAV.rail): { nav: number; navMode: NavMode; alf: number } {
+export function widths(layout: Layout, viewport: number, alfredBeside = false): { nav: number; navMode: NavMode; alf: number } {
   let navMode = layout.nav;
-  let nav = navMode === "rail" ? rail : layout.navW;
+  let nav = navMode === "hidden" ? 0 : layout.navW;
   if (alfredBeside && navMode === "full") {
     const spare = viewport - ALF.min - ALF.pageFloor;
-    if (spare < NAV.min) { navMode = "rail"; nav = rail; }
+    if (spare < NAV.min) { navMode = "hidden"; nav = 0; }
     else nav = Math.min(nav, spare);
   }
   const room = viewport - nav - ALF.pageMin;

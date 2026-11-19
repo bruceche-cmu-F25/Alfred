@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { AwayDigest, Notice } from "@alfred/protocol";
-import { api, deviceId } from "./api.ts";
+import { ApiError, api, deviceId } from "./api.ts";
 import { desktop } from "./desktop.ts";
-import { AlfredPanel, figureState, statusLine } from "./shell/AlfredPanel.tsx";
+import { AlfredPanel, figureState } from "./shell/AlfredPanel.tsx";
+import { continues } from "./shell/ask.ts";
+import { AskBar } from "./shell/AskBar.tsx";
+import type { FindCommand, FindSources } from "./shell/find.ts";
 import { Dock } from "./shell/Dock.tsx";
-import { Figure } from "./shell/Figure.tsx";
 import { Says } from "./shell/Says.tsx";
 import type { FigureState } from "./entity/tesseract.js";
 import { noticeLines } from "./noticeText.ts";
@@ -12,6 +14,7 @@ import type { Outcome, Said } from "./speech/useSpeech.ts";
 import { Icon } from "./shell/icons.tsx";
 import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
 import { MOD, Nav } from "./shell/Nav.tsx";
+import { Topbar, type Mode } from "./shell/Topbar.tsx";
 import { availablePages, moduleOf, pageView } from "./shell/pages.tsx";
 import { automationTitle } from "./automationText.ts";
 import { Palette } from "./shell/Palette.tsx";
@@ -81,7 +84,7 @@ function useRoute(): Route & { go(patch: Partial<Route>): void } {
  * screen, so seeing it counts as being told; a result or a question elsewhere is said by Alfred (shell/Says.tsx),
  * leading there.
  */
-function useNotices(notices: Notice[], selected: string | null, onPresented: (notice: Notice) => void): { shown: Notice[]; remove(notice: Notice): void; acknowledge(notice: Notice): void } {
+function useNotices(notices: Notice[], selected: string | null, onPresented: (notice: Notice) => void, inCard: { current: boolean }): { shown: Notice[]; remove(notice: Notice): void; acknowledge(notice: Notice): void } {
   const [shown, setShown] = useState<Notice[]>([]);
   const handled = useRef(new Set<string>());
   const attending = useAttention();
@@ -97,6 +100,8 @@ function useNotices(notices: Notice[], selected: string | null, onPresented: (no
       const show = () => {
         if ((notice.kind === "run_result" && here)) return api.acknowledge(notice.id).then(() => {});
         if (notice.kind === "run_request" && here) return; // answered inline; answering closes it
+        // The ask bar's card already shows it with its buttons; said again above it, it would be said twice. It waits in 通知.
+        if (notice.kind === "proposal" && here && inCard.current) return;
         setShown((current) => current.some((item) => item.id === notice.id) ? current : [...current, notice]);
       };
       handled.current.add(notice.id);
@@ -156,6 +161,8 @@ export function App() {
   const phone = useMedia(PHONE);
   const viewport = useViewportWidth();
   const [sheet, setSheet] = useState<"alfred" | "nav" | null>(null);
+  /** A phone: the dock's tabs have given way to the ask bar. */
+  const [asking, setAsking] = useState(false);
   const [palette, setPalette] = useState(false);
   const [greeting, setGreeting] = useState(true);
   const [highlighted, setHighlighted] = useState<ReadonlySet<string>>(new Set());
@@ -187,7 +194,9 @@ export function App() {
     const runId = String(notice.payload.runId ?? "");
     if (runId) highlight(runId);
   }, [highlight]);
-  const { shown, remove: unshow, acknowledge } = useNotices(state?.notices ?? [], selected, onPresented);
+  /** The ask bar is on screen: its card shows what the open conversation's newest turn left, proposals included. */
+  const inCard = useRef(false);
+  const { shown, remove: unshow, acknowledge } = useNotices(state?.notices ?? [], selected, onPresented, inCard);
   /** Alfred's look while it is telling the user something. */
   const [speaking, setSpeaking] = useState<FigureState | null>(null);
 
@@ -259,27 +268,62 @@ export function App() {
   // A bare page (Code) takes the room Alfred's panel would; on a phone the panel is a sheet anyway.
   const bare = !!current?.bare;
   const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : bare ? "closed" : layout.alfred;
-  const size = widths(layout, viewport, alfredMode === "open", desktop ? NAV.railMac : NAV.rail);
-  /** The sidebar as drawn: its rail when the window has no room for it in full beside Alfred. */
+  const size = widths(layout, viewport, alfredMode === "open");
+  /** The sidebar as drawn: folded away when the window has no room for it beside Alfred. */
   const navMode = size.navMode;
   const toggleNav = useCallback(() => {
-    // Drawn as the rail for want of room: unfolding it puts Alfred away, which is what makes the room.
-    if (layout.nav === "full" && navMode === "rail") setLayout({ alfred: "closed" });
-    else setLayout({ nav: layout.nav === "full" ? "rail" : "full" });
+    // Folded for want of room: showing it puts Alfred away, which is what makes the room.
+    if (layout.nav === "full" && navMode === "hidden") setLayout({ alfred: "closed" });
+    else setLayout({ nav: layout.nav === "full" ? "hidden" : "full" });
   }, [layout.nav, navMode, setLayout]);
+  // Daily or Code: follows the page; Settings belongs to both, so it keeps the one it was opened from.
+  // Each side remembers its last page, so switching back lands where the user was.
+  const pageMode: Mode | null = current?.group === "dev" ? "dev" : current?.group === "system" ? null : current ? "daily" : null;
+  const lastMode = useRef<Mode>("daily");
+  const lastPage = useRef<Record<Mode, string>>({ daily: "", dev: "" });
+  if (pageMode && current) { lastMode.current = pageMode; lastPage.current[pageMode] = current.key; }
+  const mode = pageMode ?? lastMode.current;
+  const hasDev = pages.some((page) => page.group === "dev");
+  const switchMode = (next: Mode) => {
+    const first = pages.find((page) => (next === "dev" ? page.group === "dev" : page.group === "work" || page.group === "modules"));
+    const key = lastPage.current[next] || first?.key;
+    if (key) goPage(key);
+  };
   // The page a question is asked from, unless Alfred spans the window and the page is out of sight.
   const view = state && (phone || layout.alfred !== "wide") ? pageView(current, state) : undefined;
   const pageTitle = (key: string) => pages.find((page) => page.key === key)?.title;
   const automationOf = (id: string) => { const found = state?.automations?.find((automation) => automation.id === id); return found ? automationTitle(found) : undefined; };
 
-  const ask = useCallback((text: string) => {
-    showAlfred();
-    api.submit(text, selected ?? undefined, view?.context).then(({ run }) => { if (!selected) route.go({ selected: run.conversationId }); }).catch(() => {});
-  }, [showAlfred, selected, route, view?.context]);
+  /** Says something to Alfred from outside its panel (the ask bar, the palette). It joins the open conversation
+   * while that is recent, going straight into a turn that is still running; otherwise it starts a new one. */
+  const conversations = state?.conversations, runs = state?.runs, go = route.go;
+  const ask = useCallback(async (text: string) => {
+    const target = continues(conversations?.find((conversation) => conversation.id === selected), Date.now());
+    const submit = () => api.submit(text, target ?? undefined, view?.context).then(({ run }) => { if (run.conversationId !== selected) go({ selected: run.conversationId }); });
+    const working = target ? runs?.find((run) => run.conversationId === target && run.state === "running") : undefined;
+    if (!working) return submit();
+    // It may have just finished: then it goes as a new message.
+    await api.steer(working.id, text).then(() => undefined, (reason: unknown) => {
+      if (reason instanceof ApiError && reason.status === 409) return submit();
+      throw reason;
+    });
+  }, [conversations, runs, selected, go, view?.context]);
+  /** The ask bar is where Alfred is talked to: its panel is closed and the page leaves it room. */
+  const barHere = !phone && !bare && alfredMode === "closed";
+  inCard.current = barHere || (phone && asking && !bare);
+  /** From the palette: the answer comes out of the ask bar when it is there, else in the panel. */
+  const askAnywhere = useCallback((text: string) => {
+    if (phone && !bare) setAsking(true);
+    else if (!barHere) showAlfred();
+    ask(text).catch(() => {});
+  }, [ask, phone, bare, barHere, showAlfred]);
 
   // The Mac app: a notification was clicked, or the hotkey brought the window up.
   useEffect(() => desktop?.onFocusRun((runId) => openRun(runId)), [openRun]);
   useEffect(() => desktop?.onFocusComposer(() => {
+    // The ask bar when it is there: talking does not need the panel.
+    const bar = document.querySelector<HTMLInputElement>(".ask-form input");
+    if (bar) { bar.focus(); return; }
     showAlfred();
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
   }), [showAlfred]);
@@ -287,11 +331,19 @@ export function App() {
   const settledFigure = useSettled(state ? figureState(state, selected, live, greeting) : "rest", 250);
   const figure = speaking ?? settledFigure;
 
-  // Keyboard: ⌘K anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌥1–9 the pages (not while typing).
+  // Keyboard: ⌘K search and ask, anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌥1–9 the pages (not while typing).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.key.toLowerCase() === "k") { event.preventDefault(); setPalette((open) => !open); return; }
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        // Searching is done in the ask bar where it is on screen; the palette is for where it is not.
+        const bar = document.querySelector<HTMLInputElement>(".ask-form input");
+        if (!bar) setPalette((open) => !open);
+        else if (document.activeElement === bar) bar.blur();
+        else { bar.focus(); bar.select(); }
+        return;
+      }
       if (mod && event.key === ".") { event.preventDefault(); toggleAlfred(); return; }
       if (mod && event.key === "\\") { event.preventDefault(); toggleNav(); return; }
       if (event.altKey && !mod && /^Digit[1-9]$/.test(event.code) && !editable(event.target)) {
@@ -316,13 +368,25 @@ export function App() {
 
   // Sidebar divider: drag to resize; drag past the fold point to fold it to icons (keeping the width it had).
   const navDrag = dragHandle(size.nav, "right", (width) => {
-    if (width < NAV.foldAt) setLayout({ nav: "rail", navW: navStart.current });
+    if (width < NAV.foldAt) setLayout({ nav: "hidden", navW: navStart.current });
     else setLayout({ nav: "full", navW: Math.min(NAV.max, Math.max(NAV.min, width)) });
   });
   const alfDrag = dragHandle(size.alf, "left", (width) => setLayout({ alfW: Math.min(ALF.max, Math.max(ALF.min, width)) }));
 
+  /** What searching can run besides going to a page or a conversation: in the ask bar, and in ⌘K's palette. */
+  const commands: FindCommand[] = [
+    { id: "new", label: t("cmd.new"), icon: "plus", run: () => select(null) },
+    { id: "alfred", label: t(alfredMode === "closed" ? "cmd.openAlfred" : "cmd.closeAlfred"), icon: "panel", hint: `${MOD}.`, run: toggleAlfred },
+    ...(phone ? [] : [{ id: "nav", label: t(navMode === "full" ? "cmd.foldNav" : "cmd.unfoldNav"), icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
+    { id: "language", label: t("cmd.language"), icon: "chat", run: switchLanguage },
+    getScheme() === "dark"
+      ? { id: "scheme", label: t("scheme.to.light"), icon: "sun" as const, run: () => setAppearance("light") }
+      : { id: "scheme", label: t("scheme.to.dark"), icon: "moon" as const, run: () => setAppearance("dark") },
+  ];
+  const find: FindSources = { pages, commands, conversations: state.conversations, onPage: goPage, onSelect: select };
+
   const panel = (
-    <AlfredPanel state={state} selected={selected} figure={figure} wide={alfredMode === "wide"} phone={phone}
+    <AlfredPanel selected={selected} figure={figure} wide={alfredMode === "wide"} phone={phone}
       live={live} highlighted={highlighted} view={view} pageTitle={pageTitle} automationTitle={automationOf} onEvent={onEvent} onView={onView} onStarted={onStarted}
       onWide={() => setLayout({ alfred: layout.alfred === "wide" ? "open" : "wide" })}
       onClose={() => (phone ? setSheet(null) : setLayout({ alfred: "closed" }))} />
@@ -331,18 +395,21 @@ export function App() {
   return (
     <div className="workspace" data-nav={phone ? undefined : navMode} data-alfred={alfredMode} data-phone={phone || undefined}
       data-sheet={sheet ?? undefined} style={{ "--nav-px": `${size.nav}px`, "--alf-px": `${size.alf}px` } as CSSProperties}>
-      {(!phone || sheet === "nav") && (
-        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : navMode} selected={selected} session={bare ? route.session : null}
+      {!phone && <Topbar navOpen={navMode === "full"} onNav={toggleNav} mode={mode} onMode={hasDev ? switchMode : undefined} onLanguage={switchLanguage}
+        heading={current && alfredMode !== "wide" ? { title: current.title, icon: current.icon, k: current.k, summary: bare ? undefined : current.summary?.(state.modules[moduleOf(current)], state) } : undefined}
+        system={pages.filter((page) => page.group === "system")} page={current?.key ?? ""} onPage={goPage} />}
+      {(phone ? sheet === "nav" : navMode === "full") && (
+        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "all" : mode} selected={selected} session={bare ? route.session : null}
           onSession={openSession} connection={connection}
-          onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onFold={phone ? () => setSheet(null) : toggleNav}
-          onPalette={() => { setSheet(null); setPalette(true); }} onConversations={showAlfred} sheet={phone} onLanguage={switchLanguage} />
+          onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onClose={phone ? () => setSheet(null) : undefined} onLanguage={switchLanguage} />
       )}
       {phone && sheet === "nav" && <div className="scrim" onClick={() => setSheet(null)} />}
 
       <main className="page" data-k={current?.k} data-bare={bare || undefined}>
         {current ? (
           <>
-            {!bare && (
+            {/* The top bar carries the page's name and facts; a phone has no top bar, so there the page says them. */}
+            {!bare && phone && (
               <header className="page-head">
                 <h1><Icon name={current.icon} />{current.title}</h1>
                 {current.summary && <p className="page-sub">{current.summary(state.modules[moduleOf(current)], state)}</p>}
@@ -352,6 +419,11 @@ export function App() {
               snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, focus: inboxFocus, onFocused, openConversation,
               dev: { session: route.session, onSession: openSession, live, highlighted, onEvent, pageTitle, automationTitle: automationOf },
             })}</div>
+            {/* Under the page: the page's own controls are at its top, Alfred and search at its foot. */}
+            {barHere && (
+              <AskBar state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find}
+                onAsk={ask} onOpen={showAlfred} onProposal={showProposal} onEvent={onEvent} />
+            )}
           </>
         ) : (
           <div className="empty"><p className="empty-title">{t("page.none")}</p><p className="quiet">{t("page.noneHint")}</p></div>
@@ -362,35 +434,25 @@ export function App() {
 
       {!phone && (
         <>
-          <div className="resizer resizer-nav" onPointerDown={(event) => { navStart.current = layout.navW; navDrag(event); }}
-            onDoubleClick={toggleNav} title={t("resize.nav")} />
+          {navMode === "full" && <div className="resizer resizer-nav" onPointerDown={(event) => { navStart.current = layout.navW; navDrag(event); }}
+            onDoubleClick={toggleNav} title={t("resize.nav")} />}
           {alfredMode === "open" && (
             <div className="resizer resizer-alf" onPointerDown={alfDrag} onDoubleClick={() => setLayout({ alfW: ALF.def })} title={t("resize.alf")} />
           )}
         </>
       )}
 
-      {!phone && alfredMode === "closed" && !bare && (
-        <button type="button" className="fab" onClick={showAlfred} title={t("fab.open", { key: `${MOD}.` })}>
-          <Figure state={figure} size={30} anchor /><span>{statusLine(state, selected, view?.headline)}</span>
-        </button>
-      )}
       {phone && sheet !== "alfred" && (
         <Dock state={state} pages={pages} page={current?.key ?? ""} figure={figure} onPage={goPage}
-          onAlfred={() => setSheet("alfred")} onConversations={() => setSheet("nav")} />
+          onAlfred={() => (asking || bare ? setSheet("alfred") : setAsking(true))} onConversations={() => setSheet("nav")}
+          ask={asking && !bare ? (
+            <AskBar dock state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find}
+              onAsk={ask} onOpen={() => setSheet("alfred")} onProposal={showProposal} onEvent={onEvent} onBack={() => setAsking(false)} />
+          ) : undefined} />
       )}
 
       {palette && (
-        <Palette pages={pages} conversations={state.conversations} onPage={goPage} onSelect={select} onAsk={ask} onClose={() => setPalette(false)}
-          actions={[
-            { id: "new", label: t("cmd.new"), icon: "plus", run: () => select(null) },
-            { id: "alfred", label: t(alfredMode === "closed" ? "cmd.openAlfred" : "cmd.closeAlfred"), icon: "panel", hint: `${MOD}.`, run: toggleAlfred },
-            ...(phone ? [] : [{ id: "nav", label: t(navMode === "full" ? "cmd.foldNav" : "cmd.unfoldNav"), icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
-            { id: "language", label: t("cmd.language"), icon: "chat", run: switchLanguage },
-            getScheme() === "dark"
-              ? { id: "scheme", label: t("scheme.to.light"), icon: "sun" as const, run: () => setAppearance("light") }
-              : { id: "scheme", label: t("scheme.to.dark"), icon: "moon" as const, run: () => setAppearance("dark") },
-          ]} />
+        <Palette pages={pages} conversations={state.conversations} onPage={goPage} onSelect={select} onAsk={askAnywhere} onClose={() => setPalette(false)} actions={commands} />
       )}
 
       <Says<Notice>
