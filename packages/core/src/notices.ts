@@ -3,6 +3,7 @@
  * marks it delivered. A notice is information, never an instruction.
  */
 import type { DatabaseSync } from "node:sqlite";
+import { appendEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { NOTICE_STATES } from "./schema.ts";
 import type { World } from "./world.ts";
@@ -110,7 +111,8 @@ export function presentNotice(world: World, id: string, clientId: string, option
   });
 }
 
-/** The user dismissed or opened it. Allowed from any undelivered state. */
+/** The user dismissed or opened it. Allowed from any undelivered state. It is recorded as an event: devices redraw
+ * when something happens, so without one the notice would stay on every screen, the one it was dismissed on too. */
 export function acknowledgeNotice(world: World, id: string, options: { now?: number } = {}): Notice {
   const now = options.now ?? Date.now();
   return world.tx((db) => {
@@ -118,6 +120,7 @@ export function acknowledgeNotice(world: World, id: string, options: { now?: num
     if (notice.state === "acknowledged") return notice;
     if (notice.state === "expired") throw new NoticeStateError("state");
     db.prepare("UPDATE core_notices SET state = 'acknowledged', claimed_by = NULL, claim_until = NULL, updated_at = ? WHERE id = ?").run(iso(now), id);
+    appendEvent(db, { kind: "notice.acknowledged", subject: `notice:${id}`, actor: "user", runId: null, now, payload: { noticeId: id, kind: notice.kind } });
     return load(db, id);
   });
 }

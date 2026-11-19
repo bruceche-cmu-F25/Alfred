@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { MailDetail, MailMessage, MailSnapshot } from "@alfred/module-mail/types";
 import { api } from "./api.ts";
+import { Linked, OutLink } from "./Linked.tsx";
 import { SourceBar } from "./SourceBar.tsx";
 import { intlLocale, t, type Key } from "./i18n/index.ts";
 
@@ -38,12 +39,12 @@ function Reader({ message, onBack }: { message: MailMessage; onBack(): void }) {
       {detail === "gone" && <p className="quiet">{t("mail.gone")}</p>}
       {typeof detail === "object" && (
         <>
-          <div className="mail-body">{detail.body || detail.snippet}</div>
+          <div className="mail-body"><Linked text={detail.body || detail.snippet} /></div>
           {detail.attachments.length > 0 && <p className="quiet small">{t("mail.attachments", { names: detail.attachments.join(", ") })}</p>}
           {detail.bodyIncomplete && <p className="quiet small">{t("mail.incomplete")}</p>}
         </>
       )}
-      <p><a href={message.link} target="_blank" rel="noreferrer noopener">{t("mail.open")}</a></p>
+      <p><OutLink href={message.link}>{t("mail.open")}</OutLink></p>
     </article>
   );
 }

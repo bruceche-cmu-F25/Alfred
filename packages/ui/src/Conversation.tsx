@@ -5,6 +5,7 @@ import { Logo, modelMark } from "./brand/Logo.tsx";
 import { t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
 import { Diff } from "./Diff.tsx";
+import { Linked } from "./Linked.tsx";
 import { Icon } from "./shell/icons.tsx";
 
 const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
@@ -84,7 +85,7 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
   const permission = request.kind === "permission";
   return (
     <div className="request" data-kind={request.kind} role="group" aria-label={t(permission ? "req.permission" : "req.input")}>
-      <p className="request-question">{request.question}</p>
+      <p className="request-question"><Linked text={request.question} /></p>
       {request.detail && <Diff patch={request.detail} />}
       <div className="request-options">
         {permission ? (
@@ -142,8 +143,8 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
     <li className="turn" data-highlighted={highlighted || undefined} id={`run-${run.id}`}>
       {askedOn && <p className="asked-on">{t("conv.askedFrom", { page: askedOn })}</p>}
       {/* An automation's run: nobody said anything; say which automation started it, and when. */}
-      {startedBy ? <p className="asked-on auto-from" title={run.goal}>{startedBy}</p> : <p className="said">{run.goal}</p>}
-      {added.map((event) => <p className="said added" key={event.id}>{String(event.payload.text)}</p>)}
+      {startedBy ? <p className="asked-on auto-from" title={run.goal}>{startedBy}</p> : <p className="said"><Linked text={run.goal} /></p>}
+      {added.map((event) => <p className="said added" key={event.id}><Linked text={String(event.payload.text)} /></p>)}
       <div className="reply-row">
         <span className="turn-dot" data-phase={dot} data-latest={latest || undefined} aria-hidden="true" />
         <div className="reply-col">
@@ -163,7 +164,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
               <p className="working" role="status"><span className="working-label">{label ?? t("run.writing")}</span><span className="elapsed">{took(elapsed).replace(/\.\d/, "")}</span></p>
             )}
             {live && !outcome && <p className="reply-text live">{live}</p>}
-            {outcome?.reply && <p className="reply-text">{outcome.reply}</p>}
+            {outcome?.reply && <p className="reply-text"><Linked text={outcome.reply} /></p>}
             {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
             {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
             {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}

@@ -1,0 +1,12 @@
+/* Links that lead outside Alfred. The page's plain `a` takes the colour of the text around it, with an underline
+   that barely shows; these have to read as links wherever they stand: in a todo, an event, an email, a reply. */
+a.text-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--accent) 45%, transparent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+a.text-link:hover { text-decoration-color: currentColor; }
+a.text-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { Area } from "@alfred/protocol";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
 import { api } from "./api.ts";
+import { Linked, OutLink } from "./Linked.tsx";
 import { getLocale, t, type Key } from "./i18n/index.ts";
 
 type Item = TodoSnapshot["todos"][number];
@@ -79,7 +80,8 @@ function TodoRow({ todo, today, areas, fresh, onError }: { todo: Item; today: st
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 10.5l3 3 6-7" /></svg>
       </button>
       <div className="todo-body">
-        {todo.url ? <a className="todo-title" href={todo.url} target="_blank" rel="noreferrer noopener">{todo.title}</a> : <span className="todo-title">{todo.title}</span>}
+        {/* With a link of its own the whole title leads there; otherwise any address written in the title does. */}
+        {todo.url ? <OutLink className="todo-title" href={todo.url}>{todo.title}</OutLink> : <span className="todo-title"><Linked text={todo.title} /></span>}
         <span className="todo-meta">
           <select className="tag area-pick" data-k={area?.k} data-empty={area ? undefined : true} value={todo.area ?? ""} disabled={busy}
             onChange={(event) => setArea(event.target.value)} aria-label={t("todo.areaOf", { title: todo.title })}>

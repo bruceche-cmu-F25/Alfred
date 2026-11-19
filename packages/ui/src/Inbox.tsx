@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { StateResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { desktop } from "./desktop.ts";
+import { Linked } from "./Linked.tsx";
 import { inboxItems, kindColour, kindName, KINDS, type InboxItem, type InboxKind } from "./shell/inbox.ts";
 import { when } from "./shell/Nav.tsx";
 import { intlLocale, t } from "./i18n/index.ts";
@@ -47,15 +48,15 @@ function Detail({ item, onDone, onOpenConversation, conversationTitle }: {
         )}
         <span className="quiet">{when(item.at)}</span>
       </p>
-      <h2>{item.title}</h2>
-      {item.summary && <p className="inbox-summary">{item.summary}</p>}
+      <h2><Linked text={item.title} /></h2>
+      {item.summary && <p className="inbox-summary"><Linked text={item.summary} /></p>}
 
       {proposal && (
         <>
           <div className="card">
             <p className="card-label">{proposal.stale ? t("inbox.stepsStale") : t("inbox.steps", { n: proposal.steps.length })}</p>
             <ol className="proposal-steps">{proposal.steps.map((step, n) => (
-              <li key={n}>{step.preview}{step.detail && <pre className="step-detail">{step.detail}</pre>}</li>
+              <li key={n}><Linked text={step.preview} />{step.detail && <pre className="step-detail"><Linked text={step.detail} /></pre>}</li>
             ))}</ol>
           </div>
           {proposal.stale ? (

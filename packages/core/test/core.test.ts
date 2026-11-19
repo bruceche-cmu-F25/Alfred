@@ -156,6 +156,22 @@ test("only the claiming device presents a notice, and never twice", async () => 
   assert.deepEqual(listNotices(w), []);
 });
 
+test("dismissing a notice is an event, so every device hears of it and drops it; once", () => {
+  const w = world();
+  const notice = w.tx((db) => {
+    const event = recordDomainEvent(w, { kind: "toy.added", payload: {} });
+    return createNotice(db, { eventSeq: event.seq, kind: "welcome", payload: {} });
+  });
+  claimNotice(w, notice.id, "mac");
+  presentNotice(w, notice.id, "mac");
+  const before = listEvents(w).cursor;
+  assert.equal(acknowledgeNotice(w, notice.id).state, "acknowledged");
+  acknowledgeNotice(w, notice.id);
+  assert.deepEqual(listEvents(w, { after: before }).events.map((event) => [event.kind, event.subject, event.actor, event.payload.kind]),
+    [["notice.acknowledged", `notice:${notice.id}`, "user", "welcome"]]);
+  assert.equal(listNotices(w, { states: ["pending", "claimed", "presented"] }).length, 0);
+});
+
 test("notices nobody dismissed do not keep a new one from being listed", () => {
   const w = world();
   const tell = (now: number) => w.tx((db) => {

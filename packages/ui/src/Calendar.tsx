@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CalendarEvent, CalendarSnapshot } from "@alfred/module-calendar/types";
+import { Linked, OutLink } from "./Linked.tsx";
 import { SourceBar } from "./SourceBar.tsx";
 import { intlLocale, t } from "./i18n/index.ts";
 
@@ -52,7 +53,7 @@ function EventCard({ event, onClose }: { event: CalendarEvent; onClose(): void }
         <button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")}>×</button>
       </div>
       <p>{when}</p>
-      {event.location && <p>{event.location}</p>}
+      {event.location && <p><Linked text={event.location} /></p>}
       <p className="quiet">
         {event.calendar}
         {event.attendees > 1 && ` · ${t("cal.attendees", { n: event.attendees })}`}
@@ -60,8 +61,8 @@ function EventCard({ event, onClose }: { event: CalendarEvent; onClose(): void }
         {event.response === "needsAction" && ` · ${t("cal.unanswered")}`}
       </p>
       <p className="ev-card-links">
-        {event.meeting && <a href={event.meeting} target="_blank" rel="noreferrer noopener">{t("cal.join")}</a>}
-        {event.link && <a href={event.link} target="_blank" rel="noreferrer noopener">{t("cal.open")}</a>}
+        {event.meeting && <OutLink href={event.meeting}>{t("cal.join")}</OutLink>}
+        {event.link && <OutLink href={event.link}>{t("cal.open")}</OutLink>}
       </p>
     </div>
   );
