@@ -15,10 +15,12 @@ export interface DockProps {
   onConversations(): void;
 }
 
-/** The phone's bottom bar: the first pages, Alfred in the middle, and the conversations. */
+/** At most this many pages get a tab; everything else is a tap away in the sheet that "Conversations" opens. */
+const TABS = 3;
+
+/** The phone's bottom bar: the daily pages and the conversations side by side, and Alfred on its own at the right. */
 export function Dock({ state, pages, page, figure, onPage, onAlfred, onConversations }: DockProps) {
-  const shown = pages.slice(0, 4);
-  const half = Math.ceil(shown.length / 2);
+  const shown = pages.filter((item) => item.group === "work").slice(0, TABS);
   const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0);
   const button = (item: PageDef) => {
     const count = item.badge?.(state.modules[moduleOf(item)], state);
@@ -30,12 +32,13 @@ export function Dock({ state, pages, page, figure, onPage, onAlfred, onConversat
   };
   return (
     <nav className="dock" aria-label={t("nav.label")}>
-      {shown.slice(0, half).map(button)}
+      <div className="dock-tabs">
+        {shown.map(button)}
+        <button type="button" onClick={onConversations}>
+          <Icon name="chat" /><span>{t("nav.conversations")}</span>{waiting ? <span className="count">{waiting}</span> : null}
+        </button>
+      </div>
       <button type="button" className="dock-alfred" onClick={onAlfred} aria-label="Alfred"><Figure state={figure} size={34} /></button>
-      {shown.slice(half).map(button)}
-      <button type="button" onClick={onConversations}>
-        <Icon name="chat" /><span>{t("nav.conversations")}</span>{waiting ? <span className="count">{waiting}</span> : null}
-      </button>
     </nav>
   );
 }
