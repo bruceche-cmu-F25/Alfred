@@ -4,10 +4,10 @@
  * knowing when the user locks the screen and comes back.
  * The home node runs under launchd, so none of Alfred's work depends on it.
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, Notification, powerMonitor, screen, shell, Tray,
@@ -418,6 +418,7 @@ function updateTray(): void {
         { label: say("mac.log"), enabled: existsSync(config.logFile), click: () => void shell.openPath(config.logFile) },
       ],
     },
+    { label: say("mac.restart"), enabled: !restarting, click: () => void restartAlfred() },
     {
       label: say("mac.loginItem"), type: "checkbox", checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
@@ -451,13 +452,41 @@ function toggleHomeNode(): void {
   }
 }
 
+/**
+ * Restart Alfred to see a change: when run from the source tree, rebuild the page, restart the home node (when this
+ * app runs it), then start the app again. The node keeps working if the build fails; the page tells why.
+ */
+let restarting = false;
+async function restartAlfred(): Promise<void> {
+  if (restarting) return;
+  restarting = true;
+  tray?.setToolTip(`Alfred · ${say("mac.restart")}…`);
+  try {
+    if (!app.isPackaged) {
+      await new Promise<void>((done, fail) => execFile(process.execPath, [here("../../../node_modules/vite/bin/vite.js"), "build"],
+        { cwd: here("../../ui"), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, maxBuffer: 8 << 20 },
+        (error, stdout, stderr) => (error ? fail(new Error(`${stderr || stdout}`.trim().slice(-4000) || error.message)) : done())));
+    }
+    if (mode === "launchd") await restartHomeNode(config);
+  } catch (error) {
+    restarting = false;
+    updateTray();
+    dialog.showMessageBoxSync({ type: "error", message: say("mac.restartError"), detail: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  // Paths the app was started with (`electron packages/desktop`) are made absolute, whatever the new process's folder.
+  app.relaunch({ args: process.argv.slice(1).map((arg) => (!arg.startsWith("-") && existsSync(arg) ? resolve(arg) : arg)) });
+  app.exit(0);
+}
+
 function appMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { role: "appMenu" },
     { role: "editMenu" },
     {
       label: say("mac.view"), submenu: [
-        { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
+        { role: "reload" }, { label: say("mac.restart"), accelerator: "CmdOrCtrl+Shift+R", click: () => void restartAlfred() },
+        { role: "toggleDevTools" }, { type: "separator" },
         { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" },
       ],
     },

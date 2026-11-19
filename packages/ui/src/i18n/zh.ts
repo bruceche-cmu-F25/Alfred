@@ -291,6 +291,8 @@ export const zh = {
   "mac.figureHome": "放回右下角",
   "mac.node": "主节点",
   "mac.node.restart": "重启主节点",
+  "mac.restart": "重启 Alfred",
+  "mac.restartError": "Alfred 没能重启",
   "mac.node.start": "启动主节点",
   "mac.node.stop": "停止主节点",
   "mac.log": "打开日志",

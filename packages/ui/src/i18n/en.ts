@@ -292,6 +292,8 @@ export const en: Record<keyof typeof zh, string> = {
   "mac.figureHome": "Back to the corner",
   "mac.node": "Home node",
   "mac.node.restart": "Restart the home node",
+  "mac.restart": "Restart Alfred",
+  "mac.restartError": "Alfred did not restart",
   "mac.node.start": "Start the home node",
   "mac.node.stop": "Stop the home node",
   "mac.log": "Open the log",
