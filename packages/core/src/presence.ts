@@ -15,7 +15,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { appendEvent } from "./events.ts";
 import { iso } from "./ids.ts";
-import { createNotice, type Notice } from "./notices.ts";
+import { createNotice, handNotice, type Notice } from "./notices.ts";
 import type { World } from "./world.ts";
 
 export const PRESENCE_KINDS = ["active", "away"] as const;
@@ -55,7 +55,7 @@ function digest(db: DatabaseSync, since: { seq: number; at: string }, now: numbe
     AND state IN ('completed', 'failed', 'interrupted') ORDER BY updated_at`).all(since.at) as { state: string; goal: string }[];
   const changes: Record<string, number> = {};
   for (const row of db.prepare(`SELECT kind, sum(coalesce(json_extract(payload, '$.count'), 1)) AS n FROM core_events
-    WHERE seq > ? AND kind NOT LIKE 'run.%' AND kind NOT LIKE 'presence.%' AND actor IN ('alfred', 'system') GROUP BY kind`)
+    WHERE seq > ? AND kind NOT LIKE 'run.%' AND kind NOT LIKE 'presence.%' AND kind NOT LIKE 'notice.%' AND actor IN ('alfred', 'system') GROUP BY kind`)
     .all(since.seq) as { kind: string; n: number }[]) {
     const module = row.kind.split(".")[0];
     changes[module] = (changes[module] ?? 0) + row.n;
@@ -123,8 +123,7 @@ export function reportPresence(world: World, input: { clientId: string; kind: Pr
     const event = appendEvent(db, { kind: "presence.returned", subject: "presence", actor: "system", runId: null, now, payload: { ...away, client: input.clientId } });
     const notice = createNotice(db, { eventSeq: event.seq, kind: "welcome", payload: { ...away }, ttlMs: WELCOME_TTL_MS, now });
     // The device that saw the user come back is the one that greets them.
-    db.prepare("UPDATE core_notices SET state = 'claimed', claimed_by = ?, claim_until = ?, updated_at = ? WHERE id = ?")
-      .run(input.clientId, iso(now + CLAIM_MS), iso(now), notice.id);
+    handNotice(db, notice, input.clientId, now + CLAIM_MS, now);
     return { returned: true, notice: { ...notice, state: "claimed", claimedBy: input.clientId, claimUntil: iso(now + CLAIM_MS) } };
   });
 }

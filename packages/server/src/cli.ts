@@ -16,6 +16,7 @@ import { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 import { openHome } from "./home.ts";
 import { createHttpServer, createIngressServer } from "./http.ts";
 import { RemoteAccess } from "./remote.ts";
+import { watchAttention } from "./attention.ts";
 import { PushService } from "./push.ts";
 import { cliRunner, findTailscale, Tailscale } from "./tailscale.ts";
 import { GoogleConnections } from "./google.ts";
@@ -73,7 +74,8 @@ if (command === "serve") {
   // Notices nobody took within seconds go to the devices that turned notifications on.
   const push = new PushService({ dataDir, world: home.world, secrets: defaultSecretStore(dataDir), log });
   remote.events.on("revoked", (id) => push.unsubscribe(id));
-  push.watch();
+  // The home node hands each notice nobody took to the outlet the attention table names; the phones are one.
+  const attention = watchAttention({ world: home.world, reaches: () => push.reaches(), log });
   const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, remote, push });
   const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, models, remote, push });
   server.on("error", (error: NodeJS.ErrnoException) => {
@@ -97,7 +99,7 @@ if (command === "serve") {
   const stop = async () => {
     google.close();
     models.close();
-    push.close();
+    attention.close();
     server.close();
     server.closeAllConnections();
     ingress.close();

@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { claimNotice, CORE_MIGRATIONS, createNotice, listNotices, openWorld, pairDevice, recordDomainEvent, revokeDevice, type World } from "@alfred/core";
-import { checkSubscription, noticeMessage, PushService, type PushSender } from "../src/index.ts";
+import { ATTENTION, claimNotice, CORE_MIGRATIONS, createNotice, listNotices, openWorld, pairDevice, recordDomainEvent, revokeDevice, type World } from "@alfred/core";
+import { checkSubscription, noticeMessage, PushService, watchAttention, type PushSender } from "../src/index.ts";
 import type { SecretStore } from "../src/secrets.ts";
 
 const APPLE = { endpoint: "https://web.push.apple.com/QGx1a2V", keys: { p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM", auth: "tBHItJI5svbpez7KI4CCXg" } };
@@ -32,9 +32,13 @@ function setUp(send: PushSender) {
   const dataDir = mkdtempSync(join(tmpdir(), "alfred-push-"));
   const world = openWorld(":memory:", CORE_MIGRATIONS);
   const secrets = memorySecrets();
-  const push = new PushService({ dataDir, world, secrets, send, graceMs: 40 });
+  const push = new PushService({ dataDir, world, secrets, send });
   const phone = pairDevice(world, { token: "p".repeat(43), name: "iPhone", kind: "phone" });
-  return { dataDir, world, secrets, push, phone };
+  // The home node's attention hands notices to push; here with a short wait before a notice is the phone's.
+  let attention: { close(): void } | null = null;
+  const watch = () => { attention = watchAttention({ world, reaches: () => push.reaches(), policy: { ...ATTENTION, pushAfterMs: 40 } }); };
+  const close = () => attention?.close();
+  return { dataDir, world, secrets, push, phone, watch, close };
 }
 
 test("only real push services are accepted as endpoints", () => {
@@ -60,12 +64,12 @@ test("a notice reads on a lock screen as on the Mac, in the user's language", ()
 
 test("a notice nobody takes within the grace period goes to the phone once, and is then claimed by push", async () => {
   const sent: string[] = [];
-  const { dataDir, world, secrets, push, phone } = setUp(async (subscription, payload) => { sent.push(`${subscription.endpoint} ${payload}`); });
+  const { dataDir, world, secrets, push, phone, watch, close } = setUp(async (subscription, payload) => { sent.push(`${subscription.endpoint} ${payload}`); });
   try {
     push.subscribe(phone.id, APPLE);
     assert.equal(statSync(join(dataDir, "push.json")).mode & 0o777, 0o600);
     assert.ok(!readFileSync(join(dataDir, "push.json"), "utf8").includes("privateKey"));
-    push.watch();
+    watch();
     const left = notice(world);
     const taken = notice(world);
     claimNotice(world, taken.id, "mac");
@@ -79,15 +83,15 @@ test("a notice nobody takes within the grace period goes to the phone once, and 
     notice(world, "welcome", {});
     await wait(80);
     assert.equal(sent.length, 1);
-  } finally { push.close(); world.close(); }
+  } finally { close(); world.close(); }
 });
 
 test("a change outside that failed or may not have happened reaches the phone; one that went through does not", async () => {
   const sent: Array<{ title: string; body: string; url: string; ack: boolean }> = [];
-  const { world, push, phone } = setUp(async (_subscription, payload) => { sent.push(JSON.parse(payload)); });
+  const { world, push, phone, watch, close } = setUp(async (_subscription, payload) => { sent.push(JSON.parse(payload)); });
   try {
     push.subscribe(phone.id, APPLE);
-    push.watch();
+    watch();
     notice(world, "outbound", { state: "done", preview: "Add “Dentist” to Me: Fri 15:00" });
     notice(world, "outbound", { state: "unknown", preview: "Email ana@example.com: Plan" });
     notice(world, "outbound", { state: "failed", preview: "Reply to leo@example.com: Contract", error: "Gmail answered 400" });
@@ -98,29 +102,29 @@ test("a change outside that failed or may not have happened reaches the phone; o
     assert.deepEqual([unsure.url, unsure.ack], ["/#p=core.inbox", false], "it opens the inbox, and stays there until looked at");
     assert.equal(sent.find((message) => message.title === "That didn't go through")!.body, "Reply to leo@example.com: Contract: Gmail answered 400");
     assert.deepEqual(listNotices(world, { states: ["pending", "claimed"] }).map((item) => [item.payload.state, item.claimedBy]).sort(), [["done", null], ["failed", "push"], ["unknown", "push"]]);
-  } finally { push.close(); world.close(); }
+  } finally { close(); world.close(); }
 });
 
 test("nothing is claimed when no push went out, and a gone subscription is dropped", async () => {
-  const { world, push, phone } = setUp(async () => { throw Object.assign(new Error("Gone"), { statusCode: 410 }); });
+  const { world, push, phone, watch, close } = setUp(async () => { throw Object.assign(new Error("Gone"), { statusCode: 410 }); });
   try {
     push.subscribe(phone.id, APPLE);
-    push.watch();
+    watch();
     const left = notice(world);
     await wait(120);
     assert.equal(push.subscribed(phone.id), false);
     assert.equal(listNotices(world).find((item) => item.id === left.id)?.state, "pending");
-  } finally { push.close(); world.close(); }
+  } finally { close(); world.close(); }
 });
 
 test("a revoked device gets nothing", async () => {
   const sent: string[] = [];
-  const { world, push, phone } = setUp(async (subscription) => { sent.push(subscription.endpoint); });
+  const { world, push, phone, watch, close } = setUp(async (subscription) => { sent.push(subscription.endpoint); });
   try {
     push.subscribe(phone.id, APPLE);
     revokeDevice(world, phone.id);
     const result = await push.sendTo({ title: "Alfred", body: "hi", url: "/", tag: "t" });
     assert.deepEqual(result, { accepted: 0, failed: 0, expired: 0 });
     assert.deepEqual(sent, []);
-  } finally { push.close(); world.close(); }
+  } finally { close(); world.close(); }
 });

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ATTENTION, CORE_MIGRATIONS, createNotice, decide, listNotices, noticeClass, openWorld, recordDomainEvent, type Outlet } from "../src/index.ts";
+import {
+  acknowledgeNotice, ATTENTION, claimNotice, CORE_MIGRATIONS, createNotice, decide, listEvents, listNotices, noticeClass, openWorld, pendingNotices,
+  presentNotice, recordDomainEvent, reportPresence, type Outlet, type World,
+} from "../src/index.ts";
 
 const T0 = Date.parse("2026-11-19T09:00:00.000Z");
 const made = new Date(T0).toISOString();
@@ -91,4 +94,46 @@ test("the waits are the policy's, in one place", () => {
   const policy = { ...ATTENTION, figureAfterMs: 0, pushAfterMs: 1_000, pushes: () => true };
   assert.deepEqual(decide(notice("result"), [figure(true)], after(0), { policy }), { do: "tell", outlet: "mac.figure" });
   assert.deepEqual(decide(notice("sent"), [push], after(1_000), { policy }), { do: "tell", outlet: "push" });
+});
+
+const told = (world: World, kind: string, now = Date.now()) => world.tx((db) => {
+  const event = recordDomainEvent(world, { kind: "run.completed", payload: {}, now });
+  return createNotice(db, { eventSeq: event.seq, kind, payload: {}, now });
+});
+
+test("who a notice was handed to and where it was shown are events; holding on to it longer is not", () => {
+  const world = openWorld(":memory:", CORE_MIGRATIONS);
+  const now = Date.now();
+  const first = told(world, "run_result", now), second = told(world, "proposal", now);
+  const before = listEvents(world).cursor;
+  claimNotice(world, first.id, "mac.figure", { now });
+  claimNotice(world, first.id, "mac.figure", { now: now + 5_000 }); // the same holder, a little longer
+  presentNotice(world, first.id, "mac.figure", { now: now + 6_000 });
+  presentNotice(world, first.id, "mac.figure", { now: now + 7_000 });
+  acknowledgeNotice(world, first.id, { now: now + 8_000 });
+  // The phone held the second one; its hold ran out, and the Mac took it over.
+  claimNotice(world, second.id, "push", { now, ttlMs: 1_000 });
+  claimNotice(world, second.id, "mac.figure", { now: now + 9_000 });
+  assert.deepEqual(listEvents(world, { after: before }).events.map((event) => [event.kind, event.payload.kind, event.payload.to ?? event.payload.by ?? null, event.actor]), [
+    ["notice.assigned", "run_result", "mac.figure", "system"],
+    ["notice.presented", "run_result", "mac.figure", "system"],
+    ["notice.acknowledged", "run_result", null, "user"],
+    ["notice.assigned", "proposal", "push", "system"],
+    ["notice.assigned", "proposal", "mac.figure", "system"],
+  ]);
+  assert.deepEqual(pendingNotices(world), [], "neither is anybody's to take any more");
+  world.close();
+});
+
+test("the welcome is handed to the device that saw the return; handing notices about is not counted as Alfred's work", () => {
+  const world = openWorld(":memory:", CORE_MIGRATIONS);
+  const now = Date.now(), hour = 3_600_000;
+  reportPresence(world, { clientId: "mac", kind: "active", now: now - 5 * hour });
+  reportPresence(world, { clientId: "mac", kind: "away", now: now - 4 * hour });
+  const result = told(world, "run_result", now - 3 * hour);
+  claimNotice(world, result.id, "push", { now: now - 3 * hour + 20_000, ttlMs: 12 * hour });
+  const { notice: welcome } = reportPresence(world, { clientId: "mac", kind: "active", now });
+  assert.deepEqual(welcome!.payload.changes, {});
+  assert.deepEqual(listEvents(world).events.filter((event) => event.kind === "notice.assigned").map((event) => [event.payload.kind, event.payload.to]), [["run_result", "push"], ["welcome", "mac"]]);
+  world.close();
 });

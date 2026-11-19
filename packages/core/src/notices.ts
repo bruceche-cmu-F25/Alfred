@@ -1,6 +1,9 @@
 /** Nothing is spoken or shown directly: results, interruptions and requests
  * become notices, and only a device's report that it actually presented one
  * marks it delivered. A notice is information, never an instruction.
+ *
+ * Who a notice was handed to, where it was shown and when the user dismissed it are events (`notice.assigned`,
+ * `notice.presented`, `notice.acknowledged`), so "where was I told about this?" has an answer.
  */
 import type { DatabaseSync } from "node:sqlite";
 import { noticeClass, type NoticeClass } from "./attention.ts";
@@ -71,6 +74,20 @@ function expire(db: DatabaseSync, now: number): void {
     WHERE state IN ('pending', 'claimed') AND expires_at IS NOT NULL AND expires_at <= ?`).run(iso(now), iso(now));
 }
 
+/** Hands a notice to `to` until `until`, and records it. Only inside a world transaction. The one way a notice
+ * gets a holder, whoever chose it: a device taking it for itself, the home node sending it somewhere (server
+ * attention.ts), or the welcome going to the device that saw the user come back. */
+export function handNotice(db: DatabaseSync, notice: Pick<Notice, "id" | "kind">, to: string, until: number, now: number): void {
+  db.prepare("UPDATE core_notices SET state = 'claimed', claimed_by = ?, claim_until = ?, updated_at = ? WHERE id = ?").run(to, iso(until), iso(now), notice.id);
+  appendEvent(db, { kind: "notice.assigned", subject: `notice:${notice.id}`, actor: "system", runId: null, now, payload: { noticeId: notice.id, kind: notice.kind, to } });
+}
+
+/** The notices nobody holds, oldest first. Unlike `listNotices` it only reads (no expiry pass), so it can be called
+ * after every commit without causing one. */
+export function pendingNotices(world: World): Notice[] {
+  return world.db.prepare("SELECT * FROM core_notices WHERE state = 'pending' ORDER BY created_at, rowid").all().map(toNotice);
+}
+
 /** Undelivered notices, oldest first. When there are more than `limit`, the newest ones: old notices nobody
  * dismissed must not keep a new one from being told. A lapsed claim counts as pending again. */
 export function listNotices(world: World, options: { states?: NoticeState[]; limit?: number; now?: number } = {}): Notice[] {
@@ -94,8 +111,10 @@ export function claimNotice(world: World, id: string, clientId: string, options:
     const notice = load(db, id);
     const reclaimable = notice.state === "claimed" && (notice.claimedBy === by || Date.parse(notice.claimUntil!) <= now);
     if (notice.state !== "pending" && !reclaimable) throw new NoticeStateError(notice.state === "claimed" ? "claim" : "state");
-    db.prepare("UPDATE core_notices SET state = 'claimed', claimed_by = ?, claim_until = ?, updated_at = ? WHERE id = ?")
-      .run(by, iso(now + (options.ttlMs ?? 30_000)), iso(now), id);
+    const until = now + (options.ttlMs ?? 30_000);
+    // Holding on to it a little longer is not news; a new holder is.
+    if (notice.state === "claimed" && notice.claimedBy === by) db.prepare("UPDATE core_notices SET claim_until = ?, updated_at = ? WHERE id = ?").run(iso(until), iso(now), id);
+    else handNotice(db, notice, by, until, now);
     return load(db, id);
   });
 }
@@ -112,6 +131,7 @@ export function presentNotice(world: World, id: string, clientId: string, option
     if (notice.state !== "claimed") throw new NoticeStateError("state");
     if (notice.claimedBy !== by) throw new NoticeStateError("claim");
     db.prepare("UPDATE core_notices SET state = 'presented', claim_until = NULL, updated_at = ? WHERE id = ?").run(iso(now), id);
+    appendEvent(db, { kind: "notice.presented", subject: `notice:${id}`, actor: "system", runId: null, now, payload: { noticeId: id, kind: notice.kind, by } });
     return load(db, id);
   });
 }
