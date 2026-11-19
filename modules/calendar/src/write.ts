@@ -1,13 +1,12 @@
 /** Changing the user's Google Calendar: adding an event (holding time), moving one they organize, answering an
  * invitation. A run never does these itself (level `external`): it proposes them, and on the user's yes each becomes
- * an outbound change (core/outbound.ts) that the sync delivers to Google. All three are safe to deliver again: a new
- * event carries its own id, and a move or an answer that Google already shows counts as done.
+ * an outbound change (core/outbound.ts), which the home node hands to `deliverCalendar` one at a time. All three are
+ * safe to deliver again: a new event carries its own id, and a move or an answer that Google already shows counts as
+ * done.
  */
 import { randomInt } from "node:crypto";
-import {
-  claimOutbound, enqueueOutbound, finishOutbound, localeOf, retryOutbound, userLocale, type Locale, type Outbound, type World,
-} from "@alfred/core";
-import { defineOp, defineTool, ServiceError, Type, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
+import { enqueueOutbound, localeOf, userLocale, type Locale, type Outbound, type World } from "@alfred/core";
+import { defineOp, defineTool, Type, type Delivered, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
 import { addDays } from "./google.ts";
 
 const API = "https://www.googleapis.com/calendar/v3";
@@ -78,19 +77,19 @@ function queue(world: World, action: "add" | "move" | "respond", payload: AddInp
 
 export const calendarOps = [
   defineOp({
-    name: "calendar.add", level: "external",
+    name: "calendar.add",
     input: Type.Object({ ...Ids, calendar: Type.String({ maxLength: 120 }), title: Type.String({ minLength: 1, maxLength: 300 }), when: WhenSchema,
       location: Type.Optional(Type.String({ maxLength: 300 })), notes: Type.Optional(Type.String({ maxLength: 4000 })) }),
     run: (world, input) => queue(world, "add", input as AddInput),
   }),
   defineOp({
-    name: "calendar.move", level: "external",
+    name: "calendar.move",
     input: Type.Object({ ...Ids, eventId: Type.String({ maxLength: 1024 }), title: Type.String({ maxLength: 300 }), etag: Type.Union([Type.String({ maxLength: 200 }), Type.Null()]),
       when: WhenSchema, notify: Type.Boolean(), attendees: Type.Integer({ minimum: 0 }) }),
     run: (world, input) => queue(world, "move", input as MoveInput),
   }),
   defineOp({
-    name: "calendar.respond", level: "external",
+    name: "calendar.respond",
     input: Type.Object({ ...Ids, eventId: Type.String({ maxLength: 1024 }), title: Type.String({ maxLength: 300 }),
       response: Type.Union(RESPONSES.map((response) => Type.Literal(response))), at: Type.String({ maxLength: 60 }) }),
     run: (world, input) => queue(world, "respond", input as RespondInput),
@@ -225,9 +224,7 @@ const reason = (body: Record<string, unknown>) => {
   return typeof message === "string" ? message.slice(0, 200) : "";
 };
 
-type Outcome = { state: "done"; result?: unknown } | { state: "failed"; error: string } | { state: "retry"; error: string };
-
-async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: AbortSignal): Promise<Outcome> {
+async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: AbortSignal): Promise<Delivered> {
   if (outbound.action === "add") {
     const input = outbound.payload as AddInput & { eventId: string };
     const answer = await session.send("POST", `${API}/calendars/${encodeURIComponent(input.calendarId)}/events?sendUpdates=none`, {
@@ -236,7 +233,7 @@ async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: A
     }, { signal });
     if (answer.status === 409) return { state: "done", result: { id: input.eventId, already: true } };
     if (answer.status < 300) return { state: "done", result: { id: answer.body.id, link: answer.body.htmlLink } };
-    return answer.status >= 500 ? { state: "retry", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
+    return answer.status >= 500 ? { state: "unclear", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
   }
   const input = outbound.payload as MoveInput | RespondInput;
   const url = `${API}/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`;
@@ -251,7 +248,7 @@ async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: A
       const current = await session.get(url, signal);
       return sameTime(current, move.when) ? { state: "done" } : { state: "failed", error: "The event changed in Google since this was proposed" };
     }
-    return answer.status >= 500 ? { state: "retry", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
+    return answer.status >= 500 ? { state: "unclear", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
   }
   const respond = input as RespondInput;
   const current = await session.get(url, signal);
@@ -263,33 +260,17 @@ async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: A
     { attendees: attendees.map((attendee) => attendee.self ? { ...attendee, responseStatus: respond.response } : attendee) },
     { signal, ...(typeof current.etag === "string" ? { headers: { "If-Match": current.etag } } : {}) });
   if (answer.status < 300) return { state: "done" };
-  if (answer.status === 412 || answer.status >= 500) return { state: "retry", error: `Google answered ${answer.status}` };
+  if (answer.status === 412 || answer.status >= 500) return { state: "unclear", error: `Google answered ${answer.status}` };
   return { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
 }
 
-/** Delivers every queued calendar change, oldest first. One that cannot reach Google waits for the next pass. */
-export async function deliverCalendar(world: World, services: ModuleServices, signal?: AbortSignal): Promise<void> {
+/** Delivers one accepted calendar change to Google (the module's `deliver`). A session that cannot be had is thrown
+ * on: the queue reads that as it does for every module. */
+export async function deliverCalendar(world: World, outbound: Outbound, services: ModuleServices, signal?: AbortSignal): Promise<Delivered> {
   const google = services.google;
-  const sessions = new Map<string, GoogleSession>();
-  const tried = new Set<string>();
-  for (let outbound = claimOutbound(world, "calendar", tried); outbound; outbound = claimOutbound(world, "calendar", tried)) {
-    tried.add(outbound.id);
-    const account = (outbound.payload as { account: string }).account;
-    if (signal?.aborted) { retryOutbound(world, outbound.id, "Alfred stopped"); return; }
-    const may = google?.accounts().find((candidate) => candidate.email === account);
-    if (!may?.capabilities.includes("calWrite")) {
-      finishOutbound(world, outbound.id, { state: "failed", error: localeOf(world.db) === "zh" ? "没有改这个日历的权限：在设置里打开「日历：替你加和改」" : "No permission to change this calendar: turn on “Calendar: add and change” in Settings" });
-      continue;
-    }
-    try {
-      let session = sessions.get(account);
-      if (!session) { session = await google!.session(account); sessions.set(account, session); }
-      const outcome = await deliverOne(session, outbound, signal);
-      if (outcome.state === "retry") retryOutbound(world, outbound.id, outcome.error);
-      else finishOutbound(world, outbound.id, outcome);
-    } catch (error) {
-      if (error instanceof ServiceError && error.code === "reconnect") finishOutbound(world, outbound.id, { state: "failed", error: error.message });
-      else retryOutbound(world, outbound.id, (error as Error).message);
-    }
+  const account = (outbound.payload as { account: string }).account;
+  if (!google?.accounts().find((candidate) => candidate.email === account)?.capabilities.includes("calWrite")) {
+    return { state: "failed", error: localeOf(world.db) === "zh" ? "没有改这个日历的权限：在设置里打开「日历：替你加和改」" : "No permission to change this calendar: turn on “Calendar: add and change” in Settings" };
   }
+  return deliverOne(await google.session(account), outbound, signal);
 }

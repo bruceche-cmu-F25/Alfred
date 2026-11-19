@@ -72,22 +72,22 @@ export const api = {
     post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}) }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
   updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }) =>
-    post<Conversation>(`/api/conversations/${id}`, change),
+    post<Conversation>(`/api/conversations/${id}`, { requestId: newRequestId(), ...change }),
   /** Words into the run now working; rejects with 409 when it is not. */
   steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),
   models: () => call<ModelsResponse>("/api/models"),
   /** Only on the home node's machine. */
-  addProject: (path: string) => post<Project>("/api/projects", { path }),
-  trustProject: (id: string) => post<Project>(`/api/projects/${id}/trust`, {}),
+  addProject: (path: string) => post<Project>("/api/projects", { requestId: newRequestId(), path }),
+  trustProject: (id: string) => post<Project>(`/api/projects/${id}/trust`, { requestId: newRequestId() }),
   /** A development session in a trusted project; its first message is then submitted to it. */
-  startSession: (projectId: string, title: string, mode?: SessionMode) => post<Conversation>("/api/conversations", { projectId, title, ...(mode ? { mode } : {}) }),
+  startSession: (projectId: string, title: string, mode?: SessionMode) => post<Conversation>("/api/conversations", { requestId: newRequestId(), projectId, title, ...(mode ? { mode } : {}) }),
   /** A development session's changed files since its snapshot, and one file's diff. */
   changes: (id: string) => call<SessionChanges>(`/api/conversations/${id}/changes`),
   diff: (id: string, path: string) => call<{ diff: string | null }>(`/api/conversations/${id}/diff?path=${encodeURIComponent(path)}`),
   respond: (runId: string, requestId: string, answer: string) => post<Run>(`/api/runs/${runId}/respond`, { requestId, answer }),
   run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
-  cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, {}),
-  resume: (runId: string) => post<Run>(`/api/runs/${runId}/resume`, {}),
+  cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, { requestId: newRequestId() }),
+  resume: (runId: string) => post<Run>(`/api/runs/${runId}/resume`, { requestId: newRequestId() }),
   op: (op: string, input: unknown) => post<OpResponse>(`/api/ops/${op}`, { requestId: newRequestId(), input }),
   claim: (id: string) => post<Notice>(`/api/notices/${id}/claim`, { client: deviceId }),
   present: (id: string) => post<Notice>(`/api/notices/${id}/present`, { client: deviceId }),

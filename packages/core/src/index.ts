@@ -24,7 +24,7 @@ export {
   listNotices, claimNotice, presentNotice, acknowledgeNotice, createNotice, NoticeStateError,
   type Notice, type NoticeState,
 } from "./notices.ts";
-export { runCommand, CommandConflictError } from "./commands.ts";
+export { runCommand, commandReplay, CommandConflictError } from "./commands.ts";
 export {
   reportPresence, isReturn, PRESENCE_KINDS, RETURN_AFTER_MS, AWAY_RETURN_MS, HEARTBEAT_MS,
   type AwayDigest, type PresenceKind, type PresenceOptions, type PresenceResult,

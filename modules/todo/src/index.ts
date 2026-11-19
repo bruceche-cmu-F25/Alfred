@@ -98,7 +98,7 @@ export const todoModule = defineModule({
 
   ops: [
     defineOp({
-      name: "todo.add", level: "local",
+      name: "todo.add",
       input: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 500 }),
         due: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
@@ -107,7 +107,7 @@ export const todoModule = defineModule({
       run: (world, input) => addTodo(world, input).todo,
     }),
     defineOp({
-      name: "todo.update", level: "local",
+      name: "todo.update",
       input: Type.Object({
         id: Type.String(), revision: Type.Optional(Type.String()),
         patch: Type.Object({
@@ -119,13 +119,13 @@ export const todoModule = defineModule({
       run: (world, input) => updateTodo(world, { id: input.id, revision: input.revision }, input.patch),
     }),
     defineOp({
-      name: "todo.complete", level: "local",
+      name: "todo.complete",
       input: Type.Object({ id: Type.String(), revision: Type.Optional(Type.String()) }),
       run: (world, input) => completeTodo(world, input),
     }),
     defineOp({
-      // Permanent: a device's explicit delete is the user's own decision; a run must ask first, every time.
-      name: "todo.delete", level: "irreversible",
+      // Permanent. A device's explicit delete is the user's own decision; a run must ask first, every time (todo_delete).
+      name: "todo.delete",
       input: Type.Object({ id: Type.String(), revision: Type.Optional(Type.String()) }),
       run: (world, input) => deleteTodo(world, input),
     }),

@@ -3,7 +3,8 @@
  * A sync every few minutes reads what is in each connected account's inbox from the last two weeks: new messages in
  * full (their text, never their attachments), and which are unread. What left the inbox (archived, deleted, older)
  * leaves the mirror. Devices get the list without bodies; a body is read on demand (the `mail.message` query), and a
- * run reads mail with mail_list and mail_read. Sending, replying and archiving come later, and only as proposals.
+ * run reads mail with mail_list and mail_read. Sending and replying are only ever proposed; an accepted email is
+ * sent by write.ts. Archiving comes later.
  */
 import { createHash } from "node:crypto";
 import { recordDomainEvent, withDefaultActor, type World } from "@alfred/core";
@@ -229,6 +230,6 @@ export const mailModule = defineModule({
   snapshot(world): MailSnapshot {
     return { messages: listMail(world, { everything: true, limit: 200 }), sources: mailSources(world) };
   },
-  // Accepted emails go out first; the read that follows is the inbox after them.
-  sync: { everyMs: 5 * 60_000, run: async (world, services, signal) => { await deliverMail(world, services, signal); await syncMail(world, services, signal); } },
+  sync: { everyMs: 5 * 60_000, run: syncMail },
+  deliver: deliverMail,
 });

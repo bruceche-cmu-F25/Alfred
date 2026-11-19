@@ -8,6 +8,7 @@
 import {
   coreContext, getRun, openProposal, runCommand, withCoreContext, type Actor, type Migration, type ProposalStep, type RunTool, type World,
   automationName, createAutomation, listAutomations, updateAutomation, userLocale, type AutomationView,
+  claimOutbound, finishOutbound, retryOutbound, type Outbound,
 } from "@alfred/core";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -21,11 +22,11 @@ export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
 /** What an unattended run may do without asking. */
 export const RUN_LEVELS: readonly PermissionLevel[] = ["read", "local"];
 
-/** A domain operation a device invokes directly (a click, an edit). */
+/** A domain operation a device invokes directly (a click, an edit). It has no permission level: a device's own
+ * command is the user's decision. Levels say what a run may do, and belong to tools. */
 export interface ModuleOp<P extends TSchema = TSchema> {
   /** `<module>.<verb>`, for example `todo.complete`. */
   name: string;
-  level: PermissionLevel;
   input: P;
   /** Synchronous: it opens its own world transaction. Returns JSON. */
   run(world: World, input: Static<P>): unknown;
@@ -78,7 +79,22 @@ export interface AlfredModule {
    * and when a device asks for fresh data. It reads through `services` and writes its own tables; a failure is the
    * module's to record (say, per account) so its page can say what went wrong. Never called concurrently. */
   sync?: { everyMs: number; run(world: World, services: ModuleServices, signal: AbortSignal): Promise<void> };
+  /** For a module that changes an outside service (adds an event, sends an email): how ONE accepted change is
+   * delivered. The module only says how it went; the queue is not its business. The home node takes each change
+   * waiting for the module (core outbound.ts), calls this, and records the ending (`deliverQueued`). It may throw a
+   * ServiceError instead of answering. Never called concurrently for one module. */
+  deliver?(world: World, outbound: Outbound, services: ModuleServices, signal: AbortSignal): Promise<Delivered>;
 }
+
+/** How one delivery went, as the module that made it knows. */
+export type Delivered =
+  | { state: "done"; result?: unknown }
+  /** The service refused, or the user took the permission away: it did not happen, and trying again would not help. */
+  | { state: "failed"; error: string }
+  /** No clear answer: the service could not be reached, or answered with an error of its own. It may or may not
+   * have happened. What that means is the queue's rule, not the module's: a change that is safe to deliver again
+   * waits for the next pass; one that is not (an email) is marked unknown, and the user is asked to check. */
+  | { state: "unclear"; error: string };
 
 /** The outside services the user has connected, as the home node hands them to modules' syncs. */
 export interface ModuleServices {
@@ -107,6 +123,52 @@ export class ServiceError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+/** The services as one pass sees them: an account's session is got once and shared by every change in the pass
+ * (getting one may refresh the account's token). */
+function forOnePass(services: ModuleServices): ModuleServices {
+  const google = services.google;
+  if (!google) return services;
+  const sessions = new Map<string, Promise<GoogleSession>>();
+  return {
+    ...services,
+    google: {
+      accounts: () => google.accounts(),
+      session(email) {
+        let session = sessions.get(email);
+        if (!session) sessions.set(email, session = google.session(email));
+        return session;
+      },
+    },
+  };
+}
+
+/** One pass over the changes waiting for `module`: each is claimed, handed to the module's `deliver`, and ended as
+ * the module says, oldest first, once per pass (one that must wait is tried again in a later pass, not this one).
+ * A ServiceError thrown instead of an answer is read the same way for every module: `reconnect` means the account
+ * no longer lets Alfred in, so it did not happen; anything else is unclear. Stops between changes when `signal`
+ * says the home node is closing. Returns how many changes it handled. */
+export async function deliverQueued(world: World, module: AlfredModule, services: ModuleServices, signal: AbortSignal = new AbortController().signal): Promise<number> {
+  if (!module.deliver) return 0;
+  const pass = forOnePass(services);
+  const tried = new Set<string>();
+  for (;;) {
+    if (signal.aborted) break;
+    const outbound = claimOutbound(world, module.id, tried);
+    if (!outbound) break;
+    tried.add(outbound.id);
+    let outcome: Delivered;
+    try {
+      outcome = await module.deliver(world, outbound, pass, signal);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      outcome = error instanceof ServiceError && error.code === "reconnect" ? { state: "failed", error: message } : { state: "unclear", error: message };
+    }
+    if (outcome.state === "unclear") retryOutbound(world, outbound.id, outcome.error);
+    else finishOutbound(world, outbound.id, outcome);
+  }
+  return tried.size;
 }
 
 /** A read a device makes on demand (POST /api/queries/<name>): `<module>.<noun>`, synchronous, changes nothing. */
@@ -160,7 +222,21 @@ export class UnknownOpError extends Error {
   constructor(name: string) { super(`No such operation: ${name}`); }
 }
 
-/** A device's command. Runs at most once per request id (core `runCommand`). */
+/** An operation's input as a device sent it, checked against the operation's schema. */
+export function opInput<P extends TSchema>(op: Pick<ModuleOp<P>, "name" | "input">, input: unknown): Static<P> {
+  return checked(op.input, input ?? {}, `input for ${op.name}`);
+}
+
+/** Runs one operation as a device's command, and this is the only way one is run: its input is checked, it happens
+ * at most once per request id (core `runCommand`), and what it changes is recorded as the user's (or `actor`'s).
+ * A module's operations and the harness's own (server commands.ts) both come through here. */
+export function runOp(world: World, op: ModuleOp, request: { requestId: string; input: unknown; actor?: Actor }): { result: unknown; replayed: boolean } {
+  const input = opInput(op, request.input);
+  return withCoreContext({ actor: request.actor ?? "user" }, () =>
+    runCommand(world, { requestId: request.requestId, command: op.name, input }, () => op.run(world, input)));
+}
+
+/** A device's command to a module, by the operation's name. */
 export function invokeOp(
   world: World,
   modules: readonly AlfredModule[],
@@ -168,9 +244,7 @@ export function invokeOp(
 ): { result: unknown; replayed: boolean } {
   const op = modules.flatMap((module) => module.ops).find((candidate) => candidate.name === request.op);
   if (!op) throw new UnknownOpError(request.op);
-  const input = checked(op.input, request.input ?? {}, `input for ${op.name}`);
-  return withCoreContext({ actor: request.actor ?? "user" }, () =>
-    runCommand(world, { requestId: request.requestId, command: op.name, input }, () => op.run(world, input)));
+  return runOp(world, op, request);
 }
 
 /** The tools a run may use, bound to the world. Code decides this, never the

@@ -12,13 +12,25 @@ export class CommandConflictError extends Error {
   constructor() { super("This request id was already used for a different command"); }
 }
 
+const hashOf = (command: string, input: unknown) => createHash("sha256").update(JSON.stringify({ command, input: input ?? null })).digest("hex");
+
+/** What this request id already did, or null when it has not run. For a command that has slow work to do before its
+ * change (a transaction cannot wait): it asks first, so a retry does not do that work again. */
+export function commandReplay<T>(world: World, request: { requestId: string; command: string; input: unknown }): { result: T } | null {
+  if (!REQUEST_ID.test(request.requestId)) throw new Error("Invalid request id");
+  const existing = world.db.prepare("SELECT request_hash, result FROM core_commands WHERE request_id = ?").get(request.requestId);
+  if (!existing) return null;
+  if (existing.request_hash !== hashOf(request.command, request.input)) throw new CommandConflictError();
+  return { result: JSON.parse(existing.result as string) as T };
+}
+
 export function runCommand<T>(
   world: World,
   request: { requestId: string; command: string; input: unknown; now?: number },
   action: () => T,
 ): { result: T; replayed: boolean } {
   if (!REQUEST_ID.test(request.requestId)) throw new Error("Invalid request id");
-  const hash = createHash("sha256").update(JSON.stringify({ command: request.command, input: request.input ?? null })).digest("hex");
+  const hash = hashOf(request.command, request.input);
   return world.tx((db) => {
     const existing = db.prepare("SELECT request_hash, result FROM core_commands WHERE request_id = ?").get(request.requestId);
     if (existing) {

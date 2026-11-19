@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { acceptProposal, CORE_MIGRATIONS, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
-import { applyStep, assistantTools, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
-import { buildRaw, checkAddress, deliverMail, mailModule, syncMail } from "../src/index.ts";
+import { applyStep, assistantTools, deliverQueued, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
+import { buildRaw, checkAddress, mailModule, syncMail } from "../src/index.ts";
 
 const world = (): World => openWorld(":memory:", [...CORE_MIGRATIONS, ...mailModule.migrations]);
 const signal = new AbortController().signal;
@@ -60,7 +60,7 @@ test("nothing is sent without the user's yes: no run can call mail_send, it can 
   assert.match(String(mailModule.tools.find((tool) => tool.name === "mail_send")!.execute(w, {} as never)), /never done directly/);
 
   assert.match(await propose(w, { reply_to: "m1", body: "Friday works." }), /^Proposed/);
-  await deliverMail(w, { google }, signal);
+  await deliverQueued(w, mailModule, { google }, signal);
   assert.equal(sent.length, 0, "proposed, not accepted: nothing to send");
   const [proposal] = listOpenProposals(w);
   assert.deepEqual([proposal.steps[0].preview, proposal.steps[0].detail], [
@@ -78,8 +78,8 @@ test("a reply, accepted: sent once in its thread, threaded for every mail progra
   assert.equal(accept(w).state, "executed");
   assert.equal(listOutbound(w)[0].preview, "回复 leo@studio.example：Re: 合同第二版");
 
-  await deliverMail(w, { google }, signal);
-  await deliverMail(w, { google }, signal);
+  await deliverQueued(w, mailModule, { google }, signal);
+  await deliverQueued(w, mailModule, { google }, signal);
   assert.equal(sent.length, 1, "exactly once");
   assert.equal(sent[0].body.threadId, "t1");
   const message = decode(sent[0].body.raw);
@@ -96,8 +96,8 @@ test("when Gmail's answer is unclear the email is not sent again: the user is as
     await syncMail(w, { google });
     await propose(w, { to: ["ana@example.com"], subject: "Hello", body: "Hi Ana" });
     accept(w);
-    await deliverMail(w, { google }, signal);
-    await deliverMail(w, { google }, signal);
+    await deliverQueued(w, mailModule, { google }, signal);
+    await deliverQueued(w, mailModule, { google }, signal);
     assert.equal(sent.length, 1);
     assert.equal(listOutbound(w)[0].state, state);
   }
@@ -112,7 +112,7 @@ test("no permission to send: not proposable, and an accepted email whose permiss
   await syncMail(w, { google: fakeGmail().google });
   await propose(w, { reply_to: "m1", body: "Friday works." });
   accept(w);
-  await deliverMail(w, { google: readOnly.google }, signal);
+  await deliverQueued(w, mailModule, { google: readOnly.google }, signal);
   assert.equal(readOnly.sent.length, 0);
   assert.equal(listOutbound(w)[0].state, "failed");
 });

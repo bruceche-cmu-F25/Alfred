@@ -3,7 +3,7 @@
  * Google is the source of truth; Alfred keeps no second calendar. A sync every few minutes reads each connected
  * account's shown calendars, a week back to five weeks ahead, and replaces that account's events here. Devices and
  * runs read the mirror, so a question about the schedule never waits on Google. Writing (moving a meeting, holding
- * time) comes later, and only as a proposal.
+ * time) is only ever proposed; an accepted change is delivered by write.ts.
  */
 import { createHash } from "node:crypto";
 import { localDate, recordDomainEvent, withDefaultActor, type World } from "@alfred/core";
@@ -260,6 +260,6 @@ export const calendarModule = defineModule({
     const today = localDate();
     return { today, events: listEvents(world, addDays(today, -WINDOW.back), addDays(today, WINDOW.ahead)), sources: calendarSources(world) };
   },
-  // Accepted changes go out first, so the read that follows already shows them.
-  sync: { everyMs: 5 * 60_000, run: async (world, services, signal) => { await deliverCalendar(world, services, signal); await syncCalendar(world, services, signal); } },
+  sync: { everyMs: 5 * 60_000, run: syncCalendar },
+  deliver: deliverCalendar,
 });

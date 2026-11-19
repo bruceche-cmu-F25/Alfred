@@ -6,28 +6,31 @@
  * - the ingress port (remote.ts), which only Tailscale Serve forwards to: every request is another device's and,
  *   apart from the UI's files and pairing, needs a paired device's token. Devices cannot touch credentials,
  *   remote access or other devices; those stay on this machine.
+ *
+ * A device's commands are not written out here. A module's are its operations (`/api/ops/<name>`); the harness's own
+ * are in commands.ts, and each address below that changes something only names one of them.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, normalize, sep } from "node:path";
 import {
-  AREAS, acceptProposal, coreContext, declineProposal, getSettings, listOpenProposals, supersedeProposal, runCommand, updateSettings, userLocale, withCoreContext,
-  createAutomation, deleteAutomation, listAutomations, runAutomationNow, updateAutomation, type World,
+  AREAS, getSettings, listOpenProposals, userLocale, withCoreContext, listAutomations, type World,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
-  listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
+  listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
-  addProject, getProject, listProjects, ProjectError, removeProject, startSession, trustProject,
+  getProject, listProjects,
 } from "@alfred/core";
-import { applyStep, invokeOp, runQuery } from "@alfred/module-kit";
+import { invokeOp, runQuery } from "@alfred/module-kit";
 import type {
-  AddProjectRequest, ConversationDetail, CoreEvent, ErrorResponse, StartSessionRequest, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
-  RemoteResponse, RespondRequest, ReviseRequest, NewAutomationRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest, SessionChanges,
+  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalResponse, PushInfo, PushResult,
+  RemoteResponse, RespondRequest, StateResponse, SteerRequest, SubmitRunRequest, SessionChanges,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
-import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE, type Home } from "./home.ts";
+import { DEVELOPER_PROFILE, type Home } from "./home.ts";
+import { command, profileFor } from "./commands.ts";
 import { handleConnections } from "./connections-http.ts";
-import { snapshot, workspaceChanges, workspaceDiff, type ChangedFile } from "./workspace.ts";
+import { workspaceChanges, workspaceDiff, type ChangedFile } from "./workspace.ts";
 import type { GoogleConnections } from "./google.ts";
 import type { ModelAccounts } from "@alfred/engine-pi";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
@@ -172,16 +175,6 @@ function sessionWrites(home: Home, conversationId: string): ChangedFile[] {
   }));
 }
 
-/** The profile a new run in this conversation gets: a development session's, or the assistant's. A session whose
- * project was removed or is no longer trusted takes no new requests. */
-function profileFor(home: Home, conversationId: string | undefined | null): string {
-  if (!conversationId) return ASSISTANT_PROFILE;
-  const { projectId } = getConversation(home.world, conversationId);
-  if (!projectId) return ASSISTANT_PROFILE;
-  if (!getProject(home.world, projectId).trustedAt) throw new HttpError(409, "This project is not trusted", "untrusted");
-  return DEVELOPER_PROFILE;
-}
-
 function conversationDetail(home: Home, id: string): ConversationDetail {
   const conversation = getConversation(home.world, id);
   const runs = listRuns(home.world, { conversationId: id, limit: 100 }).reverse();
@@ -322,52 +315,28 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   const path = url.pathname;
   if (method === "GET" && path === "/api/state") return send(res, 200, state(home));
   if (method === "GET" && path === "/api/events") return events(home, req, res, url);
+  /** One of the harness's commands (commands.ts): the body's fields are its input, with what the address names. */
+  const ask = async (name: string, where?: Record<string, unknown>) => command(home, name, await readJson<Record<string, unknown>>(req), where);
 
+  // A new run replays by its request id in the runs themselves, so it is not one of those commands.
   if (method === "POST" && path === "/api/runs") {
     const body = await readJson<SubmitRunRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.goal !== "string") throw new HttpError(400, "requestId and goal are required");
-    const profile = profileFor(home, body.conversationId);
+    const profile = profileFor(home.world, body.conversationId);
     // A session is its own page: what page the user had open is not its context.
     const context = profile === DEVELOPER_PROFILE ? undefined : body.context;
-    const result = submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile, conversationId: body.conversationId, context });
+    const result = withCoreContext({ actor: "user" }, () => submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile, conversationId: body.conversationId, context }));
     home.kick();
     return send(res, result.replayed ? 200 : 202, result);
   }
-  if (method === "POST" && path === "/api/conversations") {
-    const body = await readJson<StartSessionRequest>(req);
-    if (typeof body.projectId !== "string" || typeof body.title !== "string" || !body.title.trim()) throw new HttpError(400, "projectId and title are required");
-    if (body.mode !== undefined && !["plan", "ask", "edits"].includes(body.mode)) throw new HttpError(400, "mode is plan, ask or edits");
-    // Nothing runs in a folder, not even git, before the user has trusted it.
-    const folder = getProject(home.world, body.projectId);
-    if (!folder.trustedAt) throw new ProjectError("untrusted");
-    // The snapshot its changes are measured against, taken before it can change anything.
-    const base = await snapshot(folder.path);
-    return send(res, 201, startSession(home.world, { projectId: body.projectId, title: body.title, mode: body.mode, base }));
-  }
+  if (method === "POST" && path === "/api/conversations") return send(res, 201, (await ask("conversation.start")).result);
   // Projects: only from the home node's own machine (dispatch refuses other devices).
-  if (method === "POST" && path === "/api/projects") {
-    const body = await readJson<AddProjectRequest>(req);
-    if (typeof body.path !== "string") throw new HttpError(400, "path is required");
-    if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be text");
-    return send(res, 200, addProject(home.world, { path: body.path, name: body.name }));
-  }
+  if (method === "POST" && path === "/api/projects") return send(res, 200, (await ask("project.add")).result);
   const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
-  if (project && method === "POST") {
-    if (project[2] === "trust") return send(res, 200, trustProject(home.world, project[1]));
-    removeProject(home.world, project[1]);
-    return send(res, 200, {});
-  }
+  if (project && method === "POST") return send(res, 200, (await ask(`project.${project[2]}`, { id: project[1] })).result);
   const conversation = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})$/.exec(path);
   if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
-  if (conversation && method === "POST") {
-    const body = await readJson<UpdateConversationRequest>(req);
-    if (body.title !== undefined && typeof body.title !== "string") throw new HttpError(400, "title must be text");
-    if (body.archived !== undefined && typeof body.archived !== "boolean") throw new HttpError(400, "archived must be true or false");
-    if (body.model !== undefined && body.model !== null && typeof body.model !== "string") throw new HttpError(400, "model is provider/model or null");
-    if (body.thinking !== undefined && body.thinking !== null && typeof body.thinking !== "string") throw new HttpError(400, "thinking is a level or null");
-    if (body.mode !== undefined && typeof body.mode !== "string") throw new HttpError(400, "mode is plan, ask or edits");
-    return send(res, 200, updateConversation(home.world, conversation[1], { title: body.title, archived: body.archived, model: body.model, thinking: body.thinking, mode: body.mode }));
-  }
+  if (conversation && method === "POST") return send(res, 200, (await ask("conversation.update", { id: conversation[1] })).result);
   // A development session's changes since its snapshot, and one file's diff.
   const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff)$/.exec(path);
   if (session && method === "GET") {
@@ -395,13 +364,7 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     if (typeof body.requestId !== "string" || typeof body.answer !== "string") throw new HttpError(400, "requestId and answer are required");
     return send(res, 200, answerRequest(home.world, run[1], { requestId: body.requestId, answer: body.answer }));
   }
-  if (run && method === "POST" && run[2]) {
-    await readJson(req);
-    if (run[2] === "cancel") return send(res, 200, requestCancel(home.world, run[1]));
-    const resumed = resumeRun(home.world, run[1]);
-    home.kick();
-    return send(res, 200, resumed);
-  }
+  if (run && method === "POST" && run[2]) return send(res, 200, (await ask(`run.${run[2]}`, { id: run[1] })).result);
 
   const op = /^\/api\/ops\/([a-z][a-z0-9]*\.[a-z][a-z_]*)$/.exec(path);
   if (op && method === "POST") {
@@ -442,71 +405,27 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     return send(res, 200, notice[2] === "claim" ? claimNotice(home.world, notice[1], body.client) : presentNotice(home.world, notice[1], body.client));
   }
 
-  // Preferences that are not secrets (for now, the language). A device command like any other.
-  if (method === "POST" && path === "/api/settings") {
-    const body = await readJson<SettingsRequest>(req);
-    if (typeof body.requestId !== "string" || !body.patch || typeof body.patch !== "object") throw new HttpError(400, "requestId and patch are required");
-    const result = withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId: body.requestId, command: "settings.update", input: body.patch }, () => updateSettings(home.world, body.patch as Record<string, unknown>)));
-    return send(res, 200, result.result);
-  }
+  if (method === "POST" && path === "/api/settings") return send(res, 200, (await ask("settings.update")).result);
 
-  // Automations: the user's own rules, changed by device commands like any other. Their runs are unattended.
+  // Automations answer as devices see one (with its next time and its last run).
   if (method === "POST" && path === "/api/automations") {
-    const body = await readJson<NewAutomationRequest>(req);
-    if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
-    const input = { name: body.name, goal: body.goal, schedule: body.schedule, ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}) };
-    const { result } = withCoreContext({ actor: "user" }, () =>
-      runCommand(home.world, { requestId: body.requestId, command: "automation.create", input }, () => createAutomation(home.world, input)));
-    return send(res, 200, automationView(home.world, result.id) ?? result);
+    const made = (await ask("automation.create")).result as { id: string };
+    return send(res, 200, automationView(home.world, made.id) ?? made);
   }
   const automation = /^\/api\/automations\/([A-Za-z0-9_-]{1,64})(?:\/(run|delete))?$/.exec(path);
   if (automation && method === "POST") {
     const [, id, action] = automation;
-    const body = await readJson<{ requestId?: unknown; patch?: unknown }>(req);
-    if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
-    const requestId = body.requestId;
-    if (action === "run") {
-      const { result } = withCoreContext({ actor: "user" }, () =>
-        runCommand(home.world, { requestId, command: "automation.run", input: { id } }, () => runAutomationNow(home.world, id, requestId, { profile: AUTOMATION_PROFILE })));
-      home.kick();
-      return send(res, 202, result);
-    }
-    if (action === "delete") {
-      withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId, command: "automation.delete", input: { id } }, () => deleteAutomation(home.world, id)));
-      return send(res, 200, {});
-    }
-    if (!body.patch || typeof body.patch !== "object") throw new HttpError(400, "patch is required");
-    const patch = body.patch as Record<string, unknown>;
-    const { result } = withCoreContext({ actor: "user" }, () =>
-      runCommand(home.world, { requestId, command: "automation.update", input: { id, patch } }, () => updateAutomation(home.world, id, patch)));
-    return send(res, 200, automationView(home.world, id) ?? result);
+    if (action === "run") return send(res, 202, (await ask("automation.run", { id })).result);
+    if (action === "delete") return send(res, 200, (await ask("automation.delete", { id })).result);
+    const changed = (await ask("automation.update", { id })).result;
+    return send(res, 200, automationView(home.world, id) ?? changed);
   }
 
-  // The user's decisions on proposals. Accepting runs the steps as Alfred's changes, made on the user's yes.
+  // The user's decisions on proposals.
   const proposal = /^\/api\/proposals\/([A-Za-z0-9_-]{1,64})\/(accept|decline|revise)$/.exec(path);
   if (proposal && method === "POST") {
-    const [, id, decision] = proposal;
-    const body = await readJson<ReviseRequest>(req);
-    if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
-    if (decision === "revise" && (typeof body.text !== "string" || !body.text.trim())) throw new HttpError(400, "Say what to change");
-    const result = withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId: body.requestId, command: `proposal.${decision}`, input: { id, text: body.text ?? null } }, () => {
-      if (decision === "accept") {
-        // Alfred's changes, made on the user's yes to this proposal (the context keeps which one).
-        return { proposal: acceptProposal(home.world, id, (step) => withCoreContext({ ...coreContext(), actor: "alfred" }, () => applyStep(home.world, home.modules, step))) };
-      }
-      if (decision === "decline") return { proposal: declineProposal(home.world, id) };
-      const superseded = supersedeProposal(home.world, id, body.text);
-      // The whole of each step (an email's text), so the new version starts from what the user saw.
-      const steps = superseded.steps.map((step) => (step.detail ? `${step.preview}\n${step.detail}` : step.preview));
-      const goal = userLocale(home.world) === "zh"
-        ? `修改你之前的提议「${superseded.title}」：${body.text.trim()}\n原来的提议：${superseded.summary}\n步骤：${steps.join("；")}\n请按修改意见重新提议（用 propose），不要直接改。`
-        : `Change your earlier proposal "${superseded.title}": ${body.text.trim()}\nThe proposal was: ${superseded.summary}\nSteps: ${steps.join("; ")}\nPropose again with the change (use propose); do not make the changes directly.`;
-      const { run } = submitRun(home.world, { requestId: `${body.requestId}.revise`, goal, profile: profileFor(home, superseded.conversationId), conversationId: superseded.conversationId ?? undefined });
-      return { proposal: superseded, run };
-    }));
-    if (decision === "revise") home.kick();
-    if (decision === "accept") home.deliver();
-    return send(res, 200, { ...result.result, replayed: result.replayed } satisfies ProposalResponse);
+    const decided = await ask(`proposal.${proposal[2]}`, { id: proposal[1] });
+    return send(res, 200, { ...(decided.result as Omit<ProposalResponse, "replayed">), replayed: decided.replayed } satisfies ProposalResponse);
   }
 
   if (path.startsWith("/api/")) throw new HttpError(404, "Not found");

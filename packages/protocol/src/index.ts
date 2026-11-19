@@ -1,8 +1,10 @@
 /** The client protocol, version 1. Every device speaks this and nothing else;
  * the Mac app has no private channel. Types only, so any client can import it.
  *
- * Commands are HTTP POSTs with a request id: a retry with the same id returns
- * the original result, and reusing an id for something else is refused (409).
+ * Commands are HTTP POSTs with a request id (`requestId` in the body): a retry with the same id returns
+ * the original result, and reusing an id for something else is refused (409). A few commands (a session, a
+ * conversation's changes, projects, cancel and resume) also take none, from devices that do not send one yet;
+ * such a command is done, but a retry of it cannot be told from a second command.
  * Events are a Server-Sent Events stream ordered by `seq`; reconnecting with
  * `Last-Event-ID` (or `?after=`) replays what was missed.
  *
@@ -136,8 +138,8 @@ export interface Project {
   createdAt: string;
   trustedAt: string | null;
 }
-export interface AddProjectRequest { path: string; name?: string }
-export interface StartSessionRequest { projectId: string; title: string; mode?: SessionMode }
+export interface AddProjectRequest { requestId?: string; path: string; name?: string }
+export interface StartSessionRequest { requestId?: string; projectId: string; title: string; mode?: SessionMode }
 
 export interface ConversationDetail {
   conversation: Conversation;
@@ -151,7 +153,7 @@ export interface ConversationDetail {
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export interface UpdateConversationRequest { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }
+export interface UpdateConversationRequest { requestId?: string; title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }
 
 export interface SteerRequest { text: string }
 

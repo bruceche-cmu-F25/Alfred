@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { claimOutbound, enqueueOutbound, finishOutbound, listOutbound, withCoreContext, type EnginePort } from "@alfred/core";
+import { enqueueOutbound, listEvents, listOutbound, withCoreContext, type EnginePort } from "@alfred/core";
 import { defineModule } from "@alfred/module-kit";
 import { todoModule, type TodoSnapshot } from "@alfred/module-todo";
 import type { ConversationDetail, CoreEvent, RunDetail, SessionChanges, StateResponse, SubmitRunResponse } from "@alfred/protocol";
@@ -562,12 +562,14 @@ test("a change accepted while its module is syncing goes out right after that pa
   let finishReading!: () => void;
   const reading = new Promise<void>((resolve) => { finishReading = resolve; });
   let passes = 0;
+  const sent: string[] = [];
   const outbox = defineModule({
     id: "outbox", title: "Outbox", migrations: [], ops: [], tools: [],
-    sync: { everyMs: 3_600_000, async run(world) {
+    // The module only says how one change went; taking it from the queue and ending it is the home node's part.
+    async deliver(_world, outbound) { sent.push(outbound.preview); return { state: "done" }; },
+    sync: { everyMs: 3_600_000, async run() {
       passes++;
-      for (let next = claimOutbound(world, "outbox"); next; next = claimOutbound(world, "outbox")) finishOutbound(world, next.id, { state: "done" });
-      if (passes === 1) await reading; // the first pass is past its delivery step, reading the service
+      if (passes === 1) await reading; // the first pass is past its sending step, reading the service
     } },
   });
   const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [outbox] });
@@ -581,7 +583,8 @@ test("a change accepted while its module is syncing goes out right after that pa
     await first;
     for (let i = 0; i < 50 && listOutbound(home.world)[0].state !== "done"; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(listOutbound(home.world)[0].state, "done");
-    assert.equal(passes, 2, "one more pass, right away");
+    assert.deepEqual(sent, ["An email"], "sent once");
+    assert.equal(passes, 2, "one more pass, right away, and the mirror read after it");
   } finally {
     home.close();
   }
@@ -647,6 +650,52 @@ test("calendar and mail changes over HTTP: proposed by a run, delivered right af
     assert.deepEqual(told, [["done", proposal.id], ["done", proposal.id]]);
   } finally {
     server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("the harness's own commands: done once per request id, checked, and recorded as the user's", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "alfred-repo-"));
+  const sh = (...args: string[]) => execFileSync("git", ["-C", folder, ...args], { stdio: "pipe" });
+  sh("init", "-q");
+  sh("config", "user.email", "test@example.com");
+  sh("config", "user.name", "Test");
+  writeFileSync(join(folder, "a.txt"), "one\n");
+  sh("add", ".");
+  sh("commit", "-qm", "start");
+  writeFileSync(join(folder, "a.txt"), "one\nmine\n"); // not clean, so a session's snapshot is a commit of its own
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [todoModule] });
+  const { server, base } = await start(home);
+  try {
+    const project = await (await post(base, "/api/projects", { requestId: "p-1", path: folder })).json() as { id: string };
+    await post(base, `/api/projects/${project.id}/trust`, { requestId: "p-2" });
+
+    // The connection drops after the session is made, and the device sends the same request again.
+    const first = await post(base, "/api/conversations", { requestId: "s-1", projectId: project.id, title: "Add a line" });
+    const again = await post(base, "/api/conversations", { requestId: "s-1", projectId: project.id, title: "Add a line" });
+    const session = await first.json() as { id: string };
+    assert.deepEqual([first.status, again.status], [201, 201]);
+    assert.equal(((await again.json()) as { id: string }).id, session.id, "the same session, not a second one");
+    assert.equal(((await (await fetch(`${base}/api/state`)).json()) as StateResponse).conversations.length, 1);
+    assert.equal(String(sh("for-each-ref", "refs/alfred/snapshots")).trim().split("\n").length, 1, "and its folder was read once");
+    assert.equal((await post(base, "/api/conversations", { requestId: "s-1", projectId: project.id, title: "Something else" })).status, 409, "an id is for one command");
+
+    // Whatever the command, what it changes is the user's.
+    assert.equal((await post(base, `/api/conversations/${session.id}`, { requestId: "c-1", title: "Lines" })).status, 200);
+    assert.equal((await post(base, `/api/conversations/${session.id}`, { archived: true })).status, 200, "a device that sends no request id is still served");
+    const { run } = await (await post(base, "/api/runs", { requestId: "r-1", goal: "add milk" })).json() as SubmitRunResponse;
+    await home.idle();
+    assert.equal((await post(base, `/api/runs/${run.id}/cancel`, { requestId: "x-1" })).status, 200);
+    const by = new Map(listEvents(home.world, { limit: 500 }).events.map((event) => [event.kind, event.actor]));
+    for (const kind of ["project.added", "project.trusted", "conversation.created", "conversation.renamed", "conversation.archived", "run.queued"]) assert.equal(by.get(kind), "user", kind);
+
+    // And its input is checked the same way.
+    assert.equal((await post(base, `/api/conversations/${session.id}`, { archived: "yes" })).status, 400);
+    assert.equal((await post(base, "/api/conversations", { projectId: project.id, title: "  " })).status, 400);
+    assert.equal((await post(base, "/api/settings", { patch: { locale: "en" } })).status, 400, "the commands that always took a request id still need one");
+    assert.equal((await post(base, "/api/ops/project.add", { requestId: "p-9", input: { path: folder } })).status, 404, "a harness command has its own address, with its own guard");
+  } finally {
+    server.close();
     home.close();
   }
 });

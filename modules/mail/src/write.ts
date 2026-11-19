@@ -1,10 +1,11 @@
 /** Sending email from the user's Gmail: a new message, or a reply in its thread. A run never sends (level `external`):
  * it proposes the whole email, which the user reads in full and accepts, declines, or asks to change. On the yes it
- * becomes an outbound change (core/outbound.ts) that the sync delivers. Sending is not idempotent, so it is tried once:
- * anything other than a clear answer from Gmail leaves it `unknown`, and the user is asked to look in Sent.
+ * becomes an outbound change (core/outbound.ts), which the home node hands to `deliverMail`. Sending is not
+ * idempotent, so it is tried once: anything other than a clear answer from Gmail leaves it `unknown`, and the user is
+ * asked to look in Sent.
  */
-import { claimOutbound, enqueueOutbound, finishOutbound, localeOf, retryOutbound, userLocale, type Outbound, type World } from "@alfred/core";
-import { defineOp, defineTool, ServiceError, Type, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
+import { enqueueOutbound, localeOf, userLocale, type Outbound, type World } from "@alfred/core";
+import { defineOp, defineTool, Type, type Delivered, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
 import { getMail } from "./index.ts";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -66,7 +67,7 @@ function check(input: SendInput): string | null {
 
 export const mailOps = [
   defineOp({
-    name: "mail.send", level: "external",
+    name: "mail.send",
     input: Type.Object({
       account: Type.String({ maxLength: 320 }),
       to: Type.Array(Type.String({ maxLength: 254 }), { minItems: 1, maxItems: 20 }),
@@ -124,7 +125,7 @@ export const mailWriteTools = [
   }),
 ];
 
-async function sendOne(session: GoogleSession, outbound: Outbound, signal?: AbortSignal): Promise<{ state: "done"; result: unknown } | { state: "failed" | "unknown"; error: string }> {
+async function sendOne(session: GoogleSession, outbound: Outbound, signal?: AbortSignal): Promise<Delivered> {
   const input = outbound.payload as SendInput;
   let thread: { messageId?: string; references?: string } | undefined;
   if (input.replyTo) {
@@ -139,35 +140,24 @@ async function sendOne(session: GoogleSession, outbound: Outbound, signal?: Abor
   const message = (answer.body.error as { message?: unknown } | undefined)?.message;
   const why = `Gmail answered ${answer.status}${typeof message === "string" ? `: ${message.slice(0, 200)}` : ""}`;
   // A refusal (4xx) means it was not sent. Anything else may or may not have gone out.
-  return answer.status < 500 ? { state: "failed", error: why } : { state: "unknown", error: why };
+  return answer.status < 500 ? { state: "failed", error: why } : { state: "unclear", error: why };
 }
 
-/** Sends every queued email, oldest first, each exactly once. */
-export async function deliverMail(world: World, services: ModuleServices, signal?: AbortSignal): Promise<void> {
+/** Sends one accepted email (the module's `deliver`). An email is not safe to send again, so the queue marks an
+ * unclear ending as unknown and never tries it twice. */
+export async function deliverMail(world: World, outbound: Outbound, services: ModuleServices, signal?: AbortSignal): Promise<Delivered> {
   const google = services.google;
-  const sessions = new Map<string, GoogleSession>();
-  const tried = new Set<string>();
-  for (let outbound = claimOutbound(world, "mail", tried); outbound; outbound = claimOutbound(world, "mail", tried)) {
-    tried.add(outbound.id);
-    const account = (outbound.payload as SendInput).account;
-    if (!google?.accounts().find((candidate) => candidate.email === account)?.capabilities.includes("mailSend")) {
-      finishOutbound(world, outbound.id, { state: "failed", error: localeOf(world.db) === "zh" ? "没有发信的权限：在设置里打开「Gmail：替你发」" : "No permission to send: turn on “Gmail: send for you” in Settings" });
-      continue;
-    }
-    let session = sessions.get(account);
-    try {
-      if (!session) { session = await google.session(account); sessions.set(account, session); }
-    } catch (error) {
-      // Nothing was sent yet: say why; the user can accept a new proposal once it is fixed.
-      finishOutbound(world, outbound.id, { state: "failed", error: (error as Error).message });
-      continue;
-    }
-    try {
-      finishOutbound(world, outbound.id, await sendOne(session, outbound, signal));
-    } catch (error) {
-      // Gmail could not be reached, or refused the account, mid-send: whether it went out is not known.
-      if (error instanceof ServiceError && error.code === "reconnect") finishOutbound(world, outbound.id, { state: "failed", error: error.message });
-      else retryOutbound(world, outbound.id, (error as Error).message);
-    }
+  const account = (outbound.payload as SendInput).account;
+  if (!google?.accounts().find((candidate) => candidate.email === account)?.capabilities.includes("mailSend")) {
+    return { state: "failed", error: localeOf(world.db) === "zh" ? "没有发信的权限：在设置里打开「Gmail：替你发」" : "No permission to send: turn on “Gmail: send for you” in Settings" };
   }
+  let session: GoogleSession;
+  try {
+    session = await google.session(account);
+  } catch (error) {
+    // Nothing was sent yet, so this is a plain failure: say why; the user can accept a new proposal once it is fixed.
+    return { state: "failed", error: (error as Error).message };
+  }
+  // From here on a thrown error means Gmail could not be reached, or refused the account, mid-send.
+  return sendOne(session, outbound, signal);
 }

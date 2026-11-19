@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { acceptProposal, CORE_MIGRATIONS, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
-import { applyStep, assistantTools, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
-import { calendarModule, deliverCalendar, listEvents, syncCalendar } from "../src/index.ts";
+import { applyStep, assistantTools, deliverQueued, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
+import { calendarModule, listEvents, syncCalendar } from "../src/index.ts";
 
 const world = (): World => openWorld(":memory:", [...CORE_MIGRATIONS, ...calendarModule.migrations]);
 const signal = new AbortController().signal;
@@ -72,9 +72,9 @@ test("holding time: proposed in the user's words, accepted, created under its ow
   assert.match(outbound.preview, /^在「Me」加「写方案」：.* 14:00–16:00$/);
   assert.equal(outbound.state, "queued");
 
-  await deliverCalendar(w, { google }, signal);
+  await deliverQueued(w, calendarModule, { google }, signal);
   assert.equal(listOutbound(w)[0].state, "queued", "Google was down: tried again next pass");
-  await deliverCalendar(w, { google }, signal);
+  await deliverQueued(w, calendarModule, { google }, signal);
   assert.equal(listOutbound(w)[0].state, "done", "409 on the second try: the first had made it");
   assert.equal(sent.length, 2);
   const body = sent[0].body as { id: string; summary: string; start: { dateTime: string } };
@@ -96,7 +96,7 @@ test("moving: only events the user organizes, guests told, refused when Google's
 
   await proposeAndAccept(w, [{ tool: "calendar_move", params: { event: standup.id, start: local(at(1, 10)), end: local(at(1, 10, 15)) } }]);
   assert.match(listOutbound(w)[0].preview, /tells 2 other guests/);
-  await deliverCalendar(w, { google }, signal);
+  await deliverQueued(w, calendarModule, { google }, signal);
   assert.deepEqual([sent[0].method, sent[0].url, sent[0].headers], ["PATCH", "/calendars/me%40example.com/events/standup?sendUpdates=all", { "If-Match": "\"e1\"" }]);
   assert.deepEqual([listOutbound(w)[0].state, listOutbound(w)[0].error], ["failed", "The event changed in Google since this was proposed"]);
 });
@@ -107,7 +107,7 @@ test("a move cut off after Google made it counts as done, not as a conflict", as
   const { google } = fakeGoogle({ answers: [{ status: 412 }], current: { start: { dateTime: at(1, 10).toISOString() }, end: { dateTime: at(1, 10, 15).toISOString() } } });
   await syncCalendar(w, { google });
   await proposeAndAccept(w, [{ tool: "calendar_move", params: { event: event(w, "Standup").id, ...target } }]);
-  await deliverCalendar(w, { google }, signal);
+  await deliverQueued(w, calendarModule, { google }, signal);
   assert.equal(listOutbound(w)[0].state, "done");
 });
 
@@ -117,7 +117,7 @@ test("answering an invitation: only the user's own answer changes, and the organ
   await syncCalendar(w, { google });
   await proposeAndAccept(w, [{ tool: "calendar_respond", params: { event: event(w, "Vendor demo").id, response: "declined" } }]);
   assert.match(listOutbound(w)[0].preview, /^Decline “Vendor demo”/);
-  await deliverCalendar(w, { google }, signal);
+  await deliverQueued(w, calendarModule, { google }, signal);
   assert.equal(sent[0].url, "/calendars/me%40example.com/events/demo?sendUpdates=all");
   assert.deepEqual(sent[0].body, { attendees: [{ email: "vendor@x.com", organizer: true }, { email: "me@example.com", self: true, responseStatus: "declined" }] });
   assert.equal(listOutbound(w)[0].state, "done");
@@ -133,13 +133,13 @@ test("without the user's permission to change the calendar: nothing is proposed,
   // Allowed when proposed, taken away before delivery: refused, nothing sent.
   await syncCalendar(w, { google: fakeGoogle().google });
   await proposeAndAccept(w, [{ tool: "calendar_add", params: { title: "Focus", start: local(at(1, 9)), end: local(at(1, 10)) } }]);
-  await deliverCalendar(w, { google: readOnly.google }, signal);
+  await deliverQueued(w, calendarModule, { google: readOnly.google }, signal);
   assert.equal(readOnly.sent.length, 0);
   assert.equal(listOutbound(w)[0].state, "failed");
 
   // Google stops honouring the account mid-delivery: failed, and says to reconnect.
   const revoked = fakeGoogle({ answers: [new ServiceError("reconnect", "Google refused the account's access")] });
   await proposeAndAccept(w, [{ tool: "calendar_add", params: { title: "Focus 2", start: local(at(1, 11)), end: local(at(1, 12)) } }]);
-  await deliverCalendar(w, { google: revoked.google }, signal);
+  await deliverQueued(w, calendarModule, { google: revoked.google }, signal);
   assert.deepEqual(listOutbound(w).map((outbound) => [outbound.state, outbound.error?.slice(0, 22)]), [["failed", "No permission to chang"], ["failed", "Google refused the acc"]]);
 });

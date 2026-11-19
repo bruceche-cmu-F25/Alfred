@@ -9,7 +9,7 @@ import {
   CORE_MIGRATIONS, createRunDrain, expireProposals, interruptOutbound, listOutbound, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
   type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type SessionMode, type World,
 } from "@alfred/core";
-import { assistantTools, moduleMigrations, runTools, type AlfredModule, type ModuleServices } from "@alfred/module-kit";
+import { assistantTools, deliverQueued, moduleMigrations, runTools, type AlfredModule, type ModuleServices } from "@alfred/module-kit";
 
 export const ASSISTANT_PROFILE = "assistant";
 /** A development session's runs: the assistant's tools, plus reading its project's files (docs/design/dev-mode.md). */
@@ -20,6 +20,8 @@ export const AUTOMATION_PROFILE = "automation";
 const UNATTENDED_EXCLUDED = new Set(["ask_user", "automation_add", "automation_update"]);
 /** How often the home node's clock looks for automations that are due and proposals past their time. */
 const CLOCK_MS = 30_000;
+/** How often changes that had to wait go out again, for a module that has no mirror of its own to refresh. */
+const DELIVER_EVERY_MS = 5 * 60_000;
 
 const PERSONA = `You are Alfred, the user's personal assistant, carrying out one request in a conversation.
 Use only the tools you have. Make exactly the changes the request asks for. If a wrong guess would matter,
@@ -188,31 +190,38 @@ export function openHome(options: HomeOptions): Home {
   }, CLOCK_MS);
   clock.unref();
 
-  // Modules that mirror an outside service (calendar, mail) refresh on their own schedule, one pass at a time each.
+  // Modules that reach an outside service work in passes, one at a time per module. A pass first sends the accepted
+  // changes waiting for the module (its `deliver`, one change at a time; the queue's rules are in deliverQueued), then
+  // reads its mirror again (its `sync`), so the read already shows what was just sent.
   const stopping = new AbortController();
-  const syncing = new Map<string, Promise<void>>();
-  /** Modules asked to deliver while a pass was under way; each gets one more pass right after it. */
+  const passes = new Map<string, Promise<void>>();
+  /** Modules with a change accepted while their pass was under way; each gets one more pass right after it. */
   const again = new Set<string>();
   const queued = (id: string) => listOutbound(world, { module: id, states: ["queued"] }).length > 0;
+  const pass = (module: AlfredModule): Promise<void> => {
+    const running = passes.get(module.id);
+    if (running) return running;
+    const services = options.services?.() ?? {};
+    const work = (async () => {
+      await deliverQueued(world, module, services, stopping.signal);
+      if (module.sync && !stopping.signal.aborted) await module.sync.run(world, services, stopping.signal);
+    })()
+      .catch((error) => { if (!stopping.signal.aborted) options.log?.(`module ${module.id}: ${error instanceof Error ? error.message : String(error)}`); })
+      .finally(() => {
+        passes.delete(module.id);
+        // A change accepted during the pass came after its sending step: it goes out now, not at the next scheduled pass.
+        if (again.delete(module.id) && !stopping.signal.aborted && queued(module.id)) void pass(module);
+      });
+    passes.set(module.id, work);
+    return work;
+  };
   const syncModule = (id: string): Promise<void> => {
     const module = options.modules.find((candidate) => candidate.id === id);
-    if (!module?.sync) return Promise.reject(new Error(`No module ${id} to sync`));
-    const running = syncing.get(id);
-    if (running) return running;
-    const pass = module.sync.run(world, options.services?.() ?? {}, stopping.signal)
-      .catch((error) => { if (!stopping.signal.aborted) options.log?.(`sync ${id}: ${error instanceof Error ? error.message : String(error)}`); })
-      .finally(() => {
-        syncing.delete(id);
-        // A pass delivers first, then reads: a change accepted during it came too late for it, and must not wait
-        // for the next scheduled one.
-        if (again.delete(id) && !stopping.signal.aborted && queued(id)) void syncModule(id);
-      });
-    syncing.set(id, pass);
-    return pass;
+    return module?.sync ? pass(module) : Promise.reject(new Error(`No module ${id} to sync`));
   };
-  const syncTimers = options.modules.filter((module) => module.sync).flatMap((module) => {
-    const first = setTimeout(() => void syncModule(module.id), 2_000);
-    const every = setInterval(() => void syncModule(module.id), module.sync!.everyMs);
+  const passTimers = options.modules.filter((module) => module.sync || module.deliver).flatMap((module) => {
+    const first = setTimeout(() => void pass(module), 2_000);
+    const every = setInterval(() => void pass(module), module.sync?.everyMs ?? DELIVER_EVERY_MS);
     first.unref();
     every.unref();
     return [first, every];
@@ -231,15 +240,15 @@ export function openHome(options: HomeOptions): Home {
     deliver: () => {
       const waiting = new Set(listOutbound(world, { states: ["queued"] }).map((outbound) => outbound.module));
       for (const module of options.modules) {
-        if (!module.sync || !waiting.has(module.id)) continue;
-        if (syncing.has(module.id)) again.add(module.id);
-        else void syncModule(module.id);
+        if (!module.deliver || !waiting.has(module.id)) continue;
+        if (passes.has(module.id)) again.add(module.id);
+        else void pass(module);
       }
     },
     idle: () => current,
     close() {
       clearInterval(clock);
-      for (const timer of syncTimers) clearTimeout(timer);
+      for (const timer of passTimers) clearTimeout(timer);
       stopping.abort();
       world.close();
       unlock();
