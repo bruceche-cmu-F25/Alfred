@@ -217,7 +217,7 @@ test("conversations over HTTP: a run asks, the device answers, the reply streams
     assert.deepEqual(waiting.runs[0].request!.options, ["Friday", "Monday"]);
     const state = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
     assert.equal(state.conversations[0].id, run.conversationId);
-    assert.deepEqual(state.views, { todo: [{ id: "list", title: "待办" }] });
+    assert.deepEqual(state.views, { todo: [{ id: "list", title: "Todos" }] });
 
     assert.equal((await post(base, `/api/runs/${run.id}/respond`, { requestId: "wrong", answer: "Friday" })).status, 409);
     assert.equal((await post(base, `/api/runs/${run.id}/respond`, { requestId: waiting.runs[0].request!.id, answer: "Monday" })).status, 200);
@@ -273,6 +273,12 @@ test("proposals over HTTP: a run proposes, the user accepts once, or asks for a 
     assert.equal(after.proposals.length, 0);
     assert.equal((await post(base, `/api/proposals/${proposal.id}/decline`, { requestId: "no-1" })).status, 409);
 
+    // The language is a device command too; the node's own text follows it.
+    const settings = await (await post(base, "/api/settings", { requestId: "lang-1", patch: { locale: "zh" } })).json() as { locale: string };
+    assert.equal(settings.locale, "zh");
+    assert.equal((await post(base, "/api/settings", { requestId: "lang-2", patch: { locale: "fr" } })).status, 400);
+    assert.equal(((await (await fetch(`${base}/api/state`)).json()) as StateResponse).settings.locale, "zh");
+
     // Asking for a change: this one is superseded and a new run in the same conversation revises it.
     await post(base, "/api/ops/todo.add", { requestId: "t2", input: { title: "Old" } });
     await post(base, "/api/runs", { requestId: "r2", goal: "tidy up again", conversationId: proposal.conversationId });
@@ -283,6 +289,31 @@ test("proposals over HTTP: a run proposes, the user accepts once, or asks for a 
     assert.equal(revised.run.conversationId, second.conversationId);
     assert.match(revised.run.goal, /先别删，改成完成/);
     await home.idle();
+  } finally {
+    server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("asking from a page: the run keeps the page, the engine hears about it, a malformed page is refused", async () => {
+  const heard: unknown[] = [];
+  const listening: EnginePort = { async submit(request) { heard.push(request.context); return { reply: "Start with the report." }; } };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: listening, modules: [todoModule] });
+  const { server, base } = await start(home);
+  try {
+    const before = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    const context = { view: "todo.list", title: "Todos", summary: "3 open, 1 overdue" };
+    const submitted = await post(base, "/api/runs", { requestId: "r-page", goal: "What should I do first today?", context });
+    assert.equal(submitted.status, 202);
+    const { run } = (await submitted.json()) as SubmitRunResponse;
+    assert.deepEqual(run.context, context);
+    await waitForEvent(base, before.cursor, (event) => event.kind === "run.completed");
+    assert.deepEqual(heard, [context]);
+    const detail = (await (await fetch(`${base}/api/conversations/${run.conversationId}`)).json()) as ConversationDetail;
+    assert.deepEqual(detail.runs[0].context, context, "devices see where each question was asked");
+
+    const refused = await post(base, "/api/runs", { requestId: "r-bad", goal: "x", context: { view: "../etc", summary: 3 } });
+    assert.equal(refused.status, 400);
   } finally {
     server.close(); server.closeAllConnections();
     home.close();

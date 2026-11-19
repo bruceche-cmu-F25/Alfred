@@ -22,6 +22,7 @@
  *   POST /api/notices/:id/(claim|present|acknowledge)   NoticeRequest -> Notice
  *   POST /api/proposals/:id/(accept|decline)  ProposalRequest -> ProposalResponse (the user's decision; replays by request id)
  *   POST /api/proposals/:id/revise          ReviseRequest -> ProposalResponse (supersedes it; a new run in its conversation revises it)
+ *   POST /api/settings                      SettingsRequest -> UserSettings (preferences that are not secrets; replays by request id)
  *   POST /api/presence                      PresenceRequest -> PresenceResponse
  */
 export const PROTOCOL_VERSION = 1;
@@ -78,7 +79,11 @@ export interface Run {
   outcome: RunOutcome | null;
   /** Set while the run waits on the user. */
   request: RunRequest | null;
+  /** The page the user asked from. */
+  context: ViewContext | null;
 }
+/** The page a request came from: its view, title, one line of what it shows, and what was selected on it. */
+export interface ViewContext { view: string; title?: string; summary?: string; selection?: { id: string; title?: string } }
 
 export interface Conversation {
   id: string;
@@ -135,6 +140,15 @@ export interface Notice {
   payload: Record<string, unknown>;
 }
 
+/** The languages Alfred speaks. */
+export type Locale = "zh" | "en";
+/** The user's preferences that are not secrets, shared by every device. */
+export interface UserSettings {
+  /** Null until a device sets it from its system language. */
+  locale: Locale | null;
+}
+export interface SettingsRequest { requestId: string; patch: Partial<UserSettings> }
+
 export type ProposalState = "open" | "executed" | "declined" | "stale" | "failed" | "superseded" | "expired";
 /** One device operation a proposal will run, pinned to the exact records it names. */
 export interface ProposalStep { op: string; input: unknown; preview: string }
@@ -162,7 +176,7 @@ export interface ReviseRequest { requestId: string; text: string }
 export interface ProposalResponse { proposal: Proposal; replayed: boolean; run?: Run }
 
 /** A part of life things belong to (work, health…), shared by the modules that sort by it; `k` is its colour slot. */
-export interface Area { id: string; name: string; k: string }
+export interface Area { id: string; name: Record<Locale, string>; k: string }
 export interface StateResponse {
   protocol: typeof PROTOCOL_VERSION;
   /** The newest event seq this state reflects. Subscribe to events after it. */
@@ -183,9 +197,10 @@ export interface StateResponse {
   areas: Area[];
   /** Proposals waiting for the user's decision, oldest first. */
   proposals: Proposal[];
+  settings: UserSettings;
 }
 
-export interface SubmitRunRequest { requestId: string; goal: string; conversationId?: string }
+export interface SubmitRunRequest { requestId: string; goal: string; conversationId?: string; context?: ViewContext }
 export interface SubmitRunResponse { run: Run; replayed: boolean }
 export interface RunDetail { run: Run; events: CoreEvent[] }
 
@@ -209,3 +224,4 @@ export interface AwayDigest {
 }
 
 export interface ErrorResponse { error: string; code?: string }
+

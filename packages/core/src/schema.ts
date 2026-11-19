@@ -119,4 +119,20 @@ CREATE TABLE core_proposals (
 ) STRICT;
 CREATE INDEX core_proposals_state ON core_proposals(state, created_at);
 `,
+}, {
+  // The user's preferences that are not secrets (settings.ts); each change is also a settings.changed event.
+  id: "core:5",
+  sql: `
+CREATE TABLE core_settings (
+  key TEXT PRIMARY KEY NOT NULL CHECK (length(key) BETWEEN 1 AND 64),
+  value TEXT NOT NULL CHECK (json_valid(value)),
+  updated_at TEXT NOT NULL
+) STRICT;
+`,
+}, {
+  // The page a request came from (runs.ts ViewContext): context for the engine, shown with the user's words.
+  id: "core:6",
+  sql: `
+ALTER TABLE core_runs ADD COLUMN context TEXT CHECK (context IS NULL OR (json_valid(context) AND json_type(context) = 'object'));
+`,
 }];

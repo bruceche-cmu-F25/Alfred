@@ -4,7 +4,9 @@ import { Conversation } from "../Conversation.tsx";
 import { Figure } from "./Figure.tsx";
 import { Icon } from "./icons.tsx";
 import { waitingCount } from "./inbox.ts";
+import { t } from "../i18n/index.ts";
 import { MOD } from "./Nav.tsx";
+import type { PageView } from "./pages.tsx";
 
 const WAITING = new Set<Run["state"]>(["waiting_permission", "waiting_input"]);
 
@@ -20,16 +22,15 @@ export function figureState(state: StateResponse, selected: string | null, live:
   return "rest";
 }
 
-/** One line under Alfred's name: what the open conversation is doing. */
-export function statusLine(state: StateResponse, selected: string | null): string {
-  const conversation = state.conversations.find((candidate) => candidate.id === selected);
-  if (!conversation) return "想让我做点什么？";
+/** One line under Alfred's name: what the open conversation is doing, or, while it is doing nothing, what Alfred
+ * makes of the page you are on. */
+export function statusLine(state: StateResponse, selected: string | null, idle?: string): string {
   const runs = state.runs.filter((run) => run.conversationId === selected);
   const waiting = runs.find((run) => WAITING.has(run.state));
-  if (waiting) return `在等你：${waiting.request?.question ?? waiting.goal}`;
+  if (waiting) return t("panel.waiting", { what: waiting.request?.question ?? waiting.goal });
   const working = runs.find((run) => run.state === "running" || run.state === "queued");
-  if (working) return `在办：${working.goal}`;
-  return conversation.title;
+  if (working) return t("panel.working", { goal: working.goal });
+  return idle ?? state.conversations.find((candidate) => candidate.id === selected)?.title ?? t("conv.emptyTitle");
 }
 
 export interface AlfredPanelProps {
@@ -40,6 +41,10 @@ export interface AlfredPanelProps {
   phone: boolean;
   live: Readonly<Record<string, string>>;
   highlighted: ReadonlySet<string>;
+  /** The page beside Alfred: what a question asked now is about. */
+  view?: PageView;
+  /** A page's title by its key, for "asked on" labels. */
+  pageTitle(view: string): string | undefined;
   onEvent(listener: (event: CoreEvent) => void): () => void;
   onView(module: string, view: string): void;
   onStarted(conversationId: string): void;
@@ -48,27 +53,29 @@ export interface AlfredPanelProps {
 }
 
 /** Alfred beside the page: the figure, one line on what it is doing, and the open conversation. */
-export function AlfredPanel({ state, selected, figure, wide, phone, live, highlighted, onEvent, onView, onStarted, onWide, onClose }: AlfredPanelProps) {
+export function AlfredPanel({ state, selected, figure, wide, phone, live, highlighted, view, pageTitle, onEvent, onView, onStarted, onWide, onClose }: AlfredPanelProps) {
   return (
     <aside className="alfred" aria-label="Alfred">
       <header className="alf-head">
         <Figure state={figure} size={36} />
         <div className="alf-who">
-          <p className="alf-name">Alfred</p>
-          <p className="alf-line">{statusLine(state, selected)}</p>
+          <p className="alf-name">Alfred{view && !wide && <span className="alf-looking">{t("panel.looking", { page: view.title })}</span>}</p>
+          <p className="alf-line">{statusLine(state, selected, view?.headline)}</p>
         </div>
         <div className="alf-tools">
           {!phone && (
-            <button type="button" className="icon-btn" onClick={onWide} aria-label={wide ? "回到并排" : "展开成整页"} title={wide ? "回到并排" : "展开成整页"}>
+            <button type="button" className="icon-btn" onClick={onWide} aria-label={t(wide ? "panel.narrow" : "panel.wide")} title={t(wide ? "panel.narrow" : "panel.wide")}>
               <Icon name={wide ? "narrow" : "wide"} />
             </button>
           )}
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="收起" title={phone ? "收起" : `收起（${MOD}.）`}>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t("panel.close")} title={phone ? t("panel.close") : t("panel.closeKey", { key: `${MOD}.` })}>
             <Icon name={phone ? "down" : "panel"} />
           </button>
         </div>
       </header>
-      <Conversation key={selected ?? "new"} id={selected} live={live} highlighted={highlighted} onEvent={onEvent} onView={onView} onStarted={onStarted} />
+      <Conversation key={selected ?? "new"} id={selected} live={live} highlighted={highlighted}
+        context={wide ? undefined : view?.context} suggestions={wide ? [] : view?.suggestions ?? []} pageTitle={pageTitle}
+        onEvent={onEvent} onView={onView} onStarted={onStarted} />
     </aside>
   );
 }

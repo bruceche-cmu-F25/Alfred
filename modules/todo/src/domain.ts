@@ -3,7 +3,7 @@
  * not edit yet (colour, estimate, work plan…) survive an import untouched.
  */
 import { createHash } from "node:crypto";
-import { areaName, AREA_IDS, changedFields, isArea, localDate, newId, recordDomainEvent, type World } from "@alfred/core";
+import { AREA_IDS, changedFields, isArea, localDate, newId, recordDomainEvent, type World } from "@alfred/core";
 import { TODO_STATUSES, type Todo, type TodoStatus } from "./types.ts";
 
 export { TODO_STATUSES, type Todo, type TodoStatus };
@@ -242,6 +242,6 @@ export function formatTodo(todo: Todo, today: string = localDate()): string {
   const progress = todoStatus(todo) === "doing" ? " (in progress)" : "";
   const plan = todo.plannedOn ? ` (planned ${todo.plannedOn}, not a deadline)` : "";
   const link = todo.url ? ` -> ${todo.url}` : "";
-  const area = todo.area ? ` [${todo.area}: ${areaName(todo.area)}]` : "";
+  const area = todo.area ? ` [area: ${todo.area}]` : "";
   return `${box} ${todo.id}  ${todo.title}${area}${progress}${date}${plan}${link}`;
 }

@@ -14,7 +14,7 @@ export {
 export {
   submitRun, claimNextRun, heartbeatRun, finishRun, requestCancel, resumeRun, sweepRuns, interruptOrphanedRuns,
   getRun, listRuns, conversationBefore, RunError, RUN_LEASE_MS, openRequest, answerRequest, runAnswers, PERMISSION_ANSWERS,
-  type Run, type RunOutcome, type RunRequest, type RunState, type SubmitRunInput,
+  type Run, type RunOutcome, type RunRequest, type RunState, type SubmitRunInput, type ViewContext, viewContext,
 } from "./runs.ts";
 export {
   getConversation, listConversations, updateConversation, titleFrom, ConversationError, CONVERSATION_ID, THINKING_LEVELS,
@@ -37,3 +37,4 @@ export {
   openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, ProposalStateError, PROPOSAL_TTL_MS,
   type Proposal, type ProposalState, type ProposalStep,
 } from "./proposals.ts";
+export { getSettings, updateSettings, userLocale, LOCALES, SettingsError, type Locale, type UserSettings } from "./settings.ts";

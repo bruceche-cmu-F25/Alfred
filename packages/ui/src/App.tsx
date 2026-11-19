@@ -8,8 +8,9 @@ import { Figure } from "./shell/Figure.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
 import { MOD, Nav } from "./shell/Nav.tsx";
-import { availablePages, moduleOf } from "./shell/pages.tsx";
+import { availablePages, moduleOf, pageView } from "./shell/pages.tsx";
 import { Palette } from "./shell/Palette.tsx";
+import { detectLocale, getLocale, setLocale, t, useLocale, type Locale } from "./i18n/index.ts";
 import { useAlfred } from "./useAlfred.ts";
 import { welcomeLines } from "./welcome.ts";
 
@@ -113,10 +114,10 @@ function useNotices(notices: Notice[], selected: string | null, onPresented: (no
 
 function noticeText(notice: Notice): string {
   const goal = String(notice.payload.goal ?? "");
-  if (notice.kind === "run_interrupted") return `「${goal}」中断了，没有自动重做。`;
-  if (notice.kind === "run_request") return `「${goal}」在等你：${String(notice.payload.question ?? "")}`;
-  if (notice.kind === "run_result") return `「${goal}」有结果了。`;
-  if (notice.kind === "proposal") return `Alfred 有个提议等你决定：「${String(notice.payload.title ?? "")}」`;
+  if (notice.kind === "run_interrupted") return t("notice.interrupted", { goal });
+  if (notice.kind === "run_request") return t("notice.request", { goal, question: String(notice.payload.question ?? "") });
+  if (notice.kind === "run_result") return t("notice.result", { goal });
+  if (notice.kind === "proposal") return t("notice.proposal", { title: String(notice.payload.title ?? "") });
   if (notice.kind === "welcome") {
     const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, null);
     return `${greeting}${summary}`;
@@ -150,6 +151,21 @@ export function App() {
   const [greeting, setGreeting] = useState(true);
   const [highlighted, setHighlighted] = useState<ReadonlySet<string>>(new Set());
   const [inboxFocus, setInboxFocus] = useState<string | null>(null);
+  useLocale(); // re-render in the new language when it changes
+
+  // The language is the user's, on the home node: follow it; if no device has set it yet, set it from this one's.
+  const savedLocale = state?.settings?.locale;
+  const askedLocale = useRef(false);
+  useEffect(() => {
+    if (!state) return;
+    if (savedLocale) setLocale(savedLocale);
+    else if (!askedLocale.current) { askedLocale.current = true; api.settings({ locale: detectLocale() }).catch(() => {}); }
+  }, [state, savedLocale]);
+  const switchLanguage = useCallback(() => {
+    const next: Locale = getLocale() === "zh" ? "en" : "zh";
+    setLocale(next);
+    api.settings({ locale: next }).catch(() => {});
+  }, []);
   const navStart = useRef(layout.navW);
 
   useEffect(() => { const timer = window.setTimeout(() => setGreeting(false), 2600); return () => window.clearTimeout(timer); }, []);
@@ -220,10 +236,16 @@ export function App() {
   }, [phone, layout.alfred, setLayout]);
   const toggleNav = useCallback(() => setLayout({ nav: layout.nav === "full" ? "rail" : "full" }), [layout.nav, setLayout]);
 
+  const pages = state ? availablePages(state) : [];
+  const current = pages.find((page) => page.key === route.page) ?? pages[0];
+  // The page a question is asked from, unless Alfred spans the window and the page is out of sight.
+  const view = state && (phone || layout.alfred !== "wide") ? pageView(current, state) : undefined;
+  const pageTitle = (key: string) => pages.find((page) => page.key === key)?.title;
+
   const ask = useCallback((text: string) => {
     showAlfred();
-    api.submit(text, selected ?? undefined).then(({ run }) => { if (!selected) route.go({ selected: run.conversationId }); }).catch(() => {});
-  }, [showAlfred, selected, route]);
+    api.submit(text, selected ?? undefined, view?.context).then(({ run }) => { if (!selected) route.go({ selected: run.conversationId }); }).catch(() => {});
+  }, [showAlfred, selected, route, view?.context]);
 
   // The Mac app: a notification was clicked, or the hotkey brought the window up.
   useEffect(() => desktop?.onFocusRun((runId) => openRun(runId)), [openRun]);
@@ -232,9 +254,7 @@ export function App() {
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
   }), [showAlfred]);
 
-  const pages = state ? availablePages(state) : [];
   const figure = useSettled(state ? figureState(state, selected, live, greeting) : "rest", 250);
-  const current = pages.find((page) => page.key === route.page) ?? pages[0];
 
   // Keyboard: ⌘K anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌥1–9 the pages (not while typing).
   useEffect(() => {
@@ -252,11 +272,12 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleAlfred, toggleNav, goPage, pages]);
 
+  // Another device that is not paired (or was revoked): pair first; a reload then starts with its token.
   if (!state) {
     return (
       <main className="boot">
         <p className="wordmark">Alfred</p>
-        <p className="quiet">{error ? `${error}。主节点在运行吗？` : "正在连接主节点…"}</p>
+        <p className="quiet">{error ? t("boot.error", { error }) : t("boot.connecting")}</p>
       </main>
     );
   }
@@ -273,7 +294,7 @@ export function App() {
 
   const panel = (
     <AlfredPanel state={state} selected={selected} figure={figure} wide={alfredMode === "wide"} phone={phone}
-      live={live} highlighted={highlighted} onEvent={onEvent} onView={onView} onStarted={onStarted}
+      live={live} highlighted={highlighted} view={view} pageTitle={pageTitle} onEvent={onEvent} onView={onView} onStarted={onStarted}
       onWide={() => setLayout({ alfred: layout.alfred === "wide" ? "open" : "wide" })}
       onClose={() => (phone ? setSheet(null) : setLayout({ alfred: "closed" }))} />
   );
@@ -284,7 +305,7 @@ export function App() {
       {(!phone || sheet === "nav") && (
         <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : layout.nav} selected={selected} connection={connection}
           onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onFold={phone ? () => setSheet(null) : toggleNav}
-          onPalette={() => { setSheet(null); setPalette(true); }} onConversations={showAlfred} sheet={phone} />
+          onPalette={() => { setSheet(null); setPalette(true); }} onConversations={showAlfred} sheet={phone} onLanguage={switchLanguage} />
       )}
       {phone && sheet === "nav" && <div className="scrim" onClick={() => setSheet(null)} />}
 
@@ -300,7 +321,7 @@ export function App() {
             })}</div>
           </>
         ) : (
-          <div className="empty"><p className="empty-title">这里还没有页面</p><p className="quiet">装上模块以后，它们的页面会出现在这里。</p></div>
+          <div className="empty"><p className="empty-title">{t("page.none")}</p><p className="quiet">{t("page.noneHint")}</p></div>
         )}
       </main>
 
@@ -309,16 +330,16 @@ export function App() {
       {!phone && (
         <>
           <div className="resizer resizer-nav" onPointerDown={(event) => { navStart.current = layout.navW; navDrag(event); }}
-            onDoubleClick={toggleNav} title="拖动调整宽度，往里拖到底收成图标；双击切换" />
+            onDoubleClick={toggleNav} title={t("resize.nav")} />
           {alfredMode === "open" && (
-            <div className="resizer resizer-alf" onPointerDown={alfDrag} onDoubleClick={() => setLayout({ alfW: ALF.def })} title="拖动调整页面和 Alfred 的宽度；双击复原" />
+            <div className="resizer resizer-alf" onPointerDown={alfDrag} onDoubleClick={() => setLayout({ alfW: ALF.def })} title={t("resize.alf")} />
           )}
         </>
       )}
 
       {!phone && alfredMode === "closed" && (
-        <button type="button" className="fab" onClick={showAlfred} title={`打开 Alfred（${MOD}.）`}>
-          <Figure state={figure} size={30} /><span>{statusLine(state, selected)}</span>
+        <button type="button" className="fab" onClick={showAlfred} title={t("fab.open", { key: `${MOD}.` })}>
+          <Figure state={figure} size={30} /><span>{statusLine(state, selected, view?.headline)}</span>
         </button>
       )}
       {phone && sheet !== "alfred" && (
@@ -329,9 +350,10 @@ export function App() {
       {palette && (
         <Palette pages={pages} conversations={state.conversations} onPage={goPage} onSelect={select} onAsk={ask} onClose={() => setPalette(false)}
           actions={[
-            { id: "new", label: "新对话", icon: "plus", run: () => select(null) },
-            { id: "alfred", label: alfredMode === "closed" ? "打开 Alfred" : "收起 Alfred", icon: "panel", hint: `${MOD}.`, run: toggleAlfred },
-            ...(phone ? [] : [{ id: "nav", label: layout.nav === "full" ? "侧栏收成图标" : "展开侧栏", icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
+            { id: "new", label: t("cmd.new"), icon: "plus", run: () => select(null) },
+            { id: "alfred", label: t(alfredMode === "closed" ? "cmd.openAlfred" : "cmd.closeAlfred"), icon: "panel", hint: `${MOD}.`, run: toggleAlfred },
+            ...(phone ? [] : [{ id: "nav", label: t(layout.nav === "full" ? "cmd.foldNav" : "cmd.unfoldNav"), icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
+            { id: "language", label: t("cmd.language"), icon: "chat", run: switchLanguage },
           ]} />
       )}
 
@@ -342,17 +364,17 @@ export function App() {
               <p>{noticeText(notice)}</p>
               <div className="notice-actions">
                 {notice.kind === "run_interrupted" && (
-                  <button type="button" onClick={() => { api.resume(String(notice.payload.runId)).catch(() => {}); dismiss(notice); }}>继续</button>
+                  <button type="button" onClick={() => { api.resume(String(notice.payload.runId)).catch(() => {}); dismiss(notice); }}>{t("common.continue")}</button>
                 )}
                 {notice.kind === "proposal" && (
-                  <button type="button" onClick={() => { showProposal(String(notice.payload.proposalId)); dismiss(notice); }}>去看看</button>
+                  <button type="button" onClick={() => { showProposal(String(notice.payload.proposalId)); dismiss(notice); }}>{t("notice.look")}</button>
                 )}
                 {(notice.kind === "run_result" || notice.kind === "run_request") && notice.payload.runId ? (
                   <button type="button" onClick={() => { openRun(String(notice.payload.runId), String(notice.payload.conversationId ?? "") || undefined); dismiss(notice); }}>
-                    {notice.kind === "run_request" ? "去回答" : "查看"}
+                    {t(notice.kind === "run_request" ? "notice.answer" : "notice.view")}
                   </button>
                 ) : null}
-                <button type="button" className="ghost" onClick={() => dismiss(notice)}>知道了</button>
+                <button type="button" className="ghost" onClick={() => dismiss(notice)}>{t("common.gotIt")}</button>
               </div>
             </div>
           ))}

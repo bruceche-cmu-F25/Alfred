@@ -3,10 +3,11 @@
  * Core pages (`core.*`: the inbox, later automations) belong to the shell and read the core's state.
  */
 import type { ReactNode } from "react";
-import type { Area, StateResponse } from "@alfred/protocol";
+import type { Area, StateResponse, ViewContext } from "@alfred/protocol";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
 import { Inbox } from "../Inbox.tsx";
 import { Todos } from "../Todos.tsx";
+import { t, type Key } from "../i18n/index.ts";
 import { inboxItems, waitingCount } from "./inbox.ts";
 import type { IconName } from "./icons.tsx";
 
@@ -34,31 +35,64 @@ export interface PageDef {
   group: "work" | "modules";
   /** A number for the sidebar, or nothing. */
   badge?(snapshot: unknown, state: StateResponse): number | undefined;
-  /** One plain line under the page title. */
+  /** One plain line under the page title: the facts. It also tells Alfred what you were looking at when you ask. */
   summary?(snapshot: unknown, state: StateResponse): string;
+  /** Alfred's own line about the page, in its voice, shown under its name while nothing is going on. */
+  headline?(snapshot: unknown, state: StateResponse): string;
+  /** Questions worth asking from this page, most useful first; the chips above the composer. */
+  suggestions?(snapshot: unknown, state: StateResponse): Key[];
   render(props: PageProps): ReactNode;
+}
+
+/** Counts the todo page and its lines share. A range running today counts as due today. */
+function todoCounts(snapshot: unknown) {
+  const { todos = [], today = "" } = (snapshot as TodoSnapshot | undefined) ?? {};
+  const open = todos.filter((todo) => !todo.done);
+  const runsToday = (todo: (typeof open)[number]) => !!todo.due && (todo.due === today || (!!todo.startDate && todo.startDate <= today && todo.due >= today));
+  return {
+    open: open.length,
+    late: open.filter((todo) => !!todo.due && todo.due < today && !runsToday(todo)).length,
+    today: open.filter(runsToday).length,
+  };
 }
 
 const PAGES: PageDef[] = [
   {
-    key: "core.inbox", title: "通知", icon: "inbox", k: "warm", group: "work",
+    key: "core.inbox", get title() { return t("page.inbox"); }, icon: "inbox", k: "warm", group: "work",
     badge: (_, state) => waitingCount(state),
     summary: (_, state) => {
       const waiting = waitingCount(state), rest = inboxItems(state).length - waiting;
-      if (!waiting && !rest) return "都处理完了";
-      return waiting ? `${waiting} 件等你决定${rest ? `，其余 ${rest} 件是 Alfred 告诉你一声` : ""}` : `${rest} 件 Alfred 告诉你一声`;
+      if (!waiting && !rest) return t("page.inbox.clear");
+      return waiting ? t("page.inbox.waiting", { n: waiting }) + (rest ? t("page.inbox.rest", { n: rest }) : "") : t("page.inbox.onlyRest", { n: rest });
+    },
+    headline: (_, state) => {
+      const waiting = waitingCount(state), rest = inboxItems(state).length - waiting;
+      if (waiting) return t("head.inbox.waiting", { n: waiting });
+      return rest ? t("head.inbox.results", { n: rest }) : t("head.inbox.clear");
+    },
+    suggestions: (_, state) => {
+      const waiting = waitingCount(state), any = inboxItems(state).length > 0;
+      return waiting ? ["sug.inbox.urgent", "sug.inbox.what"] : any ? ["sug.inbox.what"] : ["sug.inbox.today"];
     },
     render: ({ state, focus, onFocused, openConversation }) => <Inbox state={state} focus={focus} onFocused={onFocused} onOpenConversation={openConversation} />,
   },
   {
-    key: "todo.list", title: "待办", icon: "todo", k: "blue", group: "work",
+    key: "todo.list", get title() { return t("page.todos"); }, icon: "todo", k: "blue", group: "work",
     badge: (snapshot) => (snapshot as TodoSnapshot | undefined)?.todos.filter((todo) => !todo.done).length,
     summary: (snapshot) => {
-      const todos = (snapshot as TodoSnapshot | undefined)?.todos ?? [];
-      const today = (snapshot as TodoSnapshot | undefined)?.today ?? "";
-      const open = todos.filter((todo) => !todo.done);
-      const late = open.filter((todo) => todo.due && todo.due < today).length;
-      return open.length ? `${open.length} 件没做完${late ? `，${late} 件逾期` : ""}` : "都做完了";
+      const { open, late } = todoCounts(snapshot);
+      return open ? t("page.todos.open", { n: open }) + (late ? t("page.todos.late", { n: late }) : "") : t("page.todos.allDone");
+    },
+    headline: (snapshot) => {
+      const { open, late, today } = todoCounts(snapshot);
+      if (late) return today ? t("head.todos.late", { late, today }) : t("head.todos.lateOnly", { late });
+      if (today) return t("head.todos.today", { today });
+      return open ? t("head.todos.open", { n: open }) : t("head.todos.clear");
+    },
+    suggestions: (snapshot) => {
+      const { open, late } = todoCounts(snapshot);
+      if (!open) return [];
+      return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
     render: ({ snapshot, fresh, areas }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} />,
   },
@@ -71,3 +105,22 @@ export function availablePages(state: StateResponse): PageDef[] {
 }
 
 export const moduleOf = (page: PageDef) => page.key.split(".")[0];
+
+/** The page as Alfred hears about it with a question: which page, its title and its facts. Context, not a request. */
+export interface PageView {
+  context: ViewContext;
+  title: string;
+  headline?: string;
+  suggestions: string[];
+}
+export function pageView(page: PageDef | undefined, state: StateResponse): PageView | undefined {
+  if (!page) return undefined;
+  const snapshot = state.modules[moduleOf(page)];
+  const summary = page.summary?.(snapshot, state);
+  return {
+    context: { view: page.key, title: page.title, ...(summary ? { summary } : {}) },
+    title: page.title,
+    headline: page.headline?.(snapshot, state),
+    suggestions: (page.suggestions?.(snapshot, state) ?? []).map((key) => t(key)),
+  };
+}

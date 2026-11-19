@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { acceptProposal, CORE_MIGRATIONS, listEvents, listOpenProposals, openWorld, withCoreContext, type World } from "@alfred/core";
+import { acceptProposal, CORE_MIGRATIONS, listEvents, listOpenProposals, openWorld, updateSettings, withCoreContext, type World } from "@alfred/core";
 import { applyStep, assistantTools, invokeOp, moduleMigrations, OpInputError, runTools } from "@alfred/module-kit";
 import {
   addTodo, compareTodos, completeTodo, formatTodo, importTodos, listTodos, readRobinTodos, TodoConflictError, todoModule,
@@ -72,7 +72,9 @@ test("runs use reversible tools directly; deleting asks the user, naming the tod
   assert.deepEqual(tools.map((tool) => tool.name).sort(), ["todo_add", "todo_complete", "todo_delete", "todo_list", "todo_update"]);
   assert.deepEqual(tools.filter((tool) => tool.permission).map((tool) => tool.name), ["todo_delete"]);
   const remove = tools.find((tool) => tool.name === "todo_delete")!;
-  assert.equal(remove.permission!({ id: todo.id }), "永久删除待办「Old receipt」？删除后不能恢复。");
+  assert.equal(remove.permission!({ id: todo.id }), "Delete the todo “Old receipt” for good? This can't be undone.");
+  updateSettings(w, { locale: "zh" });
+  assert.equal(remove.permission!({ id: todo.id }), "永久删除待办「Old receipt」？删除后不能恢复。", "in the user's language once it is set");
   assert.equal(remove.describe!({ id: todo.id }), "Old receipt");
 });
 
@@ -105,7 +107,7 @@ test("a todo can belong to an area; unknown areas are refused and an empty one c
   const w = world();
   const { todo } = addTodo(w, { title: "Renew passport", area: "travel" });
   assert.equal(todo.area, "travel");
-  assert.match(formatTodo(todo, "2026-11-18"), /\[travel: 出行\]/);
+  assert.match(formatTodo(todo, "2026-11-18"), /\[area: travel\]/);
   assert.throws(() => addTodo(w, { title: "x", area: "space" }), /area must be one of/);
   assert.throws(() => updateTodo(w, { id: todo.id }, { area: "space" }), /area must be one of/);
   updateTodo(w, { id: todo.id }, { area: "" });
@@ -132,6 +134,7 @@ test("the snapshot says when Alfred made the latest change to a todo, from the e
 
 test("a run proposes todo changes; accepting runs them pinned to the todos it saw", () => {
   const w = world();
+  updateSettings(w, { locale: "zh" });
   const { todo } = addTodo(w, { title: "Hand in report", due: "2026-11-01" });
   addTodo(w, { title: "Old idea" });
   const propose = assistantTools(w, [todoModule]).find((tool) => tool.name === "propose")!;
@@ -162,6 +165,7 @@ test("editing a todo after Alfred proposed a change to it makes the proposal sta
   assert.equal(proposal.stale, true);
   assert.equal(acceptProposal(w, proposal.id, (step) => applyStep(w, [todoModule], step)).state, "stale");
   assert.equal(listTodos(w).length, 1);
+  assert.equal(proposal.steps[0].preview, "Delete the todo “Call the bank” for good", "in English until the user's language is set");
   // A bad call is refused before anything is proposed.
   const refused = propose.execute({ title: "x", summary: "", calls: [{ tool: "todo_delete", params: { title: "nothing like this" } }] }, new AbortController().signal);
   assert.match(String(refused), /No todo matching/);

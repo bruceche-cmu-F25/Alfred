@@ -13,6 +13,7 @@ import {
   type IpcMainEvent, type MenuItemConstructorOptions,
 } from "electron";
 import type { AwayDigest, Notice, PresenceResponse, StateResponse } from "@alfred/protocol";
+import { detectLocale, translate, type Key, type Locale } from "@alfred/ui/i18n";
 import { welcomeLines } from "@alfred/ui/welcome";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
@@ -77,6 +78,9 @@ function firstName(): string | null {
 
 let DEVICE = "";
 let USER: string | null = null;
+/** The user's language: their setting on the home node once it is known, the system's until then. */
+let LOCALE: Locale = detectLocale(app.getLocale());
+const say = (key: Key, vars?: Record<string, string | number>) => translate(LOCALE, key, vars);
 
 function windowArgs(role: "main" | "presence"): string[] {
   return [
@@ -187,7 +191,7 @@ async function greet(notice: Notice): Promise<void> {
     return;
   }
   // The figure is hidden: greet with a notification instead.
-  const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, USER);
+  const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, USER, LOCALE);
   notify(greeting, summary, () => { acknowledge(notice.id); showMain(); });
 }
 
@@ -203,15 +207,15 @@ function notify(title: string, body: string, onClick: () => void): void {
 
 function resultText(notice: Notice): { title: string; body: string } {
   const goal = String(notice.payload.goal ?? "");
-  if (notice.kind === "run_interrupted") return { title: "有一件事中断了", body: `「${goal}」没有办完，也没有自动重做。` };
-  if (notice.kind === "proposal") return { title: "Alfred 有个提议等你决定", body: String(notice.payload.title ?? "") };
+  if (notice.kind === "run_interrupted") return { title: say("mac.interrupted.title"), body: say("mac.interrupted.body", { goal }) };
+  if (notice.kind === "proposal") return { title: say("mac.proposal.title"), body: String(notice.payload.title ?? "") };
   if (notice.kind === "run_request") {
-    return { title: notice.payload.kind === "permission" ? "Alfred 需要你允许" : "Alfred 在等你回答", body: String(notice.payload.question ?? goal) };
+    return { title: say(notice.payload.kind === "permission" ? "mac.permission.title" : "mac.input.title"), body: String(notice.payload.question ?? goal) };
   }
   const status = notice.payload.status;
-  if (status === "failed") return { title: "没办成", body: `「${goal}」` };
-  if (status === "cancelled") return { title: "已取消", body: `「${goal}」` };
-  return { title: "Alfred", body: String(notice.payload.reply ?? `办好了：「${goal}」`) };
+  if (status === "failed") return { title: say("mac.failed.title"), body: say("mac.goal", { goal }) };
+  if (status === "cancelled") return { title: say("mac.cancelled.title"), body: say("mac.goal", { goal }) };
+  return { title: "Alfred", body: String(notice.payload.reply ?? say("mac.done.body", { goal })) };
 }
 
 let notifyTimer: NodeJS.Timeout | null = null;
@@ -247,7 +251,7 @@ async function handleNotices(state: StateResponse): Promise<void> {
     const open = notice.kind === "run_request" || notice.kind === "proposal";
     notify(title, body, () => { if (!open) acknowledge(notice.id); showMain({ runId: String(notice.payload.runId ?? "") }); });
   } else if (presented.length > 1) {
-    notify("Alfred", `有 ${presented.length} 件事等你看。`, () => { presented.filter((notice) => notice.kind !== "run_request" && notice.kind !== "proposal").forEach((notice) => acknowledge(notice.id)); showMain(); });
+    notify("Alfred", say("mac.several", { n: presented.length }), () => { presented.filter((notice) => notice.kind !== "run_request" && notice.kind !== "proposal").forEach((notice) => acknowledge(notice.id)); showMain(); });
   }
 }
 
@@ -259,8 +263,17 @@ function dockBadge(state: StateResponse): void {
   app.dock?.setBadge(waiting ? String(waiting) : "");
 }
 
+/** Menus and notifications follow the user's language setting. */
+function followLocale(state: StateResponse): void {
+  const locale = state.settings?.locale;
+  if (!locale || locale === LOCALE) return;
+  LOCALE = locale;
+  appMenu();
+  updateTray();
+}
+
 function refresh(): Promise<void> {
-  refreshing ??= client.state().then((state) => { dockBadge(state); return handleNotices(state); }).catch(() => {}).finally(() => { refreshing = null; });
+  refreshing ??= client.state().then((state) => { followLocale(state); dockBadge(state); return handleNotices(state); }).catch(() => {}).finally(() => { refreshing = null; });
   return refreshing;
 }
 
@@ -285,18 +298,18 @@ function watchPresence(): void {
 // ---- menu bar, app menu, hotkey -------------------------------------------
 
 function statusLabel(): string {
-  if (mode === "stopped") return "主节点：已停止";
-  if (!client.connected) return "主节点：连接中…";
-  return mode === "external" ? "主节点：在线（外部启动）" : "主节点：在线";
+  if (mode === "stopped") return say("mac.node.stopped");
+  if (!client.connected) return say("mac.node.connecting");
+  return say(mode === "external" ? "mac.node.external" : "mac.node.live");
 }
 
 function updateTray(): void {
   if (!tray) return;
   const items: MenuItemConstructorOptions[] = [
     { label: statusLabel(), enabled: false },
-    { label: "打开 Alfred", accelerator: HOTKEY, click: () => showMain({ composer: true }) },
+    { label: say("mac.open"), accelerator: HOTKEY, click: () => showMain({ composer: true }) },
     {
-      label: "显示形象", type: "checkbox", checked: settings.showFigure, click: (item) => {
+      label: say("mac.showFigure"), type: "checkbox", checked: settings.showFigure, click: (item) => {
         settings.showFigure = item.checked;
         saveSettings();
         if (item.checked) presence?.showInactive(); else presence?.hide();
@@ -304,18 +317,18 @@ function updateTray(): void {
     },
     { type: "separator" },
     {
-      label: "主节点", submenu: [
-        { label: "重启主节点", enabled: mode === "launchd", click: () => void restartHomeNode(config).then(() => { mode = "launchd"; updateTray(); }) },
-        { label: mode === "stopped" ? "启动主节点" : "停止主节点", enabled: mode !== "external", click: () => toggleHomeNode() },
-        { label: "打开日志", enabled: existsSync(config.logFile), click: () => void shell.openPath(config.logFile) },
+      label: say("mac.node"), submenu: [
+        { label: say("mac.node.restart"), enabled: mode === "launchd", click: () => void restartHomeNode(config).then(() => { mode = "launchd"; updateTray(); }) },
+        { label: say(mode === "stopped" ? "mac.node.start" : "mac.node.stop"), enabled: mode !== "external", click: () => toggleHomeNode() },
+        { label: say("mac.log"), enabled: existsSync(config.logFile), click: () => void shell.openPath(config.logFile) },
       ],
     },
     {
-      label: "登录时打开 Alfred", type: "checkbox", checked: app.getLoginItemSettings().openAtLogin,
+      label: say("mac.loginItem"), type: "checkbox", checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
     { type: "separator" },
-    { label: "退出 Alfred（主节点继续运行）", click: () => app.quit() },
+    { label: say("mac.quit"), click: () => app.quit() },
   ];
   tray.setContextMenu(Menu.buildFromTemplate(items));
   tray.setToolTip(`Alfred · ${statusLabel()}`);
@@ -348,7 +361,7 @@ function appMenu(): void {
     { role: "appMenu" },
     { role: "editMenu" },
     {
-      label: "显示", submenu: [
+      label: say("mac.view"), submenu: [
         { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
         { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" },
       ],
@@ -360,7 +373,7 @@ function appMenu(): void {
 function showStartError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   const choice = dialog.showMessageBoxSync({
-    type: "error", message: "Alfred 的主节点没有启动", detail: message, buttons: ["打开日志", "好"], defaultId: 1,
+    type: "error", message: say("mac.startError"), detail: message, buttons: [say("mac.log"), say("mac.ok")], defaultId: 1,
   });
   if (choice === 0 && existsSync(config.logFile)) void shell.openPath(config.logFile);
 }

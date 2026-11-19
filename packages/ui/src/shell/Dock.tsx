@@ -1,6 +1,7 @@
 import type { StateResponse } from "@alfred/protocol";
 import type { FigureState } from "../entity/tesseract.js";
 import { Figure } from "./Figure.tsx";
+import { t } from "../i18n/index.ts";
 import { Icon } from "./icons.tsx";
 import { moduleOf, type PageDef } from "./pages.tsx";
 
@@ -28,12 +29,12 @@ export function Dock({ state, pages, page, figure, onPage, onAlfred, onConversat
     );
   };
   return (
-    <nav className="dock" aria-label="工作台">
+    <nav className="dock" aria-label={t("nav.label")}>
       {shown.slice(0, half).map(button)}
       <button type="button" className="dock-alfred" onClick={onAlfred} aria-label="Alfred"><Figure state={figure} size={34} /></button>
       {shown.slice(half).map(button)}
       <button type="button" onClick={onConversations}>
-        <Icon name="chat" /><span>对话</span>{waiting ? <span className="count">{waiting}</span> : null}
+        <Icon name="chat" /><span>{t("nav.conversations")}</span>{waiting ? <span className="count">{waiting}</span> : null}
       </button>
     </nav>
   );

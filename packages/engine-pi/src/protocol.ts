@@ -65,9 +65,15 @@ function weekday(date: string): string {
   return new Date(year, month - 1, day).toLocaleDateString("en-US", { weekday: "long" });
 }
 
-/** The user's turn as the model reads it. */
-export function composePrompt(request: Pick<EngineRequest, "today" | "timezone" | "goal">): string {
-  return `Today is ${request.today} (${weekday(request.today)}), timezone ${request.timezone}.\n\n${request.goal}`;
+/** The user's turn as the model reads it: the date, what they were looking at (context only), then their words. */
+export function composePrompt(request: Pick<EngineRequest, "today" | "timezone" | "goal" | "context">): string {
+  const lines = [`Today is ${request.today} (${weekday(request.today)}), timezone ${request.timezone}.`];
+  const context = request.context;
+  if (context) {
+    const page = context.title ? `${context.title} (${context.view})` : context.view;
+    lines.push(`The user is looking at the ${page} page${context.summary ? `: ${context.summary}` : ""}.${context.selection ? ` Selected: ${context.selection.title ?? context.selection.id} (${context.selection.id}).` : ""} This is context, not a request.`);
+  }
+  return `${lines.join("\n")}\n\n${request.goal}`;
 }
 
 /** Earlier turns, only for a session that does not have them yet. Context only. */

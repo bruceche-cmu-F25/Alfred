@@ -53,6 +53,34 @@ export interface Run {
   cancelRequested: boolean;
   outcome: RunOutcome | null;
   request: RunRequest | null;
+  /** What the user was looking at when they asked (a page of the workspace). Context for the engine, not an instruction. */
+  context: ViewContext | null;
+}
+
+/** The page a request came from: its view (`todo.list`, `core.inbox`), its title and one line of what it shows now,
+ * and what was selected on it, if anything. */
+export interface ViewContext {
+  view: string;
+  title?: string;
+  summary?: string;
+  selection?: { id: string; title?: string };
+}
+
+const VIEW = /^[a-z][a-z0-9]*\.[a-z][a-z_]*$/;
+/** Checks and bounds a context from a device; anything malformed is refused, not trimmed into something else. */
+export function viewContext(input: unknown): ViewContext | null {
+  if (input === undefined || input === null) return null;
+  const value = input as Record<string, unknown>;
+  const text = (field: unknown, max: number) => (field === undefined ? undefined : typeof field === "string" && field.length <= max ? field : (() => { throw new Error("Invalid view context"); })());
+  if (typeof value !== "object" || typeof value.view !== "string" || !VIEW.test(value.view) || value.view.length > 64) throw new Error("Invalid view context");
+  const selection = value.selection as Record<string, unknown> | undefined;
+  if (selection !== undefined && (typeof selection !== "object" || typeof selection.id !== "string" || !selection.id || selection.id.length > 64)) throw new Error("Invalid view context");
+  return {
+    view: value.view,
+    ...(value.title !== undefined ? { title: text(value.title, 80) } : {}),
+    ...(value.summary !== undefined ? { summary: text(value.summary, 300) } : {}),
+    ...(selection ? { selection: { id: selection.id as string, ...(selection.title !== undefined ? { title: text(selection.title, 200) } : {}) } } : {}),
+  };
 }
 
 export class RunError extends Error {
@@ -86,6 +114,7 @@ function toRun(row: Record<string, unknown>): Run {
     leaseOwner: row.lease_owner as string | null, leaseUntil: row.lease_until as string | null,
     cancelRequested: row.cancel_requested === 1, outcome: row.outcome ? JSON.parse(row.outcome as string) : null,
     request: row.request ? JSON.parse(row.request as string) : null,
+    context: row.context ? JSON.parse(row.context as string) : null,
   };
 }
 
@@ -129,6 +158,8 @@ export interface SubmitRunInput {
   profile: string;
   /** Continue this conversation; omitted, the run starts a new one. */
   conversationId?: string;
+  /** The page the user asked from. */
+  context?: unknown;
   now?: number;
 }
 
@@ -141,7 +172,8 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
   if (input.conversationId !== undefined && !CONVERSATION_ID.test(input.conversationId)) throw new ConversationError("invalid");
   const goal = input.goal.trim();
   if (!goal || goal.length > 8000) throw new Error("Goal must be 1–8000 characters");
-  const hash = createHash("sha256").update(JSON.stringify({ goal, profile: input.profile, conversationId: input.conversationId ?? null })).digest("hex");
+  const context = viewContext(input.context);
+  const hash = createHash("sha256").update(JSON.stringify({ goal, profile: input.profile, conversationId: input.conversationId ?? null, ...(context ? { context } : {}) })).digest("hex");
   const now = input.now ?? Date.now();
   return world.tx((db) => {
     const existing = db.prepare("SELECT * FROM core_runs WHERE request_id = ?").get(input.requestId);
@@ -153,8 +185,8 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
     if (conversationId) touchConversation(db, conversationId, now);
     else conversationId = createConversation(db, { title: titleFrom(goal), now });
     const id = newId();
-    db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(id, input.requestId, hash, conversationId, goal, input.profile, iso(now), iso(now));
+    db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at, context)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`).run(id, input.requestId, hash, conversationId, goal, input.profile, iso(now), iso(now), context ? JSON.stringify(context) : null);
     const run = load(db, id);
     runEvent(db, run, "queued", now, { conversationId });
     return { run, replayed: false };

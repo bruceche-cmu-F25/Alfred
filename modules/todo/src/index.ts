@@ -1,4 +1,4 @@
-import { AREAS, areaName, lastChanges, localDate, type World } from "@alfred/core";
+import { AREAS, areaName, lastChanges, localDate, userLocale, type World } from "@alfred/core";
 import { defineModule, defineOp, defineTool, Type } from "@alfred/module-kit";
 import {
   addTodo, completeTodo, deleteTodo, formatTodo, listTodos, MIGRATIONS, resolveTodo, todoRevision, updateTodo, type Todo,
@@ -16,8 +16,39 @@ const Ref = {
 const DateField = (description: string) => Type.Optional(Type.String({ description }));
 const Status = Type.Union([Type.Literal("todo"), Type.Literal("doing"), Type.Literal("done")]);
 
+/** What the user reads about a todo change (a proposal's step, a permission question), in their language. */
+const SAY = {
+  zh: {
+    add: (title: string, due?: string) => `添加待办「${title}」${due ? `，截止 ${due}` : ""}`,
+    rename: (title: string) => `改名为「${title}」`,
+    due: (date: string) => (date ? `截止日改为 ${date}` : "去掉截止日"),
+    start: (date: string) => (date ? `开始日改为 ${date}` : "去掉开始日"),
+    area: (name: string) => (name ? `领域改为${name}` : "去掉领域"),
+    status: (status: string) => (status === "doing" ? "标成进行中" : "标回未开始"),
+    link: (url: string) => (url ? "换链接" : "去掉链接"),
+    update: (title: string, said: string[]) => `把「${title}」${said.join("、")}`,
+    complete: (title: string) => `完成待办「${title}」`,
+    remove: (title: string) => `永久删除待办「${title}」`,
+    confirmRemove: (title: string) => `永久删除待办「${title}」？删除后不能恢复。`,
+  },
+  en: {
+    add: (title: string, due?: string) => `Add the todo “${title}”${due ? `, due ${due}` : ""}`,
+    rename: (title: string) => `rename it “${title}”`,
+    due: (date: string) => (date ? `move its due date to ${date}` : "remove its due date"),
+    start: (date: string) => (date ? `move its start to ${date}` : "remove its start date"),
+    area: (name: string) => (name ? `put it under ${name}` : "take it out of its area"),
+    status: (status: string) => (status === "doing" ? "mark it in progress" : "mark it not started"),
+    link: (url: string) => (url ? "change its link" : "remove its link"),
+    update: (title: string, said: string[]) => `For “${title}”: ${said.join(", ")}`,
+    complete: (title: string) => `Complete the todo “${title}”`,
+    remove: (title: string) => `Delete the todo “${title}” for good`,
+    confirmRemove: (title: string) => `Delete the todo “${title}” for good? This can't be undone.`,
+  },
+};
+const say = (world: World) => SAY[userLocale(world)];
+
 const AreaField = Type.Optional(Type.String({
-  description: `The area of life it belongs to: ${AREAS.map((area) => `${area.id} (${area.name})`).join(", ")}. An empty string removes it.`,
+  description: `The area of life it belongs to: ${AREAS.map((area) => `${area.id} (${area.name.en} / ${area.name.zh})`).join(", ")}. An empty string removes it.`,
 }));
 
 function snapshot(world: World): TodoSnapshot {
@@ -56,7 +87,7 @@ export const todoModule = defineModule({
   title: "Todos",
   migrations: MIGRATIONS,
   snapshot,
-  views: [{ id: "list", title: "待办" }],
+  views: [{ id: "list", title: "Todos" }],
   guidance: [
     "Todos: when the user mentions something they intend to do later, record it with todo_add instead of only acknowledging it.",
     "A todo has a due date, never a time. Resolve relative dates (\"Friday\", \"tomorrow\") against the local date you were given.",
@@ -125,7 +156,7 @@ export const todoModule = defineModule({
         area: AreaField,
       }),
       describe: (_world, params) => params.title,
-      pin: (_world, params) => ({ op: "todo.add", input: params, preview: `添加待办「${params.title}」${params.due ? `，截止 ${params.due}` : ""}` }),
+      pin: (world, params) => ({ op: "todo.add", input: params, preview: say(world).add(params.title, params.due) }),
       execute(world, params) {
         try {
           const { todo, open } = addTodo(world, params);
@@ -152,14 +183,14 @@ export const todoModule = defineModule({
         const { id, title, newTitle, ...rest } = params;
         const patch = Object.fromEntries(Object.entries({ ...rest, ...(newTitle !== undefined ? { title: newTitle } : {}) }).filter(([, value]) => value !== undefined));
         if (!Object.keys(patch).length) return { error: "Nothing to change." };
-        const said: string[] = [];
-        if (patch.title !== undefined) said.push(`改名为「${String(patch.title)}」`);
-        if (patch.due !== undefined) said.push(patch.due ? `截止日改为 ${String(patch.due)}` : "去掉截止日");
-        if (patch.startDate !== undefined) said.push(patch.startDate ? `开始日改为 ${String(patch.startDate)}` : "去掉开始日");
-        if (patch.area !== undefined) said.push(patch.area ? `领域改为${areaName(String(patch.area)) ?? patch.area}` : "去掉领域");
-        if (patch.status !== undefined) said.push(patch.status === "doing" ? "标成进行中" : "标回未开始");
-        if (patch.url !== undefined) said.push(patch.url ? "换链接" : "去掉链接");
-        return pinned(world, { id, title }, (todo, revision) => ({ op: "todo.update", input: { id: todo.id, revision, patch }, preview: `把「${todo.title}」${said.join("、")}` }));
+        const text = say(world), locale = userLocale(world), said: string[] = [];
+        if (patch.title !== undefined) said.push(text.rename(String(patch.title)));
+        if (patch.due !== undefined) said.push(text.due(String(patch.due)));
+        if (patch.startDate !== undefined) said.push(text.start(String(patch.startDate)));
+        if (patch.area !== undefined) said.push(text.area(patch.area ? areaName(String(patch.area), locale) ?? String(patch.area) : ""));
+        if (patch.status !== undefined) said.push(text.status(String(patch.status)));
+        if (patch.url !== undefined) said.push(text.link(String(patch.url)));
+        return pinned(world, { id, title }, (todo, revision) => ({ op: "todo.update", input: { id: todo.id, revision, patch }, preview: text.update(todo.title, said) }));
       },
       execute(world, params) {
         const { id, title, newTitle, ...rest } = params;
@@ -177,7 +208,7 @@ export const todoModule = defineModule({
       description: "Mark a todo as done. Identify it by id or by a distinctive part of its title.",
       parameters: Type.Object(Ref),
       describe: (world, params) => named(world, params),
-      pin: (world, params) => pinned(world, params, (todo, revision) => ({ op: "todo.complete", input: { id: todo.id, revision }, preview: `完成待办「${todo.title}」` })),
+      pin: (world, params) => pinned(world, params, (todo, revision) => ({ op: "todo.complete", input: { id: todo.id, revision }, preview: say(world).complete(todo.title) })),
       execute(world, params) {
         const result = completeTodo(world, params);
         if (failed(result)) return result.error;
@@ -189,8 +220,8 @@ export const todoModule = defineModule({
       description: "Permanently delete a todo. The user is asked to allow each deletion; only use it when they asked to delete or remove it, not to complete it.",
       parameters: Type.Object(Ref),
       describe: (world, params) => named(world, params),
-      confirm: (world, params) => `永久删除待办「${named(world, params)}」？删除后不能恢复。`,
-      pin: (world, params) => pinned(world, params, (todo, revision) => ({ op: "todo.delete", input: { id: todo.id, revision }, preview: `永久删除待办「${todo.title}」` })),
+      confirm: (world, params) => say(world).confirmRemove(named(world, params)),
+      pin: (world, params) => pinned(world, params, (todo, revision) => ({ op: "todo.delete", input: { id: todo.id, revision }, preview: say(world).remove(todo.title) })),
       execute(world, params) {
         const result = deleteTodo(world, params);
         return failed(result) ? result.error : `Deleted "${result.title}".`;

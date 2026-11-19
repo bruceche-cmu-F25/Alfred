@@ -1,21 +1,22 @@
 import type { Conversation, StateResponse } from "@alfred/protocol";
 import { api, type Connection } from "../api.ts";
+import { getLocale, intlLocale, t } from "../i18n/index.ts";
 import { Icon } from "./icons.tsx";
 import { moduleOf, type PageDef } from "./pages.tsx";
 import type { NavMode } from "./layout.ts";
 
-const CONNECTION = { connecting: "连接中", live: "在线", reconnecting: "重新连接中" } as const;
+const CONNECTION = { connecting: "nav.connecting", live: "nav.live", reconnecting: "nav.reconnecting" } as const;
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 export const MOD = isMac ? "⌘" : "Ctrl+";
 
-/** "08:20" today, "昨天", or "11月16日". */
+/** "08:20" today, "yesterday", or the date ("11月16日" / "Nov 16"). */
 export function when(iso: string): string {
   const at = new Date(iso), now = new Date();
   const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const days = Math.round((day(now) - day(at)) / 86_400_000);
   if (days === 0) return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-  if (days === 1) return "昨天";
-  return `${at.getMonth() + 1}月${at.getDate()}日`;
+  if (days === 1) return t("nav.yesterday");
+  return at.toLocaleDateString(intlLocale(), { month: "short", day: "numeric" });
 }
 
 export interface NavProps {
@@ -33,30 +34,34 @@ export interface NavProps {
   onConversations(): void;
   /** Shown as a sheet (phone): the top button closes it instead of folding. */
   sheet?: boolean;
+  /** Switch between Chinese and English. */
+  onLanguage(): void;
 }
 
 /** The sidebar: the workspace's pages, then the conversations, like a session list. Folds to a rail of icons. */
-export function Nav({ state, pages, page, mode, selected, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet }: NavProps) {
+export function Nav({ state, pages, page, mode, selected, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet, onLanguage }: NavProps) {
   const rename = (conversation: Conversation) => {
-    const title = window.prompt("对话名称", conversation.title);
+    const title = window.prompt(t("nav.rename"), conversation.title);
     if (title && title.trim() && title.trim() !== conversation.title) api.updateConversation(conversation.id, { title }).catch(() => {});
   };
   const archive = (conversation: Conversation) => {
     api.updateConversation(conversation.id, { archived: true }).then(() => { if (selected === conversation.id) onSelect(null); }).catch(() => {});
   };
   const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0);
-  const groups: Array<[string, PageDef[]]> = [["工作台", pages.filter((item) => item.group === "work")], ["模块", pages.filter((item) => item.group === "modules")]];
+  const groups: Array<[string, PageDef[]]> = [
+    [t("nav.g.work"), pages.filter((item) => item.group === "work")], [t("nav.g.modules"), pages.filter((item) => item.group === "modules")],
+  ];
 
   return (
-    <nav className="nav" data-mode={mode} aria-label="工作台">
+    <nav className="nav" data-mode={mode} aria-label={t("nav.label")}>
       <div className="nav-top">
-        <button type="button" className="find" onClick={onPalette} title={`搜索、跳转，或直接问 Alfred（${MOD}K）`}>
-          <Icon name="search" /><span>搜索，或问 Alfred</span><kbd>{MOD}K</kbd>
+        <button type="button" className="find" onClick={onPalette} title={t("nav.findTitle", { key: `${MOD}K` })}>
+          <Icon name="search" /><span>{t("nav.find")}</span><kbd>{MOD}K</kbd>
         </button>
         {sheet ? (
-          <button type="button" className="icon-btn" onClick={onFold} aria-label="关闭" title="关闭"><Icon name="close" /></button>
+          <button type="button" className="icon-btn" onClick={onFold} aria-label={t("common.close")} title={t("common.close")}><Icon name="close" /></button>
         ) : (
-          <button type="button" className="icon-btn" onClick={onFold} aria-label={mode === "full" ? "收成图标栏" : "展开侧栏"} title={`${mode === "full" ? "收成图标栏" : "展开侧栏"}（${MOD}\\）`}>
+          <button type="button" className="icon-btn" onClick={onFold} aria-label={t(mode === "full" ? "nav.fold" : "nav.unfold")} title={`${t(mode === "full" ? "nav.fold" : "nav.unfold")} (${MOD}\\)`}>
             <Icon name="rail" />
           </button>
         )}
@@ -81,11 +86,11 @@ export function Nav({ state, pages, page, mode, selected, connection, onPage, on
       <div className="nav-spacer" />
 
       <div className="conv-head">
-        <span>对话</span>
-        <button type="button" className="icon-btn" aria-label="新对话" title="新对话" onClick={() => onSelect(null)}><Icon name="plus" /></button>
+        <span>{t("nav.conversations")}</span>
+        <button type="button" className="icon-btn" aria-label={t("nav.newConversation")} title={t("nav.newConversation")} onClick={() => onSelect(null)}><Icon name="plus" /></button>
       </div>
       <ul className="conv-list">
-        {state.conversations.length === 0 && <li className="quiet small empty-list">还没有对话。</li>}
+        {state.conversations.length === 0 && <li className="quiet small empty-list">{t("nav.noConversations")}</li>}
         {state.conversations.map((conversation) => (
           <li key={conversation.id}>
             <button type="button" className="conv" aria-current={selected === conversation.id ? "true" : undefined}
@@ -95,20 +100,23 @@ export function Nav({ state, pages, page, mode, selected, connection, onPage, on
               </span>
               <span className="ct">{conversation.title}</span>
               {conversation.attention > 0
-                ? <span className="badge attention" aria-label={`${conversation.attention} 件需要你`}>{conversation.attention}</span>
+                ? <span className="badge attention" aria-label={t("nav.attention", { n: conversation.attention })}>{conversation.attention}</span>
                 : <span className="time">{when(conversation.updatedAt)}</span>}
             </button>
-            <button type="button" className="archive" aria-label={`归档「${conversation.title}」`} onClick={() => archive(conversation)}>
+            <button type="button" className="archive" aria-label={t("nav.archive", { title: conversation.title })} onClick={() => archive(conversation)}>
               <Icon name="archive" />
             </button>
           </li>
         ))}
       </ul>
-      <button type="button" className="nav-item conv-rail" onClick={onConversations} title="对话" aria-label="对话">
+      <button type="button" className="nav-item conv-rail" onClick={onConversations} title={t("nav.conversations")} aria-label={t("nav.conversations")}>
         <Icon name="chat" />{waiting ? <span className="count">{waiting}</span> : null}
       </button>
 
-      <p className="connection" data-state={connection} title={CONNECTION[connection]}><span aria-hidden="true" /><b>{CONNECTION[connection]}</b></p>
+      <div className="nav-foot">
+        <p className="connection" data-state={connection} title={t(CONNECTION[connection])}><span aria-hidden="true" /><b>{t(CONNECTION[connection])}</b></p>
+        <button type="button" className="lang" onClick={onLanguage} title={t("nav.languageTitle")} lang={getLocale() === "zh" ? "en" : "zh"}>{t("nav.language")}</button>
+      </div>
     </nav>
   );
 }

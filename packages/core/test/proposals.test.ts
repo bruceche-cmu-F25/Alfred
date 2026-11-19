@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   acceptProposal, CORE_MIGRATIONS, declineProposal, getProposal, listEvents, listNotices, listOpenProposals, openProposal, openWorld,
   ProposalStateError, PROPOSAL_TTL_MS, recordDomainEvent, runCommand, supersedeProposal, withCoreContext, type ProposalStep, type World,
+  getSettings, SettingsError, updateSettings, userLocale,
 } from "../src/index.ts";
 
 const TOY = { id: "toy:1", sql: "CREATE TABLE toys (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL) STRICT;" };
@@ -83,3 +84,16 @@ test("declined, superseded and expired proposals leave the inbox", () => {
   assert.deepEqual(toys(w), ["ball"]);
   assert.equal(getProposal(w, b.id).decidedAt !== null, true);
 });
+
+test("settings: the language is set once, audited, and checked", () => {
+  const w = world();
+  assert.deepEqual(getSettings(w), { locale: null });
+  assert.equal(userLocale(w), "en");
+  assert.deepEqual(updateSettings(w, { locale: "zh" }), { locale: "zh" });
+  updateSettings(w, { locale: "zh" });
+  assert.equal(listEvents(w).events.filter((event) => event.kind === "settings.changed").length, 1, "an unchanged value records nothing");
+  assert.equal(userLocale(w), "zh");
+  assert.throws(() => updateSettings(w, { locale: "fr" }), SettingsError);
+  assert.throws(() => updateSettings(w, { theme: "dark" }), /Unknown setting/);
+});
+

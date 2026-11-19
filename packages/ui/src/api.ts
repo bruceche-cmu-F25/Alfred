@@ -3,9 +3,10 @@
  */
 import type {
   Conversation, ConversationDetail, CoreEvent, LiveUpdate, ModelsResponse, Notice, OpResponse, ProposalResponse, Run, StateResponse,
-  SubmitRunResponse, ThinkingLevel,
+  SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
+import { t } from "./i18n/dict.ts";
 
 const DEVICE_KEY = "alfred.device";
 
@@ -43,12 +44,12 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       response = await fetch(path, init);
     } catch (error) {
-      if (attempt >= 2) throw new ApiError(0, "连不上 Alfred 主节点");
+      if (attempt >= 2) throw new ApiError(0, t("api.unreachable"));
       await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
       continue;
     }
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ApiError(response.status, (body as { error?: string }).error ?? `请求失败（${response.status}）`);
+    if (!response.ok) throw new ApiError(response.status, (body as { error?: string }).error ?? t("api.failed", { status: response.status }));
     return body as T;
   }
 }
@@ -58,9 +59,9 @@ const post = <T>(path: string, body: unknown) =>
 
 export const api = {
   state: () => call<StateResponse>("/api/state"),
-  /** Without a conversation id, the run starts a new conversation. */
-  submit: (goal: string, conversationId?: string) =>
-    post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}) }),
+  /** Without a conversation id, the run starts a new conversation. `context`: the page it was asked from. */
+  submit: (goal: string, conversationId?: string, context?: ViewContext) =>
+    post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}) }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
   updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null }) =>
     post<Conversation>(`/api/conversations/${id}`, change),
@@ -79,6 +80,8 @@ export const api = {
   accept: (id: string, requestId = newRequestId()) => post<ProposalResponse>(`/api/proposals/${id}/accept`, { requestId }),
   decline: (id: string) => post<ProposalResponse>(`/api/proposals/${id}/decline`, { requestId: newRequestId() }),
   revise: (id: string, text: string) => post<ProposalResponse>(`/api/proposals/${id}/revise`, { requestId: newRequestId(), text }),
+  /** The user's preferences that are not secrets, shared by every device (for now, the language). */
+  settings: (patch: Partial<UserSettings>) => post<UserSettings>("/api/settings", { requestId: newRequestId(), patch }),
 };
 
 export type Connection = "connecting" | "live" | "reconnecting";

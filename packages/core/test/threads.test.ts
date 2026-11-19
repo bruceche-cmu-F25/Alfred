@@ -154,3 +154,23 @@ test("cancelling a run that waits on the user stops it without an answer", async
   assert.equal(final.state, "cancelled");
   assert.equal(final.request, null);
 });
+
+test("a run remembers the page it was asked from and hands it to the engine; a malformed one is refused", async () => {
+  const w = world();
+  const context = { view: "todo.list", title: "Todos", summary: "3 open, 1 overdue", selection: { id: "t1", title: "Hand in report" } };
+  const { run } = submitRun(w, { requestId: "r1", goal: "what first?", profile: "tasks", context });
+  assert.deepEqual(run.context, context);
+  assert.equal(submitRun(w, { requestId: "r1", goal: "what first?", profile: "tasks", context }).run.id, run.id, "a replay is the same run");
+  assert.throws(() => submitRun(w, { requestId: "r1", goal: "what first?", profile: "tasks", context: { view: "core.inbox" } }), RunError,
+    "the same request id from another page is a different request");
+  assert.equal(submitRun(w, { requestId: "r2", goal: "hi", profile: "tasks" }).run.context, null);
+
+  for (const bad of [{ view: "Todo List" }, { view: "todo.list", summary: "x".repeat(301) }, { view: "todo.list", selection: {} }, "todo.list", [1]]) {
+    assert.throws(() => submitRun(w, { requestId: `bad-${JSON.stringify(bad).length}`, goal: "x", profile: "tasks", context: bad }), /Invalid view context/);
+  }
+
+  const seen: unknown[] = [];
+  await createRunDrain(w, { submit: async (request) => { seen.push(request.context); return { reply: "ok" }; } }, { owner: "home", profiles: profiles(w) }).kick();
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen.filter(Boolean), [context], "only the run asked from a page carries one");
+});

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, ThinkingLevel } from "@alfred/protocol";
+import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, ThinkingLevel, ViewContext } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
-import { describeReceipt, ERRORS } from "./receipts.ts";
+import { t, type Key } from "./i18n/index.ts";
+import { describeReceipt, errorText } from "./receipts.ts";
 
-const WORKING: Partial<Record<Run["state"], string>> = {
-  queued: "排队中", running: "在办", cancelling: "正在停下",
+const WORKING: Partial<Record<Run["state"], Key>> = {
+  queued: "run.queued", running: "run.running", cancelling: "run.cancelling",
 };
 
 /** Steps of a run, one line per tool call, at its latest status. */
@@ -32,13 +33,13 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
   };
   const permission = request.kind === "permission";
   return (
-    <div className="request" data-kind={request.kind} role="group" aria-label={permission ? "需要你允许" : "需要你回答"}>
+    <div className="request" data-kind={request.kind} role="group" aria-label={t(permission ? "req.permission" : "req.input")}>
       <p className="request-question">{request.question}</p>
       <div className="request-options">
         {permission ? (
           <>
-            <button type="button" disabled={busy} onClick={() => answer("allow")}>允许这一次</button>
-            <button type="button" className="ghost" disabled={busy} onClick={() => answer("deny")}>不允许</button>
+            <button type="button" disabled={busy} onClick={() => answer("allow")}>{t("common.allow")}</button>
+            <button type="button" className="ghost" disabled={busy} onClick={() => answer("deny")}>{t("common.deny")}</button>
           </>
         ) : request.options.map((option) => (
           <button type="button" key={option} disabled={busy} onClick={() => answer(option)}>{option}</button>
@@ -46,7 +47,7 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
       </div>
       {!permission && (
         <form className="request-free" onSubmit={(event) => { event.preventDefault(); answer(text); }}>
-          <input value={text} onChange={(event) => setText(event.target.value)} placeholder="或者直接回答…" aria-label="回答" maxLength={2000} disabled={busy} />
+          <input value={text} onChange={(event) => setText(event.target.value)} placeholder={t("req.free")} aria-label={t("req.answer")} maxLength={2000} disabled={busy} />
         </form>
       )}
       {error && <p className="problem small" role="alert">{error}</p>}
@@ -54,7 +55,7 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
   );
 }
 
-function Turn({ run, receipts, activity, live, highlighted }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean }) {
+function Turn({ run, receipts, activity, live, highlighted, askedOn }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean; askedOn?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = (action: () => Promise<unknown>) => {
@@ -70,35 +71,36 @@ function Turn({ run, receipts, activity, live, highlighted }: { run: Run; receip
   const usage = activity.filter((event) => event.kind === "run.usage").at(-1);
   return (
     <li className="turn" data-highlighted={highlighted || undefined} id={`run-${run.id}`}>
+      {askedOn && <p className="asked-on">{t("conv.askedFrom", { page: askedOn })}</p>}
       <p className="said">{run.goal}</p>
       {added.map((event) => <p className="said added" key={event.id}>{String(event.payload.text)}</p>)}
       <div className="reply" data-state={run.state}>
         {runSteps.length > 0 && (
-          <ol className="steps" aria-label="办事过程">
+          <ol className="steps" aria-label={t("run.steps")}>
             {runSteps.map((step) => (
               <li key={step.id} data-status={step.status}><span aria-hidden="true">{STEP_MARK[step.status] ?? "·"}</span> {step.label}{step.about ? `：${step.about}` : ""}</li>
             ))}
           </ol>
         )}
         {answers.map((event) => (
-          <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? (event.payload.answer === "allow" ? "已允许" : "没有允许") : String(event.payload.answer)}</p>
+          <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? t(event.payload.answer === "allow" ? "run.allowed" : "run.denied") : String(event.payload.answer)}</p>
         ))}
         {run.request && <Request run={run} request={run.request} />}
-        {working && !live && <p className="working"><span className="pulse" aria-hidden="true" />{working}…</p>}
+        {working && !live && <p className="working"><span className="pulse" aria-hidden="true" />{t(working)}…</p>}
         {live && !outcome && <p className="reply-text live">{live}</p>}
         {outcome?.reply && <p className="reply-text">{outcome.reply}</p>}
-        {run.state === "failed" && <p className="problem">没办成。{ERRORS[outcome?.error ?? ""] ?? ""}</p>}
-        {run.state === "cancelled" && <p className="quiet">已取消。</p>}
-        {run.state === "interrupted" && <p className="problem">中断了：主节点在它办完之前停了。没有自动重做。</p>}
+        {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
+        {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
+        {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}
         {receipts.length > 0 && (
-          <ul className="receipts" aria-label="实际做了的事">
+          <ul className="receipts" aria-label={t("run.receipts")}>
             {receipts.map((event) => <li key={event.id}>{describeReceipt(event)}</li>)}
           </ul>
         )}
         {(run.state === "queued" || run.state === "running" || run.state === "interrupted" || run.request) && (
           <div className="turn-actions">
-            {run.state === "interrupted" && <button type="button" disabled={busy} onClick={() => act(() => api.resume(run.id))}>继续</button>}
-            <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.cancel(run.id))}>取消</button>
+            {run.state === "interrupted" && <button type="button" disabled={busy} onClick={() => act(() => api.resume(run.id))}>{t("common.continue")}</button>}
+            <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.cancel(run.id))}>{t("common.cancel")}</button>
           </div>
         )}
         {usage?.payload.model ? <p className="run-meta">{String(usage.payload.model)}</p> : null}
@@ -108,7 +110,7 @@ function Turn({ run, receipts, activity, live, highlighted }: { run: Run; receip
   );
 }
 
-const THINKING: Array<[ThinkingLevel | "", string]> = [["", "默认思考"], ["off", "不思考"], ["low", "少想"], ["medium", "适中"], ["high", "多想"]];
+const THINKING: Array<[ThinkingLevel | "", Key]> = [["", "think.default"], ["off", "think.off"], ["low", "think.low"], ["medium", "think.medium"], ["high", "think.high"]];
 let modelList: Promise<EngineModel[]> | null = null;
 
 /** The conversation's model and thinking level, and how full its context is. Unset means Pi's defaults. */
@@ -129,15 +131,15 @@ function Settings({ detail }: { detail: ConversationDetail }) {
   const known = new Set(models.map((model) => `${model.provider}/${model.id}`));
   return (
     <div className="conversation-settings">
-      <select aria-label="模型" value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
-        <option value="">默认模型</option>
+      <select aria-label={t("conv.model")} value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
+        <option value="">{t("conv.defaultModel")}</option>
         {conversation.model && !known.has(conversation.model) && <option value={conversation.model}>{conversation.model}</option>}
         {models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name} · {model.provider}</option>)}
       </select>
-      <select aria-label="思考强度" value={conversation.thinking ?? ""} onChange={(event) => change({ thinking: (event.target.value || null) as ThinkingLevel | null })}>
-        {THINKING.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      <select aria-label={t("conv.thinking")} value={conversation.thinking ?? ""} onChange={(event) => change({ thinking: (event.target.value || null) as ThinkingLevel | null })}>
+        {THINKING.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
       </select>
-      {percent !== null && <span className="context-usage" title={`${String(usage?.payload.tokens ?? "")} tokens`}>上下文 {percent}%</span>}
+      {percent !== null && <span className="context-usage" title={`${String(usage?.payload.tokens ?? "")} tokens`}>{t("conv.context", { n: percent })}</span>}
       {error && <span className="problem small">{error}</span>}
     </div>
   );
@@ -148,13 +150,19 @@ export interface ConversationProps {
   id: string | null;
   live: Readonly<Record<string, string>>;
   highlighted: ReadonlySet<string>;
+  /** The page a message sent now is asked from; nothing when no page is in view. */
+  context?: ViewContext;
+  /** Questions to offer, from that page. */
+  suggestions: string[];
+  /** A page's title by its key, in the current language; for pages this device no longer has, the title saved with the run. */
+  pageTitle(view: string): string | undefined;
   onEvent(listener: (event: CoreEvent) => void): () => void;
   /** A run in this conversation opened a module view. */
   onView(module: string, view: string): void;
   onStarted(conversationId: string): void;
 }
 
-export function Conversation({ id, live, highlighted, onEvent, onView, onStarted }: ConversationProps) {
+export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, onEvent, onView, onStarted }: ConversationProps) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -188,13 +196,13 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
 
   // While a run works, what you say joins it, as in Claude; otherwise it is the next request.
   const working = last?.state === "running" ? last : null;
-  const send = (event?: FormEvent) => {
+  const send = (event?: FormEvent, text = draft) => {
     event?.preventDefault();
-    const goal = draft.trim();
+    const goal = text.trim();
     if (!goal || sending) return;
     setSending(true);
     setError(null);
-    const submit = () => api.submit(goal, id ?? undefined).then(({ run }) => { if (!id) onStarted(run.conversationId); });
+    const submit = () => api.submit(goal, id ?? undefined, context).then(({ run }) => { if (!id) onStarted(run.conversationId); });
     const attempt = working
       // It may have just finished: then it goes as a new message.
       ? api.steer(working.id, goal).then(() => undefined, (reason: unknown) => {
@@ -203,7 +211,7 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
       })
       : submit();
     attempt
-      .then(() => setDraft(""))
+      .then(() => { if (text === draft) setDraft(""); })
       .catch((reason: Error) => setError(reason.message))
       .finally(() => setSending(false));
   };
@@ -212,24 +220,34 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) send(event);
   };
 
+  // Which page a question came from, said once each time it changes, not on every turn.
+  const askedOn = (run: Run, previous: Run | undefined) =>
+    run.context && run.context.view !== previous?.context?.view ? pageTitle(run.context.view) ?? run.context.title ?? run.context.view : undefined;
+  const offer = !draft.trim() && !working && !sending && suggestions.length > 0;
+
   return (
-    <section className="conversation" aria-label={detail?.conversation.title ?? "新对话"}>
+    <section className="conversation" aria-label={detail?.conversation.title ?? t("conv.new")}>
       <header className="conversation-head">
-        <h1>{id ? detail?.conversation.title ?? "…" : "新对话"}</h1>
+        <h1>{id ? detail?.conversation.title ?? "…" : t("conv.new")}</h1>
         {detail && <Settings detail={detail} />}
       </header>
       {!id || runs.length === 0 ? (
         <div className="empty">
-          <p className="empty-title">想让我做点什么？</p>
-          <p className="quiet">比如「周五之前交报告」「把报告挪到下周一」「今天还剩什么」。</p>
+          <p className="empty-title">{t("conv.emptyTitle")}</p>
+          <p className="quiet">{t("conv.emptyHint")}</p>
         </div>
       ) : (
         <ol className="turns" ref={list}>
-          {runs.map((run) => (
+          {runs.map((run, index) => (
             <Turn key={run.id} run={run} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
-              live={live[run.id]} highlighted={highlighted.has(run.id)} />
+              live={live[run.id]} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} />
           ))}
         </ol>
+      )}
+      {offer && (
+        <div className="suggestions" role="group" aria-label={t("chips.label")}>
+          {suggestions.map((text) => <button type="button" key={text} className="suggestion" onClick={() => send(undefined, text)}>{text}</button>)}
+        </div>
       )}
       <form className="composer" onSubmit={send}>
         <textarea
@@ -237,11 +255,11 @@ export function Conversation({ id, live, highlighted, onEvent, onView, onStarted
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKey}
           rows={Math.min(6, Math.max(1, draft.split("\n").length))}
-          placeholder={working ? "它正在办，你说的会直接加进去…" : id ? "接着说…" : "跟 Alfred 说…"}
-          aria-label="跟 Alfred 说"
+          placeholder={t(working ? "composer.working" : id ? "composer.continue" : "composer.new")}
+          aria-label={t("composer.label")}
           maxLength={8000}
         />
-        <button type="submit" disabled={!draft.trim() || sending} aria-label="发送">
+        <button type="submit" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
         </button>
       </form>

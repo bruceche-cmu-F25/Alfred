@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import type { AwayDigest, Notice } from "@alfred/protocol";
 import { desktop } from "../desktop.ts";
 import { createFigure, type Figure, type FigureState } from "../entity/tesseract.js";
+import { setLocale, t, useLocale } from "../i18n/index.ts";
 import { useAlfred } from "../useAlfred.ts";
 import { welcomeLines } from "../welcome.ts";
 import "./presence.css";
@@ -17,6 +18,10 @@ const BUSY = new Set(["queued", "running", "cancelling"]);
 
 function Presence() {
   const { state } = useAlfred();
+  // Speak the user's language, as set on the home node.
+  useLocale();
+  const locale = state?.settings?.locale;
+  useEffect(() => { if (locale) setLocale(locale); }, [locale]);
   const [welcome, setWelcome] = useState<Notice | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const figure = useRef<Figure | null>(null);
@@ -57,7 +62,7 @@ function Presence() {
   useEffect(() => { figure.current?.setState(mood); }, [mood]);
 
   const lines = welcome ? welcomeLines(welcome.payload as unknown as AwayDigest, desktop?.userName ?? null) : null;
-  const label = working ? "Alfred 正在办事" : waiting ? "Alfred 有事等你看" : "Alfred";
+  const label = working ? t("presence.working") : waiting ? t("presence.waiting") : "Alfred";
   const hover = { onMouseEnter: () => desktop?.setInteractive(true), onMouseLeave: () => desktop?.setInteractive(false) };
 
   return (
@@ -68,10 +73,10 @@ function Presence() {
             <span className="greeting">{lines.greeting}</span>
             <span className="summary">{lines.summary}</span>
           </button>
-          <button type="button" className="bubble-close" aria-label="关掉" onClick={() => close(false)}>×</button>
+          <button type="button" className="bubble-close" aria-label={t("presence.close")} onClick={() => close(false)}>×</button>
         </div>
       )}
-      <button type="button" className="figure" aria-label={`${label}。点按打开主窗口`} title={label} onClick={() => desktop?.toggleMain()} {...hover}>
+      <button type="button" className="figure" aria-label={t("presence.open", { label })} title={label} onClick={() => desktop?.toggleMain()} {...hover}>
         <svg ref={svg} viewBox="0 0 120 120" aria-hidden="true" />
       </button>
     </div>

@@ -90,7 +90,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .conv-list li:hover .archive, .archive:focus-visible { opacity: 1; }
 .conv-list li:hover .time, .conv-list li:hover .badge { visibility: hidden; }
 .conv-rail { display: none; }
-.connection { display: flex; align-items: center; gap: 7px; padding: 6px 9px 0; color: var(--muted); font-size: .75rem; }
+.nav-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 2px 0 0; }
+.connection { display: flex; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); font-size: .75rem; }
+.lang { height: 24px; padding: 0 8px; border-radius: 6px; color: var(--muted); font-size: .75rem; }
+.lang:hover { background: var(--wash); color: var(--ink); }
 .connection b { font-weight: 400; }
 .connection span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .connection[data-state="live"] span { background: var(--ok); }
@@ -108,7 +111,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .nav[data-mode="rail"] .nav-item svg { width: 20px; height: 20px; }
 .nav[data-mode="rail"] .nav-item .count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; margin: 0; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: #fff; font-size: .625rem; }
 .nav[data-mode="rail"] .conv-rail { display: flex; }
-.nav[data-mode="rail"] .connection { padding: 8px 0 0; }
+.nav[data-mode="rail"] .nav-foot { flex-direction: column; gap: 4px; padding: 8px 0 0; }
+.nav[data-mode="rail"] .connection { padding: 0; }
+.nav[data-mode="rail"] .lang { padding: 0 4px; }
 
 /* The page: one module's view at a time. */
 .page { grid-area: page; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
@@ -127,6 +132,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .alf-head .figure { flex: none; margin-top: 2px; }
 .alf-who { flex: 1; min-width: 0; }
 .alf-name { font-weight: 600; color: var(--ink); }
+.alf-looking { margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--wash); color: var(--muted); font-size: .6875rem; font-weight: 400; white-space: nowrap; vertical-align: 1px; }
 .alf-line { margin-top: 2px; color: var(--copy); font-size: .875rem; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .alf-tools { display: flex; gap: 2px; }
 /* The panel's head already names the conversation; keep only its settings (model, thinking). */
@@ -193,6 +199,11 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 .empty { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; padding: 24px; text-align: center; }
 .empty-title { font: 1.375rem/1.3 var(--serif); }
 
+/* Questions worth asking from the page in view, one tap to send. */
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; max-width: 760px; width: calc(100% - 32px); margin: 0 auto; }
+.suggestion { flex: none; height: 28px; padding: 0 11px; border-radius: 999px; color: var(--copy); font-size: .8125rem; white-space: nowrap; box-shadow: inset 0 0 0 1px var(--line); }
+.suggestion:hover { color: var(--ink); background: var(--wash); }
+.asked-on { align-self: center; color: var(--muted); font-size: .75rem; }
 .composer { display: flex; align-items: flex-end; gap: 10px; max-width: 760px; width: calc(100% - 32px); margin: 8px auto calc(16px + env(safe-area-inset-bottom, 0px)); padding: 8px 8px 8px 16px; border: 1px solid var(--line); border-radius: 22px; background: var(--paper); }
 .composer:focus-within { border-color: var(--accent); }
 .composer textarea { flex: 1; resize: none; border: 0; background: none; outline: none; padding: 6px 0; line-height: 1.5; max-height: 40vh; }

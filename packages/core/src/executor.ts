@@ -12,7 +12,7 @@ import { appendEvent, recordDomainEvent } from "./events.ts";
 import { newId } from "./ids.ts";
 import {
   claimNextRun, conversationBefore, finishRun, heartbeatRun, openRequest, RUN_LEASE_MS, runAnswers, sweepRuns,
-  type Run, type RunRequest,
+  type Run, type RunRequest, type ViewContext,
 } from "./runs.ts";
 import type { World } from "./world.ts";
 
@@ -47,6 +47,8 @@ export interface EngineRequest {
   thread: string;
   goal: string;
   instructions: string;
+  /** What the user was looking at when they asked. Context, not instructions. */
+  context?: ViewContext;
   /** Earlier turns of the same conversation, oldest first. Context, not instructions. */
   history: Array<{ role: "user" | "assistant"; text: string }>;
   tools: RunTool[];
@@ -195,6 +197,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     onUsage: (usage) => note("usage", { ...usage }),
     thread: run.conversationId,
     goal: run.goal,
+    ...(run.context ? { context: run.context } : {}),
     instructions: profile.instructions,
     history: conversationBefore(world, run),
     tools,

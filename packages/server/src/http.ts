@@ -10,7 +10,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { extname, join, normalize, sep } from "node:path";
 import {
-  AREAS, acceptProposal, declineProposal, listOpenProposals, supersedeProposal, runCommand, withCoreContext,
+  AREAS, acceptProposal, declineProposal, getSettings, listOpenProposals, supersedeProposal, runCommand, updateSettings, userLocale, withCoreContext,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
   type LiveUpdate,
@@ -18,7 +18,7 @@ import {
 import { applyStep, invokeOp } from "@alfred/module-kit";
 import type {
   ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PresenceRequest, ProposalRequest, ProposalResponse,
-  RespondRequest, ReviseRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
+  RespondRequest, ReviseRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
 import { ASSISTANT_PROFILE, type Home } from "./home.ts";
@@ -81,6 +81,7 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : "Request failed";
   const code = (error as { code?: unknown }).code;
+  if (name === "SettingsError") return { status: 400, body: { error: message } };
   if (name === "ProposalStateError") {
     const state = (error as { state?: string }).state;
     return { status: state === "missing" ? 404 : 409, body: { error: message, code: state ?? "state" } };
@@ -114,6 +115,7 @@ function state(home: Home): StateResponse {
     views,
     areas: [...AREAS],
     proposals: listOpenProposals(home.world),
+    settings: getSettings(home.world),
   };
 }
 
@@ -178,7 +180,7 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   if (method === "POST" && path === "/api/runs") {
     const body = await readJson<SubmitRunRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.goal !== "string") throw new HttpError(400, "requestId and goal are required");
-    const result = submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile: ASSISTANT_PROFILE, conversationId: body.conversationId });
+    const result = submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile: ASSISTANT_PROFILE, conversationId: body.conversationId, context: body.context });
     home.kick();
     return send(res, result.replayed ? 200 : 202, result);
   }
@@ -239,6 +241,14 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     return send(res, 200, notice[2] === "claim" ? claimNotice(home.world, notice[1], body.client) : presentNotice(home.world, notice[1], body.client));
   }
 
+  // Preferences that are not secrets (for now, the language). A device command like any other.
+  if (method === "POST" && path === "/api/settings") {
+    const body = await readJson<SettingsRequest>(req);
+    if (typeof body.requestId !== "string" || !body.patch || typeof body.patch !== "object") throw new HttpError(400, "requestId and patch are required");
+    const result = withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId: body.requestId, command: "settings.update", input: body.patch }, () => updateSettings(home.world, body.patch as Record<string, unknown>)));
+    return send(res, 200, result.result);
+  }
+
   // The user's decisions on proposals. Accepting runs the steps as Alfred's changes, made on the user's yes.
   const proposal = /^\/api\/proposals\/([A-Za-z0-9_-]{1,64})\/(accept|decline|revise)$/.exec(path);
   if (proposal && method === "POST") {
@@ -252,7 +262,10 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
       }
       if (decision === "decline") return { proposal: declineProposal(home.world, id) };
       const superseded = supersedeProposal(home.world, id, body.text);
-      const goal = `修改你之前的提议「${superseded.title}」：${body.text.trim()}\n原来的提议：${superseded.summary}\n步骤：${superseded.steps.map((step) => step.preview).join("；")}\n请按修改意见重新提议（用 propose），不要直接改。`;
+      const steps = superseded.steps.map((step) => step.preview);
+      const goal = userLocale(home.world) === "zh"
+        ? `修改你之前的提议「${superseded.title}」：${body.text.trim()}\n原来的提议：${superseded.summary}\n步骤：${steps.join("；")}\n请按修改意见重新提议（用 propose），不要直接改。`
+        : `Change your earlier proposal "${superseded.title}": ${body.text.trim()}\nThe proposal was: ${superseded.summary}\nSteps: ${steps.join("; ")}\nPropose again with the change (use propose); do not make the changes directly.`;
       const { run } = submitRun(home.world, { requestId: `${body.requestId}.revise`, goal, profile: ASSISTANT_PROFILE, conversationId: superseded.conversationId ?? undefined });
       return { proposal: superseded, run };
     }));
