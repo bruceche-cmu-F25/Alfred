@@ -166,12 +166,49 @@ Bruce 还没录音，先用两组代用数据：
 
 **结论（本机）：默认用 Qwen3-ASR 0.6B，配一份按场景挑过的短词表。** 它的准确度在真人语音上和 1.7B 打平，计算量是 1.7B 的 2/5，内存是 1.7B 的 2/5。说 10 秒话，GPU 只忙 0.8 秒左右，耗电可以忽略。1.7B 留作以后的「精确模式」（比如开发会话、接着电源、内存够的 Mac），不常驻。
 
+**占多少内存、要不要常驻**（实测，Qwen3-ASR 0.6B，fp16）：
+
+| 时刻 | 占用 |
+|---|---|
+| 加载中（2.9 秒） | 峰值约 3.0GB：权重 1.5GB，加载时还有一份 1.5GB 的临时副本 |
+| 加载完、空闲 | **约 1.5GB**：模型权重放在 GPU 显存里。Mac 的 CPU 和 GPU 共用同一块物理内存，所以这 1.5GB 实打实占着内存。`ps` 只显示约 200MB，因为 GPU 显存不算进进程常驻内存，但它确实被占着 |
+| 识别一句 | 0.4 秒，基本不再涨 |
+
+【建议】不常驻：按下说话键就开始加载，一边录音一边加载，人说话本来就要好几秒，2.9 秒的加载基本被录音时间盖住。闲置 10 分钟（可调）后卸载。这样平时零占用，用的时候占 1.5GB。另外，4-bit 量化版能把权重降到约 0.5GB，准确度要另测。
+
 还没测、可能改变结论的：
 
 - **云端几家和 Apple 的都没测**（没有 key，没有 macOS 26 SDK）。这个结论只在本机三家里成立。
 - 0.6B 的 4-bit 量化版本可能把内存降到 1GB 左右，准确度要另测。
 - 真人组是别人的声音和录音设备，合成组的开发术语是机器念的。**最后还要用 Bruce 自己的录音确认一次**，尤其是开发术语。
 - 词表怎么挑（多少词、按什么选）要单独试，见第 4 节。
+
+### 6.2 参考：Superwhisper 怎么做（2026-11-19）
+
+Superwhisper 是 Mac / Windows / iPhone 上的付费听写 App，跟 Alfred 的语音输入最像。以下来自它的官方文档（superwhisper.com/docs，读了 24 页）和几篇评测，**没有实际用过**。
+
+**流程是两段，每段都能选本机或云端：**
+
+```
+按键录音 → 去掉静音、统一音量 → 语音模型转文字（带词表提示）
+        → 固定替换（不用 AI）→ 抓上下文 → 语言模型按「模式」整理（可选）→ 粘贴到光标处
+```
+
+| 方面 | Superwhisper 的做法 | 对 Alfred 的启发 |
+|---|---|---|
+| **模式** | 一个模式 = 一个语音模型 + 一段整理指令。内置：只转文字、消息（去口头禅、改语法、正式程度可调）、邮件、笔记、Super（看当前 App 调整、能对选中文字下格式命令）、自定义。模式可以绑定 App 或网站，切过去自动换 | Alfred 的「场景」就是模式：日常、开发各配一份词表和整理方式，按所在页面自动切换。不需要让用户自己建模式 |
+| **本机语音模型** | Whisper 全系列，包括「Whisper Large v3 Turbo（中文）」；Parakeet；Cohere Transcribe（MLX 4-bit，1.3GB，文档称本机最准：M4 上 WER 8.4%，14 种语言含中文） | **Cohere Transcribe 和中文版 Whisper Turbo 值得加进我们的比较**。不过 Cohere Transcribe 有 2B 参数，比 Qwen 0.6B 重；有评测说它在指定语言、混说少时表现最好 |
+| **云端语音模型** | 自家 S1-Voice（称在自家测试里最准）、Deepgram Nova、ElevenLabs Scribe | 我们的测试里 ElevenLabs 中英混说很差 |
+| **中英混说** | 文档没提；只说「其他语言的词表词会影响自动识别语言」。有评测说云端整理会把非英语文字改坏 | 混说正是我们要自己比的原因 |
+| **词表** | 一张表，作为提示发给语音模型。文档明确说**词表要短**，词会影响标点和格式。另有固定替换（不区分大小写，按你写的大小写输出），比如「at sign」→「@」 | 和我们的实测一致（第 6.1 节第 4 条）。**固定替换值得照抄**：「use speech」→「useSpeech」这类开发词，靠规则比靠模型稳 |
+| **上下文** | 三种：选中的文字（开始录音时抓）、剪贴板（录音前 3 秒内或录音中复制的）、当前 App（窗口标题、输入框内容，转写完、整理前才抓）。还会加上日期时间、用户名。都要付费版 | Alfred 自带更好的上下文（在哪一页、哪个项目），不需要读别的 App 的窗口 |
+| **录音** | 默认 ⌥Space 切换式；另有按住说话（轻点一下等于切换式）；Esc 取消（30 秒内直接取消，更长要确认）；录音时可暂停或压低正在播的音乐；录音窗口有波形 | **Alfred 现在的 Alt+Space 和它的默认键撞了**，选全局快捷键时要避开。「按住说话、轻点切换」合在一个键上，是个好做法 |
+| **送出文字** | 粘贴到光标处；粘贴不了就模拟打字；按住 Shift 粘完自动回车；默认不覆盖剪贴板 | Alfred 的文字是进自己的输入框或直接发消息，不用粘到别的 App，简单得多 |
+| **iPhone** | 自定义键盘（要开「完全访问」），也能绑操作按钮；**手机和 Mac 的设置不同步** | Alfred 识别在 Mac 上做，手机只录音，天然一致。键盘扩展要等原生 App |
+| **隐私** | 两段都选本机时，文档称音频和文字都不出电脑；云端用零留存条款；历史存在本机 `~/superwhisper` | 跟 Alfred「主节点持有一切」一致 |
+| **价格** | 免费版：本机 Whisper、词表、替换、最多 2 个不带 AI 的模式。付费 $8.49/月、$84.99/年或终身 $249.99：云端模型、Parakeet、Cohere、AI 整理、上下文 | Alfred 开源免费，本机能做到它付费版的大部分 |
+
+**一句话：** Superwhisper 的核心是「语音模型 + 可选的 AI 整理」两段，分别可选本机或云端，再加上按 App 自动切换的模式。Alfred 的方案和它同构；区别是 Alfred 的上下文来自自己（页面、项目），文字直接交给 agent，不用模拟粘贴。它在中文和混说上没有特别的做法，所以这方面没有现成答案可抄。
 
 ## 7. 待定
 
@@ -228,6 +265,20 @@ Bruce 对待办的设想（2026-11-18）：
 - https://github.com/opennookorg/betterwispr
 - https://github.com/OpenWhispr/openwhispr
 - https://github.com/moona3k/macparakeet
+
+Superwhisper 和 Cohere Transcribe：
+
+- https://superwhisper.com/docs （modes、models/voice、models/language、get-started、common-issues/context、billing/plans、security/sensitive-data、get-started/ios 等页）
+- https://bossai.tech/blog/superwhisper-review
+- https://www.getvoibe.com/resources/superwhisper-review/
+- https://pasqualepillitteri.it/en/news/556/ai-voice-dictation-wispr-flow-superwhisper-compared
+- https://venturebeat.com/orchestration/coheres-open-weight-asr-model-hits-5-4-word-error-rate-low-enough-to-replace
+- https://the-decoder.com/cohere-releases-open-source-model-that-tops-speech-recognition-benchmarks/
+- https://www.producthunt.com/p/cohere-2/cohere-transcribe
+
+实测数据：
+
+- ASCEND：https://huggingface.co/datasets/CAiRE/ASCEND （CC BY-SA 4.0）
 
 平台限制：
 
