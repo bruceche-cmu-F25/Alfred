@@ -1,6 +1,7 @@
 /** The Mac app. It is one device on the home node, with what only a Mac can
- * do: a figure always on screen, a menu bar item, a global hotkey, system
- * notifications, and knowing when the user locks the screen and comes back.
+ * do: a figure always on screen that tells the user things itself (system
+ * notifications only when it cannot), a menu bar item, a global hotkey, and
+ * knowing when the user locks the screen and comes back.
  * The home node runs under launchd, so none of Alfred's work depends on it.
  */
 import { execFileSync } from "node:child_process";
@@ -14,13 +15,15 @@ import {
 } from "electron";
 import type { AwayDigest, Notice, PresenceResponse, StateResponse } from "@alfred/protocol";
 import { detectLocale, translate, type Key, type Locale } from "@alfred/ui/i18n";
+import { noticeLines, SPOKEN } from "@alfred/ui/notice";
 import { welcomeLines } from "@alfred/ui/welcome";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
 import { appIcon, trayIcon } from "./icon.ts";
 
 const HOTKEY = "Alt+Space";
-const PRESENCE_SIZE = { width: 420, height: 116 };
+/** Room for the figure to hop and grow and for its speech card; the transparent rest lets clicks through. */
+const PRESENCE_SIZE = { width: 440, height: 280 };
 /** Give a focused main window the first chance to show a result in place. */
 const NOTIFY_GRACE_MS = 1500;
 const HEARTBEAT_MS = 60_000;
@@ -44,9 +47,13 @@ let presence: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let mode: HomeNodeMode | "stopped" = "stopped";
-let settings = { showFigure: true };
+/** Where the user left the figure: the window's position and the corner it sits toward. */
+interface FigurePlace { x: number; y: number; h: "left" | "right"; v: "top" | "bottom" }
+let settings: { showFigure: boolean; figure?: FigurePlace } = { showFigure: true };
 const notifications = new Set<Notification>();
 const handled = new Set<string>();
+/** Notices the figure is saying, by id, to know how to close each when it is done. */
+const spoken = new Map<string, Notice>();
 
 /** This Mac's device id, kept with the app's settings. */
 function deviceId(): string {
@@ -127,12 +134,90 @@ function createMain(): BrowserWindow {
   return window;
 }
 
-function createPresence(): BrowserWindow {
+// ---- the figure's place --------------------------------------------------
+
+/** The figure's centre from the window's edges, on the side it sits toward (padding + half the 76 px plate). */
+const FIGURE_INSET = { x: 16 + 38, y: 14 + 38 };
+
+function homePlace(): FigurePlace {
   const { workArea } = screen.getPrimaryDisplay();
+  return { x: workArea.x + workArea.width - PRESENCE_SIZE.width - 8, y: workArea.y + workArea.height - PRESENCE_SIZE.height - 8, h: "right", v: "bottom" };
+}
+
+/** Where the saved place puts the figure, if that is still on a screen (displays come and go). */
+function savedPlace(): FigurePlace {
+  const saved = settings.figure;
+  if (!saved || !Number.isFinite(saved.x) || !Number.isFinite(saved.y)) return homePlace();
+  const centre = figureCentre(saved);
+  const onScreen = screen.getAllDisplays().some(({ workArea: area }) =>
+    centre.x >= area.x && centre.x < area.x + area.width && centre.y >= area.y && centre.y < area.y + area.height);
+  return onScreen ? place(centre) : homePlace();
+}
+
+function figureCentre({ x, y, h, v }: FigurePlace): { x: number; y: number } {
+  return {
+    x: h === "right" ? x + PRESENCE_SIZE.width - FIGURE_INSET.x : x + FIGURE_INSET.x,
+    y: v === "bottom" ? y + PRESENCE_SIZE.height - FIGURE_INSET.y : y + FIGURE_INSET.y,
+  };
+}
+
+/** The window's place for a figure centred at `centre`: toward the nearest corner of its screen, so the card
+ * opens toward the middle, and the whole window kept on that screen. */
+function place(centre: { x: number; y: number }): FigurePlace {
+  const area = screen.getDisplayNearestPoint({ x: Math.round(centre.x), y: Math.round(centre.y) }).workArea;
+  const h = centre.x < area.x + area.width / 2 ? "left" : "right";
+  const v = centre.y < area.y + area.height / 2 ? "top" : "bottom";
+  const x = h === "right" ? centre.x - (PRESENCE_SIZE.width - FIGURE_INSET.x) : centre.x - FIGURE_INSET.x;
+  const y = v === "bottom" ? centre.y - (PRESENCE_SIZE.height - FIGURE_INSET.y) : centre.y - FIGURE_INSET.y;
+  const clamp = (value: number, low: number, high: number) => Math.round(Math.min(high, Math.max(low, value)));
+  return { h, v, x: clamp(x, area.x, area.x + area.width - PRESENCE_SIZE.width), y: clamp(y, area.y, area.y + area.height - PRESENCE_SIZE.height) };
+}
+
+let figurePlace: FigurePlace | null = null;
+let dragFrom: { window: { x: number; y: number }; cursor: { x: number; y: number } } | null = null;
+
+function putFigure(next: FigurePlace, save: boolean): void {
+  figurePlace = next;
+  if (presence && !presence.isDestroyed()) {
+    presence.setPosition(next.x, next.y);
+    presence.webContents.send("presence-side", { h: next.h, v: next.v });
+  }
+  if (save) { settings.figure = next; saveSettings(); }
+}
+
+function dragFigure(phase: string): void {
+  if (!presence || presence.isDestroyed() || !figurePlace) return;
+  if (phase === "start") {
+    const [x, y] = presence.getPosition();
+    dragFrom = { window: { x, y }, cursor: screen.getCursorScreenPoint() };
+  } else if (phase === "move" && dragFrom) {
+    const cursor = screen.getCursorScreenPoint();
+    presence.setPosition(dragFrom.window.x + cursor.x - dragFrom.cursor.x, dragFrom.window.y + cursor.y - dragFrom.cursor.y);
+  } else if (phase === "end" && dragFrom) {
+    const [x, y] = presence.getPosition();
+    dragFrom = null;
+    putFigure(place(figureCentre({ ...figurePlace, x, y })), true);
+  } else {
+    dragFrom = null;
+  }
+}
+
+function figureMenu(): void {
+  if (!presence || presence.isDestroyed()) return;
+  Menu.buildFromTemplate([
+    { label: say("mac.open"), click: () => showMain({ composer: true }) },
+    { label: say("mac.figureHome"), click: () => { delete settings.figure; saveSettings(); putFigure(homePlace(), false); } },
+    { type: "separator" },
+    { label: say("mac.hideFigure"), click: () => { settings.showFigure = false; saveSettings(); presence?.hide(); updateTray(); } },
+  ]).popup({ window: presence });
+}
+
+function createPresence(): BrowserWindow {
+  figurePlace = savedPlace();
   const window = new BrowserWindow({
     ...PRESENCE_SIZE,
-    x: workArea.x + workArea.width - PRESENCE_SIZE.width - 8,
-    y: workArea.y + workArea.height - PRESENCE_SIZE.height - 8,
+    x: figurePlace.x,
+    y: figurePlace.y,
     frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: false, hasShadow: false, show: false, title: "Alfred",
     webPreferences: webPreferences("presence"),
@@ -144,6 +229,7 @@ function createPresence(): BrowserWindow {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.once("ready-to-show", () => { if (settings.showFigure) window.showInactive(); });
+  window.webContents.on("did-finish-load", () => { if (figurePlace) window.webContents.send("presence-side", { h: figurePlace.h, v: figurePlace.v }); });
   void window.loadURL(`${client.base}/presence.html`);
   return window;
 }
@@ -188,13 +274,30 @@ async function greet(notice: Notice): Promise<void> {
   if (handled.has(notice.id)) return;
   handled.add(notice.id);
   if (!(await claimAndPresent(notice))) return;
-  if (presence && !presence.isDestroyed() && presence.isVisible()) {
-    presence.webContents.send("welcome", notice);
-    return;
-  }
-  // The figure is hidden: greet with a notification instead.
+  if (speak([notice])) return;
+  // No figure to say it: greet with a notification instead.
   const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, USER, LOCALE);
   notify(greeting, summary, () => { acknowledge(notice.id); showMain(); });
+}
+
+/** Alfred says these from the figure. If the user hid the figure, it comes out just to say them and hides again
+ * when the page settles. False when there is no figure window to say them. */
+function speak(notices: Notice[]): boolean {
+  if (!presence || presence.isDestroyed() || presence.webContents.isLoading()) return false;
+  for (const notice of notices) spoken.set(notice.id, notice);
+  const visiting = !presence.isVisible();
+  if (visiting) presence.showInactive();
+  presence.webContents.send("say", notices, visiting);
+  return true;
+}
+
+/** A notice the figure said is off the screen. Closing a result means it was seen; a question or a proposal stays
+ * until it is answered or decided. One that timed out stays waiting, as a notification left in the list would. */
+function noticeDone(id: string, outcome: string): void {
+  const notice = spoken.get(id);
+  spoken.delete(id);
+  if (!notice || outcome === "timeout") return;
+  if (notice.kind === "welcome" || noticeLines(notice, LOCALE).closesOnOpen) acknowledge(id);
 }
 
 function notify(title: string, body: string, onClick: () => void): void {
@@ -205,19 +308,6 @@ function notify(title: string, body: string, onClick: () => void): void {
   notification.on("click", () => { notifications.delete(notification); onClick(); });
   notification.on("close", () => notifications.delete(notification));
   notification.show();
-}
-
-function resultText(notice: Notice): { title: string; body: string } {
-  const goal = String(notice.payload.goal ?? "");
-  if (notice.kind === "run_interrupted") return { title: say("mac.interrupted.title"), body: say("mac.interrupted.body", { goal }) };
-  if (notice.kind === "proposal") return { title: say("mac.proposal.title"), body: String(notice.payload.title ?? "") };
-  if (notice.kind === "run_request") {
-    return { title: say(notice.payload.kind === "permission" ? "mac.permission.title" : "mac.input.title"), body: String(notice.payload.question ?? goal) };
-  }
-  const status = notice.payload.status;
-  if (status === "failed") return { title: say("mac.failed.title"), body: say("mac.goal", { goal }) };
-  if (status === "cancelled") return { title: say("mac.cancelled.title"), body: say("mac.goal", { goal }) };
-  return { title: "Alfred", body: String(notice.payload.reply ?? say("mac.done.body", { goal })) };
 }
 
 let notifyTimer: NodeJS.Timeout | null = null;
@@ -235,7 +325,7 @@ async function handleNotices(state: StateResponse): Promise<void> {
       if (notice.state === "pending" || (notice.state === "claimed" && notice.claimedBy === DEVICE)) await greet(notice);
       continue;
     }
-    if (notice.kind !== "run_result" && notice.kind !== "run_interrupted" && notice.kind !== "run_request" && notice.kind !== "proposal") continue;
+    if (!SPOKEN.has(notice.kind)) continue;
     if (notice.state !== "pending" || mainAttending || !atMac) continue;
     const age = now - Date.parse(notice.createdAt);
     if (age < NOTIFY_GRACE_MS) {
@@ -249,14 +339,14 @@ async function handleNotices(state: StateResponse): Promise<void> {
     handled.add(notice.id);
     if (await claimAndPresent(notice)) presented.push(notice);
   }
+  if (!presented.length || speak(presented)) return;
+  // No figure to say them: system notifications.
   if (presented.length === 1) {
     const [notice] = presented;
-    const { title, body } = resultText(notice);
-    // A question is closed by answering it, a proposal by deciding it; not by opening them.
-    const open = notice.kind === "run_request" || notice.kind === "proposal";
-    notify(title, body, () => { if (!open) acknowledge(notice.id); showMain({ runId: String(notice.payload.runId ?? "") }); });
-  } else if (presented.length > 1) {
-    notify("Alfred", say("mac.several", { n: presented.length }), () => { presented.filter((notice) => notice.kind !== "run_request" && notice.kind !== "proposal").forEach((notice) => acknowledge(notice.id)); showMain(); });
+    const { title, body, closesOnOpen } = noticeLines(notice, LOCALE);
+    notify(title, body, () => { if (closesOnOpen) acknowledge(notice.id); showMain({ runId: String(notice.payload.runId ?? "") }); });
+  } else {
+    notify("Alfred", say("mac.several", { n: presented.length }), () => { presented.filter((notice) => noticeLines(notice, LOCALE).closesOnOpen).forEach((notice) => acknowledge(notice.id)); showMain(); });
   }
 }
 
@@ -396,8 +486,19 @@ function wireIpc(): void {
     if (!fromOurPages(event) || !presence || event.sender !== presence.webContents) return;
     presence.setIgnoreMouseEvents(!interactive, { forward: true });
   });
-  ipcMain.on("welcome-done", (event, noticeId: unknown) => {
-    if (fromOurPages(event) && typeof noticeId === "string") acknowledge(noticeId);
+  ipcMain.on("notice-done", (event, noticeId: unknown, outcome: unknown) => {
+    if (fromOurPages(event) && event.sender === presence?.webContents && typeof noticeId === "string") noticeDone(noticeId, String(outcome));
+  });
+  ipcMain.on("presence-drag", (event, phase: unknown) => {
+    if (fromOurPages(event) && event.sender === presence?.webContents) dragFigure(String(phase));
+  });
+  ipcMain.on("presence-menu", (event) => {
+    if (fromOurPages(event) && event.sender === presence?.webContents) figureMenu();
+  });
+  // The figure has said everything; if the user keeps it hidden, it goes away again.
+  ipcMain.on("presence-settle", (event) => {
+    if (!fromOurPages(event) || !presence || event.sender !== presence.webContents) return;
+    if (!settings.showFigure && presence.isVisible()) presence.hide();
   });
   // Adding a project: the user picks the folder in the system's own dialog, so the path is one they chose.
   ipcMain.handle("pick-folder", async (event) => {

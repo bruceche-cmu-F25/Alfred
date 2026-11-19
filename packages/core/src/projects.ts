@@ -31,6 +31,12 @@ export class ProjectError extends Error {
 
 export const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** What a development session may do in its folder without asking (docs/design/dev-mode.md 4.3):
+ * `plan` reads only; `ask` may change files, asking each time with the diff; `edits` changes files inside the
+ * project without asking. Anything outside the project always asks. */
+export const SESSION_MODES = ["plan", "ask", "edits"] as const;
+export type SessionMode = (typeof SESSION_MODES)[number];
+
 function toProject(row: Record<string, unknown>): Project {
   return { id: row.id as string, name: row.name as string, path: row.path as string, createdAt: row.created_at as string, trustedAt: (row.trusted_at as string | null) ?? null };
 }

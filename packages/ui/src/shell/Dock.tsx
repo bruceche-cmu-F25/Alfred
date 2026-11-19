@@ -38,7 +38,7 @@ export function Dock({ state, pages, page, figure, onPage, onAlfred, onConversat
           <Icon name="chat" /><span>{t("nav.conversations")}</span>{waiting ? <span className="count">{waiting}</span> : null}
         </button>
       </div>
-      <button type="button" className="dock-alfred" onClick={onAlfred} aria-label="Alfred"><Figure state={figure} size={34} /></button>
+      <button type="button" className="dock-alfred" onClick={onAlfred} aria-label="Alfred"><Figure state={figure} size={34} anchor /></button>
     </nav>
   );
 }

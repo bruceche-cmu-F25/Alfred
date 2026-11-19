@@ -5,6 +5,10 @@ import { desktop } from "./desktop.ts";
 import { AlfredPanel, figureState, statusLine } from "./shell/AlfredPanel.tsx";
 import { Dock } from "./shell/Dock.tsx";
 import { Figure } from "./shell/Figure.tsx";
+import { Says } from "./shell/Says.tsx";
+import type { FigureState } from "./entity/tesseract.js";
+import { noticeLines } from "./noticeText.ts";
+import type { Outcome, Said } from "./speech/useSpeech.ts";
 import { Icon } from "./shell/icons.tsx";
 import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
 import { MOD, Nav } from "./shell/Nav.tsx";
@@ -13,6 +17,7 @@ import { automationTitle } from "./automationText.ts";
 import { Palette } from "./shell/Palette.tsx";
 import { Pair } from "./Pair.tsx";
 import { detectLocale, getLocale, setLocale, t, useLocale, type Locale } from "./i18n/index.ts";
+import { getScheme, setAppearance } from "./scheme.ts";
 import { useAlfred } from "./useAlfred.ts";
 import { welcomeLines } from "./welcome.ts";
 
@@ -72,10 +77,10 @@ function useRoute(): Route & { go(patch: Partial<Route>): void } {
 /** Notices are presented by one device only. This window claims a notice only
  * while the user is looking at it. What happens in the open conversation is
  * already on screen, so seeing it counts as being told; a result or a question
- * elsewhere becomes a small card that leads there. In the Mac app, the figure
- * greets; here only a plain browser does.
+ * elsewhere is said by Alfred (shell/Says.tsx), leading there. In the Mac app,
+ * the figure greets; here only a plain browser does.
  */
-function useNotices(notices: Notice[], selected: string | null, onPresented: (notice: Notice) => void): { shown: Notice[]; dismiss(notice: Notice, acknowledge?: boolean): void } {
+function useNotices(notices: Notice[], selected: string | null, onPresented: (notice: Notice) => void): { shown: Notice[]; remove(notice: Notice): void; acknowledge(notice: Notice): void } {
   const [shown, setShown] = useState<Notice[]>([]);
   const handled = useRef(new Set<string>());
   const attending = useAttention();
@@ -111,24 +116,25 @@ function useNotices(notices: Notice[], selected: string | null, onPresented: (no
     setShown((current) => current.filter((notice) => notice.payload.conversationId !== selected || notice.kind === "run_interrupted"));
   }, [selected]);
 
-  const dismiss = (notice: Notice, acknowledge = true) => {
-    setShown((current) => current.filter((item) => item.id !== notice.id));
-    if (acknowledge && notice.kind !== "run_request") api.acknowledge(notice.id).catch(() => {});
-  };
-  return { shown, dismiss };
+  const remove = useCallback((notice: Notice) => setShown((current) => current.filter((item) => item.id !== notice.id)), []);
+  // A question is closed by answering it.
+  const acknowledge = useCallback((notice: Notice) => { if (notice.kind !== "run_request") api.acknowledge(notice.id).catch(() => {}); }, []);
+  return { shown, remove, acknowledge };
 }
 
-function noticeText(notice: Notice): string {
-  const goal = String(notice.payload.goal ?? "");
-  if (notice.kind === "run_interrupted") return t("notice.interrupted", { goal });
-  if (notice.kind === "run_request") return t("notice.request", { goal, question: String(notice.payload.question ?? "") });
-  if (notice.kind === "run_result") return t("notice.result", { goal });
-  if (notice.kind === "proposal") return t("notice.proposal", { title: String(notice.payload.title ?? "") });
+/** How long Alfred's card about a notice stays once said (never while the pointer is on it); it stays in 通知 after. */
+const STAY_MS: Record<string, number> = { welcome: 15_000, run_result: 12_000, run_interrupted: 20_000 };
+
+/** What Alfred says in the app about a notice; the button is what can be done here. */
+function noticeSaid(notice: Notice): Said {
   if (notice.kind === "welcome") {
     const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, null);
-    return `${greeting}${summary}`;
+    return { title: greeting, body: summary, mood: "hello", action: t("common.gotIt") };
   }
-  return goal || notice.kind;
+  const { title, body, mood } = noticeLines(notice);
+  const action = notice.kind === "run_interrupted" ? t("common.continue") : notice.kind === "proposal" ? t("notice.look")
+    : notice.kind === "run_request" ? t("notice.answer") : t("notice.view");
+  return { title, body, mood, action };
 }
 
 /** The value once it has held still for `ms`: a state that lasts a moment (a reply ends a beat before its run
@@ -184,7 +190,9 @@ export function App() {
     const runId = String(notice.payload.runId ?? "");
     if (runId) highlight(runId);
   }, [highlight]);
-  const { shown, dismiss } = useNotices(state?.notices ?? [], selected, onPresented);
+  const { shown, remove: unshow, acknowledge } = useNotices(state?.notices ?? [], selected, onPresented);
+  /** Alfred's look while it is telling the user something. */
+  const [speaking, setSpeaking] = useState<FigureState | null>(null);
 
   /** Bring Alfred's panel up: beside the page on a desktop, as a sheet on a phone. */
   const showAlfred = useCallback(() => {
@@ -248,10 +256,20 @@ export function App() {
     if (phone) setSheet((current) => current === "alfred" ? null : "alfred");
     else setLayout({ alfred: layout.alfred === "closed" ? "open" : "closed" });
   }, [phone, layout.alfred, setLayout]);
-  const toggleNav = useCallback(() => setLayout({ nav: layout.nav === "full" ? "rail" : "full" }), [layout.nav, setLayout]);
 
   const pages = state ? availablePages(state) : [];
   const current = pages.find((page) => page.key === route.page) ?? pages[0];
+  // A bare page (Code) takes the room Alfred's panel would; on a phone the panel is a sheet anyway.
+  const bare = !!current?.bare;
+  const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : bare ? "closed" : layout.alfred;
+  const size = widths(layout, viewport, alfredMode === "open");
+  /** The sidebar as drawn: its rail when the window has no room for it in full beside Alfred. */
+  const navMode = size.navMode;
+  const toggleNav = useCallback(() => {
+    // Drawn as the rail for want of room: unfolding it puts Alfred away, which is what makes the room.
+    if (layout.nav === "full" && navMode === "rail") setLayout({ alfred: "closed" });
+    else setLayout({ nav: layout.nav === "full" ? "rail" : "full" });
+  }, [layout.nav, navMode, setLayout]);
   // The page a question is asked from, unless Alfred spans the window and the page is out of sight.
   const view = state && (phone || layout.alfred !== "wide") ? pageView(current, state) : undefined;
   const pageTitle = (key: string) => pages.find((page) => page.key === key)?.title;
@@ -269,7 +287,8 @@ export function App() {
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
   }), [showAlfred]);
 
-  const figure = useSettled(state ? figureState(state, selected, live, greeting) : "rest", 250);
+  const settledFigure = useSettled(state ? figureState(state, selected, live, greeting) : "rest", 250);
+  const figure = speaking ?? settledFigure;
 
   // Keyboard: ⌘K anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌥1–9 the pages (not while typing).
   useEffect(() => {
@@ -298,13 +317,8 @@ export function App() {
     );
   }
 
-  // A bare page (Code) takes the room Alfred's panel would; on a phone the panel is a sheet anyway.
-  const bare = !!current?.bare;
-  const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : bare ? "closed" : layout.alfred;
-  const size = widths(layout, viewport);
-
   // Sidebar divider: drag to resize; drag past the fold point to fold it to icons (keeping the width it had).
-  const navDrag = dragHandle(layout.nav === "rail" ? NAV.rail : layout.navW, "right", (width) => {
+  const navDrag = dragHandle(size.nav, "right", (width) => {
     if (width < NAV.foldAt) setLayout({ nav: "rail", navW: navStart.current });
     else setLayout({ nav: "full", navW: Math.min(NAV.max, Math.max(NAV.min, width)) });
   });
@@ -318,10 +332,10 @@ export function App() {
   );
 
   return (
-    <div className="workspace" data-nav={phone ? undefined : layout.nav} data-alfred={alfredMode} data-phone={phone || undefined}
+    <div className="workspace" data-nav={phone ? undefined : navMode} data-alfred={alfredMode} data-phone={phone || undefined}
       data-sheet={sheet ?? undefined} style={{ "--nav-px": `${size.nav}px`, "--alf-px": `${size.alf}px` } as CSSProperties}>
       {(!phone || sheet === "nav") && (
-        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : layout.nav} selected={selected} session={bare ? route.session : null}
+        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : navMode} selected={selected} session={bare ? route.session : null}
           onSession={openSession} connection={connection}
           onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onFold={phone ? () => setSheet(null) : toggleNav}
           onPalette={() => { setSheet(null); setPalette(true); }} onConversations={showAlfred} sheet={phone} onLanguage={switchLanguage} />
@@ -361,7 +375,7 @@ export function App() {
 
       {!phone && alfredMode === "closed" && !bare && (
         <button type="button" className="fab" onClick={showAlfred} title={t("fab.open", { key: `${MOD}.` })}>
-          <Figure state={figure} size={30} /><span>{statusLine(state, selected, view?.headline)}</span>
+          <Figure state={figure} size={30} anchor /><span>{statusLine(state, selected, view?.headline)}</span>
         </button>
       )}
       {phone && sheet !== "alfred" && (
@@ -374,34 +388,25 @@ export function App() {
           actions={[
             { id: "new", label: t("cmd.new"), icon: "plus", run: () => select(null) },
             { id: "alfred", label: t(alfredMode === "closed" ? "cmd.openAlfred" : "cmd.closeAlfred"), icon: "panel", hint: `${MOD}.`, run: toggleAlfred },
-            ...(phone ? [] : [{ id: "nav", label: t(layout.nav === "full" ? "cmd.foldNav" : "cmd.unfoldNav"), icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
+            ...(phone ? [] : [{ id: "nav", label: t(navMode === "full" ? "cmd.foldNav" : "cmd.unfoldNav"), icon: "rail" as const, hint: `${MOD}\\`, run: toggleNav }]),
             { id: "language", label: t("cmd.language"), icon: "chat", run: switchLanguage },
+            getScheme() === "dark"
+              ? { id: "scheme", label: t("scheme.to.light"), icon: "sun" as const, run: () => setAppearance("light") }
+              : { id: "scheme", label: t("scheme.to.dark"), icon: "moon" as const, run: () => setAppearance("dark") },
           ]} />
       )}
 
-      {shown.length > 0 && (
-        <aside className="notices" aria-live="polite">
-          {shown.map((notice) => (
-            <div className="notice" key={notice.id} role="status">
-              <p>{noticeText(notice)}</p>
-              <div className="notice-actions">
-                {notice.kind === "run_interrupted" && (
-                  <button type="button" onClick={() => { api.resume(String(notice.payload.runId)).catch(() => {}); dismiss(notice); }}>{t("common.continue")}</button>
-                )}
-                {notice.kind === "proposal" && (
-                  <button type="button" onClick={() => { showProposal(String(notice.payload.proposalId)); dismiss(notice); }}>{t("notice.look")}</button>
-                )}
-                {(notice.kind === "run_result" || notice.kind === "run_request") && notice.payload.runId ? (
-                  <button type="button" onClick={() => { openRun(String(notice.payload.runId), String(notice.payload.conversationId ?? "") || undefined); dismiss(notice); }}>
-                    {t(notice.kind === "run_request" ? "notice.answer" : "notice.view")}
-                  </button>
-                ) : null}
-                <button type="button" className="ghost" onClick={() => dismiss(notice)}>{t("common.gotIt")}</button>
-              </div>
-            </div>
-          ))}
-        </aside>
-      )}
+      <Says<Notice>
+        items={shown} id={(notice) => notice.id} lines={noticeSaid} stayMs={(notice) => STAY_MS[notice.kind] ?? 25_000}
+        remove={unshow} onMood={setSpeaking} done={(notice, outcome: Outcome) => {
+          if (outcome === "timeout") return; // left in 通知, not acknowledged
+          acknowledge(notice);
+          if (outcome !== "open") return;
+          if (notice.kind === "run_interrupted") api.resume(String(notice.payload.runId)).catch(() => {});
+          else if ((notice.kind === "proposal" || notice.kind === "outbound") && notice.payload.proposalId) showProposal(String(notice.payload.proposalId));
+          else if (notice.payload.runId) openRun(String(notice.payload.runId), String(notice.payload.conversationId ?? "") || undefined);
+        }}
+      />
     </div>
   );
 }

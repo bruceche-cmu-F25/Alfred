@@ -186,6 +186,15 @@ CREATE UNIQUE INDEX core_projects_path ON core_projects(path) WHERE removed_at I
 ALTER TABLE core_conversations ADD COLUMN project_id TEXT CHECK (project_id IS NULL OR length(project_id) BETWEEN 1 AND 64);
 `,
 }, {
+  // A development session's permission mode (projects.ts SESSION_MODES), and the snapshot of its folder it started
+  // from (a git commit), which its changes are measured against.
+  id: "core:10",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN mode TEXT CHECK (mode IS NULL OR mode IN ('plan', 'ask', 'edits'));
+ALTER TABLE core_conversations ADD COLUMN base TEXT CHECK (base IS NULL OR length(base) BETWEEN 4 AND 64);
+UPDATE core_conversations SET mode = 'plan' WHERE project_id IS NOT NULL;
+`,
+}, {
   // Changes made outside the home node (outbound.ts): recorded with the decision, delivered after, never twice.
   id: "core:11",
   sql: `

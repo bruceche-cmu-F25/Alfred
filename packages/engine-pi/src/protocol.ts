@@ -4,7 +4,7 @@
  * they write the world under the run's lease. So a tool call travels to the
  * home node and its result comes back. One worker handles one run at a time.
  */
-import type { EngineRequest, Workspace } from "@alfred/core";
+import type { EngineRequest, FileChange, Workspace } from "@alfred/core";
 
 /** A tool as the worker sees it: its description only. */
 export interface ToolSpec {
@@ -42,7 +42,9 @@ export type ExternalStep = { id: string; tool: string; label: string; about?: st
 export type ToParent =
   | { type: "tool"; run: string; call: string; name: string; params: Record<string, unknown> }
   /** The engine's own tools (MCP, read): ask the user, show a step, keep a receipt. */
-  | { type: "allow"; run: string; call: string; question: string }
+  | { type: "allow"; run: string; call: string; question: string; detail?: string; always?: boolean }
+  /** A file in the session's project was changed (edit, write): a receipt. */
+  | { type: "changed"; run: string; file: FileChange }
   | { type: "step"; run: string; step: ExternalStep }
   | { type: "receipt"; run: string; tool: string; label: string; about?: string }
   | { type: "text"; run: string; text: string }
@@ -56,7 +58,7 @@ export type ToWorker =
   | { type: "run"; run: string; job: RunJob }
   | { type: "tool_result"; run: string; call: string; ok: true; text: string }
   | { type: "tool_result"; run: string; call: string; ok: false; error: string }
-  | { type: "allow_result"; run: string; call: string; allowed: boolean }
+  | { type: "allow_result"; run: string; call: string; allowed: boolean; always?: boolean }
   | { type: "abort"; run: string }
   /** The user's words, into the turn now running. */
   | { type: "steer"; run: string; text: string }

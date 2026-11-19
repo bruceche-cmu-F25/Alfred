@@ -36,8 +36,10 @@ export interface RunRequest {
   /** `permission`: may it do this one action (answers `allow` / `deny`). `input`: a choice or a short answer. */
   kind: "input" | "permission";
   question: string;
-  /** Suggested answers; for `permission` always `allow` and `deny`. */
+  /** Suggested answers; for `permission` `allow` and `deny`, and `always` when the request offers it. */
   options: string[];
+  /** For `permission`: exactly what would happen (a diff, a command), shown with the question. */
+  detail?: string;
   createdAt: string;
 }
 export interface Run {
@@ -341,22 +343,26 @@ runAnswers.setMaxListeners(0);
 const MAX_QUESTION = 1000;
 const MAX_OPTION = 120;
 const MAX_ANSWER = 2000;
-export const PERMISSION_ANSWERS = ["allow", "deny"] as const;
+/** `always`: allow this, and the rest of its kind in this conversation (offered only where it means something). */
+export const PERMISSION_ANSWERS = ["allow", "deny", "always"] as const;
+const MAX_DETAIL = 12_000;
 
 /** The executor stops the run to ask. Only the lease holder of a running run may. */
-export function openRequest(world: World, id: string, owner: string, input: { kind: RunRequest["kind"]; question: string; options?: string[]; now?: number }): RunRequest {
+export function openRequest(world: World, id: string, owner: string, input: { kind: RunRequest["kind"]; question: string; options?: string[]; detail?: string; always?: boolean; now?: number }): RunRequest {
   const now = input.now ?? Date.now();
   const question = input.question.trim().slice(0, MAX_QUESTION);
   if (!question) throw new Error("A request needs a question");
   const options = input.kind === "permission"
-    ? [...PERMISSION_ANSWERS]
+    ? (input.always ? ["allow", "deny", "always"] : ["allow", "deny"])
     : [...new Set((input.options ?? []).map((option) => String(option).trim().slice(0, MAX_OPTION)).filter(Boolean))].slice(0, 6);
   return world.tx((db) => {
     const run = owned(db, id, owner, now);
     if (run.state !== "running") throw new RunError("state");
-    const request: RunRequest = { id: newId(), kind: input.kind, question, options, createdAt: iso(now) };
+    const detail = input.kind === "permission" && input.detail ? input.detail.slice(0, MAX_DETAIL) : undefined;
+    const request: RunRequest = { id: newId(), kind: input.kind, question, options, ...(detail ? { detail } : {}), createdAt: iso(now) };
     setState(db, run, input.kind === "permission" ? "waiting_permission" : "waiting_input", now, { request: JSON.stringify(request) });
-    const event = runEvent(db, run, "waiting", now, { request });
+    // The detail (a diff) stays on the run, not in the event log.
+    const event = runEvent(db, run, "waiting", now, { request: { ...request, detail: undefined } });
     createNotice(db, {
       eventSeq: event.seq, kind: "run_request", now,
       payload: { runId: id, conversationId: run.conversationId, goal: run.goal.slice(0, 200), requestId: request.id, kind: request.kind, question, options },
@@ -373,7 +379,7 @@ export function answerRequest(world: World, id: string, input: { requestId: stri
     const run = load(db, id);
     if (!WAITING.includes(run.state) || !run.request) throw new RunError("state", "This run is not waiting for an answer");
     if (run.request.id !== input.requestId) throw new RunError("conflict", "That question was already answered or replaced");
-    if (run.request.kind === "permission" && !(PERMISSION_ANSWERS as readonly string[]).includes(answer)) throw new RunError("state", "Answer allow or deny");
+    if (run.request.kind === "permission" && !run.request.options.includes(answer)) throw new RunError("state", "Answer allow or deny");
     if (!answer) throw new RunError("state", "An answer is needed");
     setState(db, run, "running", now, { request: null });
     closeRequestNotices(db, id, now);

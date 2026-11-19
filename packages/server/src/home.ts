@@ -125,7 +125,7 @@ export function profiles(world: World, modules: readonly AlfredModule[]): Record
       instructions: [DEVELOPER, guidance].filter(Boolean).join("\n\n"),
       // No page to open from a session: it is its own page.
       tools: [...runTools(world, modules), ...assistantTools(world, modules).filter((tool) => tool.name !== "show_view")],
-      workspace: "read",
+      workspace: true,
     },
     [AUTOMATION_PROFILE]: {
       instructions: [PERSONA, UNATTENDED, guidance].filter(Boolean).join("\n\n"),

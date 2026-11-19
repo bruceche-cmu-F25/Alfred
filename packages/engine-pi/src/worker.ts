@@ -13,16 +13,18 @@
  *   Claude Desktop's), reached directly, through `tool_search` or `codemode`.
  * - Skills from `<config>/skills/`, and the `read` tool to load them.
  * - In a development session (a job with a workspace): the session works in the
- *   project's folder, with `read`, `grep`, `find` and `ls`, and the project's
- *   AGENTS.md / CLAUDE.md as context. Its `.pi/` settings, extensions and MCP
- *   servers are not loaded.
- * Nothing else: no shell, no writing or editing files, none of the user's own
- * Pi extensions or packages.
+ *   project's folder, with `read`, `grep`, `find` and `ls`, `edit` and `write`
+ *   unless the session is in `plan` mode, and the project's AGENTS.md /
+ *   CLAUDE.md as context. Its `.pi/` settings, extensions and MCP servers are
+ *   not loaded.
+ * Nothing else: no shell, no writing or editing files outside a session, none
+ * of the user's own Pi extensions or packages.
  *
  * A gate checks every call to a tool Alfred did not define. MCP tools their
  * server marks read-only, reading Alfred's skills, and reading, searching or
- * listing inside a session's project folder run freely; anything else asks the
- * user first, through the home node, once per call. A permitted call that may
+ * listing inside a session's project folder run freely, and so do changes
+ * inside it in `edits` mode; anything else asks the user first, through the
+ * home node, once per call (a change shows its diff). A permitted call that may
  * have changed something outside Alfred is kept as a receipt.
  * Credentials and the default model come from the user's Pi setup.
  *
@@ -37,15 +39,21 @@ import {
   loadProjectContextFiles, ModelRuntime, SessionManager, SettingsManager,
   type AgentSession, type ExtensionFactory, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { change, CHANGERS, countPatch, type Change } from "./changing.ts";
 import { LOOKERS, look, real } from "./looking.ts";
 import { loadAlfredMcpConfig } from "./mcp-config.ts";
 import type { ExternalStep, ModelInfo, RunJob, ToParent, ToWorker } from "./protocol.ts";
+import { defaultSecretStore } from "@alfred/core";
+import { createCredentialStore } from "./credentials.ts";
 
 const { values } = parseArgs({ options: { cwd: { type: "string" }, sessions: { type: "string" }, config: { type: "string" }, "agent-dir": { type: "string" } } });
 const cwd = values.cwd!;
 const sessions = values.sessions!;
 const config = values.config ?? cwd;
 const agentDir = values["agent-dir"];
+// Model credentials are Alfred's own (credentials.ts, in the keychain), shared with the home node, where sign-in
+// happens; a fresh runtime per session sees the latest. Custom models from Pi's models.json still apply.
+const modelOptions = { credentials: createCredentialStore({ secrets: defaultSecretStore(config), lockDir: config }), ...(agentDir ? { modelsPath: join(agentDir, "models.json") } : {}) };
 const skillsDir = join(config, "skills");
 // Pi discovers extensions, skills and context files in an agent directory; Alfred's is empty on purpose.
 const resourcesDir = join(cwd, "resources");
@@ -71,6 +79,9 @@ interface Warm {
   shape: string;
   run: string | null;
   idle: NodeJS.Timeout | null;
+  /** The session's mode for this turn; `always` once the user said "don't ask again" during it. */
+  mode: string | null;
+  always: boolean;
 }
 const warm = new Map<string, Warm>();
 let busy = false;
@@ -93,10 +104,13 @@ function describeTool(name: string): { label: string; server?: string; tool: str
   return match ? { label: `${match[1]} · ${match[2]}`, server: match[1], tool: match[2] } : { label: name, tool: name };
 }
 
+/** A diff is shown with the question up to this size; past it, its first part and a note. */
+const MAX_DIFF = 11_000;
+
 /** The gate: every call to a tool Alfred did not define passes here first. `root` is a development session's project folder. */
-function gate(state: { run: string | null }, ours: ReadonlySet<string>, root: string | null): ExtensionFactory {
+function gate(state: { run: string | null; mode: string | null; always: boolean }, ours: ReadonlySet<string>, root: string | null): ExtensionFactory {
   return (pi) => {
-    const open = new Map<string, { step: ExternalStep; changes: boolean; run: string }>();
+    const open = new Map<string, { step: ExternalStep; changes: boolean; run: string; file?: Change }>();
     pi.on("tool_call", async (event) => {
       const name = event.toolName;
       if (ours.has(name) || REACHERS.has(name)) return undefined;
@@ -106,7 +120,22 @@ function gate(state: { run: string | null }, ours: ReadonlySet<string>, root: st
       const step: ExternalStep = { id: next(), tool: name, label: describeTool(name).label, about: about(input), status: "started" };
       let question: string | null;
       let changes: boolean;
-      if (Object.hasOwn(LOOKERS, name)) {
+      let file: Change | undefined;
+      let detail: string | undefined;
+      let always = false;
+      if (Object.hasOwn(CHANGERS, name)) {
+        // Changing a file: inside the project, as the session's mode says (`edits`, or "don't ask again" this turn,
+        // goes ahead); anything else asks, with the diff. Outside the project it always asks.
+        file = change(name, input, { root, cwd });
+        step.label = CHANGERS[name];
+        step.about = file.shown;
+        const free = file.inProject && (state.mode === "edits" || state.always);
+        const verb = file.created ? "新建这个文件" : name === "write" ? "重写这个文件" : "改这个文件";
+        question = free ? null : `允许 Alfred ${verb}吗？\n${file.path}`;
+        detail = file.patch ? (file.patch.length > MAX_DIFF ? `${file.patch.slice(0, MAX_DIFF)}\n… (diff truncated)` : file.patch) : undefined;
+        always = file.inProject;
+        changes = false;
+      } else if (Object.hasOwn(LOOKERS, name)) {
         // Alfred's own skills are instructions, and a session's project is the user's to read in it;
         // any other file is the user's and needs a yes.
         const seen = look(name, input, { root, cwd, skills: skillsDir });
@@ -123,14 +152,16 @@ function gate(state: { run: string | null }, ours: ReadonlySet<string>, root: st
       }
       if (question !== null) {
         const call = next();
-        const allowed = await waitFor<boolean>(call, { type: "allow", run, call, question });
-        if (!allowed) {
+        const answer = await waitFor<boolean | "always">(call, { type: "allow", run, call, question, ...(detail ? { detail } : {}), ...(always ? { always } : {}) });
+        if (!answer) {
           send({ type: "step", run, step: { ...step, status: "declined" } });
           return { block: true, reason: DENIED };
         }
+        // "Don't ask again": the rest of this turn's changes in the project go ahead (the session is now `edits`).
+        if (answer === "always") state.always = true;
       }
       send({ type: "step", run, step });
-      open.set(event.toolCallId, { step, changes, run });
+      open.set(event.toolCallId, { step, changes, run, file });
       return undefined;
     });
     pi.on("tool_result", (event) => {
@@ -139,6 +170,12 @@ function gate(state: { run: string | null }, ours: ReadonlySet<string>, root: st
       open.delete(event.toolCallId);
       send({ type: "step", run: call.run, step: { ...call.step, status: event.isError ? "failed" : "done" } });
       if (call.changes && !event.isError) send({ type: "receipt", run: call.run, tool: call.step.tool, label: call.step.label, about: call.step.about });
+      if (call.file && !event.isError) {
+        // The edit tool reports the patch it applied; count that rather than the preview when it is there.
+        const applied = (event.details as { patch?: unknown } | undefined)?.patch;
+        const counted = typeof applied === "string" ? countPatch(applied) : { added: call.file.added, removed: call.file.removed };
+        send({ type: "changed", run: call.run, file: { path: call.file.shown, created: call.file.created, ...counted } });
+      }
       return undefined;
     });
   };
@@ -185,7 +222,7 @@ async function open(job: RunJob): Promise<Warm> {
 
   const dir = join(sessions, job.thread);
   mkdirSync(dir, { recursive: true });
-  const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null };
+  const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null, mode: job.workspace?.mode ?? null, always: false };
   const definitions = alfredTools(state, job);
   const root = job.workspace ? real(job.workspace.root) : null;
   const loader = new DefaultResourceLoader({
@@ -220,11 +257,12 @@ async function open(job: RunJob): Promise<Warm> {
     // The conversation's own session: continued if it exists, created if not.
     sessionManager: SessionManager.continueRecent(root ?? cwd, dir),
     settingsManager: SettingsManager.create(cwd, agentDir),
+    modelRuntime: await ModelRuntime.create(modelOptions),
     customTools: definitions,
-    // Of Pi's built-in tools: `read` (skills; other files ask first), and in a development session also
-    // grep, find and ls. No shell, no writing.
+    // Of Pi's built-in tools: `read` (skills; other files ask first), and in a development session also grep,
+    // find and ls, and, unless it is in `plan` mode, edit and write (the gate asks as the mode says). No shell.
     ...(root ? { tools: ["+grep", "+find", "+ls"] } : {}),
-    excludeTools: ["bash", "edit", "write", "powershell"],
+    excludeTools: root && job.workspace?.mode !== "plan" ? ["bash", "powershell"] : ["bash", "edit", "write", "powershell"],
   });
   state.session = session;
   // Connects MCP servers in the background; they stay connected while the session is warm.
@@ -273,6 +311,7 @@ async function runTurn(run: string, job: RunJob): Promise<string> {
   const { session } = entry;
   await choose(session, job);
   entry.run = run;
+  entry.always = false;
   let aborted = false;
   currentAbort = () => { aborted = true; void session.abort(); };
   // The reply as it is written, whole each time, at most every 80 ms.
@@ -323,7 +362,7 @@ async function runTurn(run: string, job: RunJob): Promise<string> {
 let currentAbort: (() => void) | null = null;
 
 async function models(): Promise<ModelInfo[]> {
-  const runtime = await ModelRuntime.create(agentDir ? { authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") } : {});
+  const runtime = await ModelRuntime.create(modelOptions);
   return (await runtime.getAvailable()).map((model) => ({
     id: model.id, provider: model.provider, name: model.name ?? model.id, reasoning: Boolean(model.reasoning),
     ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
@@ -352,7 +391,7 @@ process.on("message", (message: ToWorker) => {
     const waiting = pending.get(message.call);
     if (!waiting) return;
     pending.delete(message.call);
-    if (message.type === "allow_result") waiting.resolve(message.allowed);
+    if (message.type === "allow_result") waiting.resolve(message.allowed && message.always ? "always" : message.allowed);
     else if (message.ok) waiting.resolve(message.text);
     else waiting.reject(new Error(message.error));
   } else if (message.type === "abort") {

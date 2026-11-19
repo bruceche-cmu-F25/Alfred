@@ -59,7 +59,7 @@ export function AlfredPanel({ state, selected, figure, wide, phone, live, highli
   return (
     <aside className="alfred" aria-label="Alfred">
       <header className="alf-head">
-        <Figure state={figure} size={36} />
+        <Figure state={figure} size={36} anchor />
         <div className="alf-who">
           <p className="alf-name">Alfred{view && !wide && <span className="alf-looking">{t("panel.looking", { page: view.title })}</span>}</p>
           <p className="alf-line">{statusLine(state, selected, view?.headline)}</p>

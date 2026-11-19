@@ -4,6 +4,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import { recordDomainEvent } from "./events.ts";
+import { THINKING_LEVELS, type ThinkingLevel } from "./conversations.ts";
 import { iso } from "./ids.ts";
 import type { World } from "./world.ts";
 
@@ -13,13 +14,18 @@ export type Locale = (typeof LOCALES)[number];
 export interface UserSettings {
   /** The language Alfred speaks on every device. Null until a device sets it from its system language. */
   locale: Locale | null;
+  /** The model a conversation uses unless it chose its own (`provider/model`); null: the engine's default. */
+  model: string | null;
+  /** The thinking level a conversation uses unless it chose its own; null: the model's default. */
+  thinking: ThinkingLevel | null;
 }
 
 export class SettingsError extends Error {
   override name = "SettingsError";
 }
 
-const DEFAULTS: UserSettings = { locale: null };
+const DEFAULTS: UserSettings = { locale: null, model: null, thinking: null };
+const MODEL = /^[A-Za-z0-9._-]{1,64}\/[^\s/][^\s]{0,199}$/;
 
 export function getSettings(world: World): UserSettings {
   const rows = world.db.prepare("SELECT key, value FROM core_settings").all();
@@ -44,6 +50,14 @@ function pick(value: Record<string, unknown>): Partial<UserSettings> {
   if ("locale" in value) {
     if (value.locale !== null && !LOCALES.includes(value.locale as Locale)) throw new SettingsError(`locale must be one of: ${LOCALES.join(", ")}`);
     out.locale = value.locale as Locale | null;
+  }
+  if ("model" in value) {
+    if (value.model !== null && (typeof value.model !== "string" || !MODEL.test(value.model))) throw new SettingsError("model is provider/model, or null");
+    out.model = value.model as string | null;
+  }
+  if ("thinking" in value) {
+    if (value.thinking !== null && !THINKING_LEVELS.includes(value.thinking as ThinkingLevel)) throw new SettingsError(`thinking must be one of: ${THINKING_LEVELS.join(", ")}`);
+    out.thinking = value.thinking as ThinkingLevel | null;
   }
   return out;
 }

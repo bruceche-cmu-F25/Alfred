@@ -69,6 +69,31 @@ test("a sync mirrors the shown calendars of each account that may read them, and
   assert.match(text, /Fri 2026-11-20\n {2}all day Offsite \(Team\)/);
 });
 
+test("in a calendar of the user's own each series has its own colour, and keeps it; a calendar they only read is one colour", async () => {
+  const w = world();
+  const event = (id: string, summary: string, day: number) => ({ id, summary, start: { dateTime: at(day, 9) }, end: { dateTime: at(day, 10) } });
+  const google = (mine: unknown[]): GoogleService => ({
+    accounts: () => [{ email: "me@example.com", capabilities: ["calRead"] }],
+    async session() {
+      return {
+        async send(): Promise<{ status: number; body: Record<string, unknown> }> { throw new Error("no writes in this test"); },
+        async get(url) {
+          if (url.includes("/calendarList")) return { items: [{ id: "me@example.com", summary: "Me", primary: true, accessRole: "owner" }, { id: "school", summary: "School", selected: true, accessRole: "reader" }] };
+          return { items: url.includes("/calendars/school/") ? [event("s1", "Exams", 20), event("s2", "Break", 21)] : mine };
+        },
+      };
+    },
+  });
+  const colours = () => Object.fromEntries((calendarModule.snapshot!(w) as CalendarSnapshot).events.map((item) => [item.title, item.k]));
+
+  await syncCalendar(w, { google: google([event("a", "Run", 19), event("b", "Read", 19), event("c", "Read", 20), event("d", " read ", 21)]) }, undefined, NOW);
+  assert.deepEqual(colours(), { Read: "blue", read: "blue", Run: "orange", Exams: "green", Break: "green" }, "the series seen most chooses first, and none takes the read-only calendar's colour while another is free");
+  assert.deepEqual((calendarModule.snapshot!(w) as CalendarSnapshot).sources[0].calendars.map((calendar) => [calendar.name, calendar.varied]), [["Me", true], ["School", false]]);
+
+  await syncCalendar(w, { google: google([event("a", "Run", 19), event("e", "Lab", 20), event("f", "Lab", 21), event("g", "Lab", 22)]) }, undefined, NOW + 300_000);
+  assert.deepEqual([colours().Run, colours().Lab], ["orange", "blue"], "Run keeps its colour; the new series takes the one that now carries the fewest events");
+});
+
 test("an account that cannot be read keeps its last events and says why; one disconnected leaves the mirror", async () => {
   const w = world();
   await syncCalendar(w, { google: fakeGoogle({ "me@example.com": [{ id: "a", summary: "Dentist", start: { dateTime: at(19, 15) } }] }) }, undefined, NOW);

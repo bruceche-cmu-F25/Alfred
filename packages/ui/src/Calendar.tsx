@@ -114,7 +114,7 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
             {calendars.map((calendar) => (
               <button type="button" key={calendar.key} className="chip" data-off={hidden.has(calendar.key) || undefined} aria-pressed={!hidden.has(calendar.key)}
                 onClick={() => toggle(calendar.key)} title={t("cal.hide", { name: calendar.name })}>
-                <span className="mark" data-k={calendar.k} />{calendar.name}
+                <span className="mark" data-k={calendar.varied ? undefined : calendar.k} data-varied={calendar.varied || undefined} />{calendar.name}
               </button>
             ))}
           </div>

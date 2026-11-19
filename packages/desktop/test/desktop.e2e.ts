@@ -96,8 +96,8 @@ try {
   await app.evaluate(({ powerMonitor }) => powerMonitor.emit("lock-screen"));
   await sleep(3500); // longer than ALFRED_AWAY_MINUTES (3 s)
   await app.evaluate(({ powerMonitor }) => powerMonitor.emit("unlock-screen"));
-  const bubble = await figure.waitForSelector(".bubble", { timeout: 10_000 });
-  ok(`the figure says: ${(await bubble.innerText()).replace(/\s+/g, " ")}`);
+  const card = await figure.waitForSelector(".speech .speech-foot.shown", { timeout: 10_000 }).then(() => figure.$(".speech"));
+  ok(`the figure says: ${(await card!.innerText()).replace(/\s+/g, " ")}`);
   await figure.screenshot({ path: join(shots, "figure-welcome.png") });
   // A second unlock, a heartbeat: nobody is greeted again.
   await app.evaluate(({ powerMonitor }) => powerMonitor.emit("unlock-screen"));
@@ -108,7 +108,7 @@ try {
   assert.match(String(welcomes[0].claimed_by), /^mac-/);
   ok("one welcome, presented by this Mac");
 
-  step("A result while the main window is not in front becomes a system notification from this Mac");
+  step("A result while the main window is not in front is said by the figure on this Mac");
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().endsWith(":7481/"))?.hide());
   const first = await (await fetch(`${base}/api/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: "e2e-notify", goal: "加一个待办：给自行车打气" }) })).json() as SubmitRunResponse;
   const notified = await waitFor("the result notice presented", async () => {
@@ -117,6 +117,9 @@ try {
   }, 120_000);
   assert.match(String(notified.claimedBy), /^mac-[0-9a-f]+$/, "claimed by the Mac app itself, not a window");
   ok(`run finished and the Mac app presented its notice (${notified.claimedBy})`);
+  await figure.waitForSelector(".speech", { timeout: 10_000 });
+  await figure.screenshot({ path: join(shots, "figure-result.png") });
+  ok("the figure came out with the result");
 
   step("Quitting the app does not stop a run in progress");
   const second = await (await fetch(`${base}/api/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: "e2e-quit", goal: "加一个待办：周六去取快递" }) })).json() as SubmitRunResponse;

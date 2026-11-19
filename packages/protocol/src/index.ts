@@ -12,6 +12,8 @@
  *   GET  /api/conversations/:id             ConversationDetail
  *   POST /api/conversations                 StartSessionRequest -> Conversation (a development session in a trusted project)
  *   POST /api/conversations/:id             UpdateConversationRequest -> Conversation
+ *   GET  /api/conversations/:id/changes     SessionChanges (a development session's changed files)
+ *   GET  /api/conversations/:id/diff?path=  { diff } (one changed file, against the session's snapshot)
  *   POST /api/runs                          SubmitRunRequest -> SubmitRunResponse (202); no conversationId starts one
  *   GET  /api/runs/:id                      RunDetail
  *   POST /api/runs/:id/cancel               -> Run
@@ -60,10 +62,12 @@ export interface RunOutcome {
 /** What a waiting run asks the user. */
 export interface RunRequest {
   id: string;
-  /** `permission`: may it do this one action (answer `allow` or `deny`). `input`: a choice or a short answer. */
+  /** `permission`: may it do this one action (answer `allow` or `deny`, or `always` when offered). `input`: a choice or a short answer. */
   kind: "input" | "permission";
   question: string;
   options: string[];
+  /** For `permission`: exactly what would happen, such as a file's diff. */
+  detail?: string;
   createdAt: string;
 }
 
@@ -107,6 +111,20 @@ export interface Conversation {
   lastGoal: string | null;
   /** The project it works in (a development session); null for an everyday conversation. Fixed at creation. */
   projectId: string | null;
+  /** A development session's permission mode; null for an everyday conversation. */
+  mode: SessionMode | null;
+  /** The snapshot (a git commit) a development session's changes are measured against; null outside git. */
+  base: string | null;
+}
+
+/** What a development session may do in its folder without asking: `plan` reads only; `ask` changes files, asking
+ * each time with the diff; `edits` changes files inside the project without asking. Outside it, always asks. */
+export type SessionMode = "plan" | "ask" | "edits";
+/** What a development session has changed since its snapshot (GET /api/conversations/:id/changes). */
+export interface SessionChanges {
+  branch: string | null;
+  base: string | null;
+  files: Array<{ path: string; added: number; removed: number; created: boolean }>;
 }
 
 /** A folder on the home node Alfred may work in. Sessions start only once the user trusts it. */
@@ -119,7 +137,7 @@ export interface Project {
   trustedAt: string | null;
 }
 export interface AddProjectRequest { path: string; name?: string }
-export interface StartSessionRequest { projectId: string; title: string }
+export interface StartSessionRequest { projectId: string; title: string; mode?: SessionMode }
 
 export interface ConversationDetail {
   conversation: Conversation;
@@ -133,7 +151,7 @@ export interface ConversationDetail {
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export interface UpdateConversationRequest { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null }
+export interface UpdateConversationRequest { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }
 
 export interface SteerRequest { text: string }
 
@@ -166,6 +184,10 @@ export type Locale = "zh" | "en";
 export interface UserSettings {
   /** Null until a device sets it from its system language. */
   locale: Locale | null;
+  /** The model a conversation uses unless it chose its own (`provider/model`); null: the engine's default. */
+  model: string | null;
+  /** The thinking level a conversation uses unless it chose its own; null: the model's default. */
+  thinking: ThinkingLevel | null;
 }
 export interface SettingsRequest { requestId: string; patch: Partial<UserSettings> }
 
@@ -374,3 +396,57 @@ export interface Automation {
 }
 export interface NewAutomationRequest { requestId: string; name: string; goal: string; schedule: Schedule; enabled?: boolean }
 export interface UpdateAutomationRequest { requestId: string; patch: { name?: string; goal?: string; schedule?: Schedule; enabled?: boolean } }
+
+/** Models: who Alfred can think with, and signing in to them (docs/design/settings-and-connections.md §3.2).
+ * Sign-in runs on the home node through Pi; a device shows each step and answers its questions.
+ * No secret ever appears in a response.
+ *
+ *   GET  /api/connections/models                     ModelAccountsResponse
+ *   POST /api/connections/models/:provider/login     { method: ModelAuthMethod } -> ModelSignIn
+ *   GET  /api/connections/models/flows/:id           ModelSignIn (poll while `running`)
+ *   POST /api/connections/models/flows/:id/answer    { promptId, value } -> ModelSignIn
+ *   POST /api/connections/models/flows/:id/cancel    -> ModelSignIn
+ *   POST /api/connections/models/:provider/logout    -> ModelAccountsResponse
+ *   POST /api/connections/models/import              { providers } -> ModelAccountsResponse (API keys from the user's Pi setup)
+ */
+export type ModelAuthMethod = "oauth" | "api_key";
+export interface ModelProvider {
+  id: string;
+  name: string;
+  /** Signing in with an account; `subscription` when it uses the account's plan instead of pay-per-use credit. */
+  oauth: { label: string; subscription: boolean } | null;
+  /** It takes an API key. */
+  apiKey: boolean;
+  /** How Alfred can use it now: a credential Alfred keeps, or one from the environment. */
+  status: { configured: boolean; method?: ModelAuthMethod; source?: "alfred" | "environment" };
+  models: number;
+}
+export interface ModelAccountsResponse {
+  providers: ModelProvider[];
+  /** API keys in the user's Pi setup that Alfred does not have yet and can copy. */
+  piKeys: Array<{ id: string; name: string }>;
+  /** Subscriptions signed in to in Pi but not in Alfred: they are signed in again, not copied (one token cannot serve two programs). */
+  piSubscriptions: Array<{ id: string; name: string }>;
+}
+export type ModelSignInStep =
+  | { kind: "open_url"; url: string; instructions?: string }
+  | { kind: "device_code"; code: string; url: string; expiresIn?: number }
+  | { kind: "info"; message: string; links?: Array<{ url: string; label?: string }> }
+  | { kind: "progress"; message: string };
+export interface ModelSignInPrompt {
+  id: string;
+  type: "text" | "secret" | "select" | "manual_code";
+  message: string;
+  placeholder?: string;
+  options?: Array<{ id: string; label: string; description?: string }>;
+}
+export interface ModelSignIn {
+  id: string;
+  provider: string;
+  method: ModelAuthMethod;
+  status: "running" | "done" | "failed" | "cancelled";
+  steps: ModelSignInStep[];
+  /** A question waiting for the user. */
+  prompt: ModelSignInPrompt | null;
+  error?: string;
+}

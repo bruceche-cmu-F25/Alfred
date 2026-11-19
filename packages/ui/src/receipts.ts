@@ -20,6 +20,7 @@ export function describeReceipt(event: CoreEvent): string {
     }
     case "todo.imported": return t("rcpt.imported", { n: Number(event.payload.imported) });
     case "proposal.opened": return t("rcpt.proposed", { title });
+    case "file.changed": return t(event.payload.created ? "rcpt.fileNew" : "rcpt.file", { path: String(event.payload.path), added: Number(event.payload.added) || 0, removed: Number(event.payload.removed) || 0 });
     default: return event.kind;
   }
 }

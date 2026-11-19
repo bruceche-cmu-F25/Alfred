@@ -28,3 +28,5 @@ export function createPiEngine(options: PiEngineOptions): WorkerEngine {
   if (options.agentDir) args.push("--agent-dir", options.agentDir);
   return createWorkerEngine({ worker: fileURLToPath(new URL("./worker.ts", import.meta.url)), args, idleMs: options.idleMs, log: options.log });
 }
+export { createCredentialStore, type CredentialStore, type Credential } from "./credentials.ts";
+export { ModelAccounts, ModelSignInError, type ModelAccountsOptions } from "./accounts.ts";

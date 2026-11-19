@@ -1,0 +1,81 @@
+/* Alfred's speech card, in the Mac app's figure window and in the app. Colours from tokens.css.
+   It grows out of the figure (transform-origin at the tail) and folds back into it. Timings match useSpeech.ts.
+   --tail-at: where the tail sits along its edge (from the top for left/right tails, from the left for top/bottom). */
+.speech {
+  --tone: var(--alf);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+  position: relative; width: max-content; max-width: 300px; min-width: 200px;
+  border: 1px solid var(--line); border-radius: 16px; background: var(--speech-bg, var(--raise)); color: var(--ink);
+  font-size: 13px; line-height: 1.5; text-align: left;
+  box-shadow: 0 12px 34px #0000003d; -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  animation: speech-unfurl 460ms var(--spring) both;
+  -webkit-user-select: none; user-select: none;
+}
+.speech[data-tail="right"]  { transform-origin: calc(100% + 28px) var(--tail-at); --from: 14px, 0px; }
+.speech[data-tail="left"]   { transform-origin: -28px var(--tail-at); --from: -14px, 0px; }
+.speech[data-tail="top"]    { transform-origin: var(--tail-at) -24px; --from: 0px, -12px; }
+.speech[data-tail="bottom"] { transform-origin: var(--tail-at) calc(100% + 24px); --from: 0px, 12px; }
+.speech.mood-notice { --tone: var(--warm); }
+.speech.mood-done { --tone: var(--ok); }
+.speech.mood-error { --tone: var(--now); }
+.speech.mood-rest { --tone: var(--muted); }
+.speech.folding { animation: speech-fold 240ms cubic-bezier(.55, 0, .75, .2) both; }
+@keyframes speech-unfurl {
+  0%   { opacity: 0; transform: translate(var(--from)) scale(.12); }
+  40%  { opacity: 1; }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes speech-fold { to { opacity: 0; transform: translate(var(--from)) scale(.12); } }
+
+/* The tail: a small turned square half out of the card, pointing at the figure. */
+.speech::after {
+  content: ""; position: absolute; z-index: -1; /* under the words, over the card's own background */
+  width: 12px; height: 12px; background: inherit; border: 1px solid var(--line);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.speech[data-tail="right"]::after  { right: -7px; top: calc(var(--tail-at) - 6px); border-left: 0; border-bottom: 0; border-radius: 0 3px 0 0; transform: rotate(45deg); }
+.speech[data-tail="left"]::after   { left: -7px; top: calc(var(--tail-at) - 6px); border-right: 0; border-top: 0; border-radius: 0 0 0 3px; transform: rotate(45deg); }
+.speech[data-tail="top"]::after    { top: -7px; left: calc(var(--tail-at) - 6px); border-right: 0; border-bottom: 0; border-radius: 3px 0 0 0; transform: rotate(45deg); }
+.speech[data-tail="bottom"]::after { bottom: -7px; left: calc(var(--tail-at) - 6px); border-left: 0; border-top: 0; border-radius: 0 0 3px 0; transform: rotate(45deg); }
+
+.speech button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: left; box-shadow: none; }
+.speech-body { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 12px 34px 4px 14px; }
+.speech-title { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--ink); }
+.speech-title::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
+.speech-said { color: var(--copy); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.unsaid { color: transparent; }
+
+.speech-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 10px 10px 14px;
+  opacity: 0; transform: translateY(4px); transition: opacity 220ms ease-out, transform 220ms ease-out;
+}
+.speech-foot.shown { opacity: 1; transform: none; }
+.speech .speech-act { padding: 4px 12px; border-radius: 99px; background: var(--tone); color: var(--raise); font-weight: 600; font-size: 12px; }
+.speech .speech-act:hover { filter: brightness(1.08); }
+.speech .speech-more { margin-right: auto; padding: 4px 6px; border-radius: 6px; color: var(--muted); font-size: 12px; }
+.speech .speech-more:hover { color: var(--ink); }
+.speech .speech-close { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; color: var(--muted); font-size: 16px; line-height: 24px; text-align: center; }
+.speech .speech-close:hover { color: var(--ink); background: var(--wash); }
+.speech :focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+
+/* The figure while it talks: a crouch, a hop, a landing a size bigger; a nod between two things.
+   Put data-speaking (the phase) on the figure's element; --big and --hop size it for where it sits. */
+[data-speaking] { --big: 1.18; --hop: 30px; --up: -1; transform-origin: 50% 100%; transition: transform 420ms cubic-bezier(.34, 1.56, .64, 1); }
+[data-speaking="hop"], [data-speaking="speak"], [data-speaking="fold"] { transform: scale(var(--big)); }
+[data-speaking="hop"] { animation: speech-hop 620ms cubic-bezier(.23, 1, .32, 1) both; }
+[data-speaking="speak"][data-nod="0"] { animation: speech-nod-a 360ms cubic-bezier(.23, 1, .32, 1); }
+[data-speaking="speak"][data-nod="1"] { animation: speech-nod-b 360ms cubic-bezier(.23, 1, .32, 1); }
+@keyframes speech-hop {
+  0%   { transform: translateY(0) scale(1); }
+  16%  { transform: translateY(0) scale(1.1, .86); }
+  44%  { transform: translateY(calc(var(--up) * var(--hop))) scale(.97, 1.1); }
+  70%  { transform: translateY(0) scale(calc(var(--big) + .08), calc(var(--big) - .1)); }
+  86%  { transform: translateY(calc(var(--up) * 3px)) scale(calc(var(--big) - .03), calc(var(--big) + .04)); }
+  100% { transform: translateY(0) scale(var(--big)); }
+}
+@keyframes speech-nod-a { 40% { transform: translateY(4px) scale(calc(var(--big) + .04), calc(var(--big) - .06)); } }
+@keyframes speech-nod-b { 40% { transform: translateY(4px) scale(calc(var(--big) + .04), calc(var(--big) - .06)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .speech, .speech-foot, [data-speaking] { animation: none !important; transition: none !important; }
+}

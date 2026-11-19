@@ -1,7 +1,9 @@
-/** `/api/connections/*`: connected accounts (see @alfred/protocol). The host and
- * origin checks of http.ts have already run. Nothing here returns a secret.
+/** `/api/connections/*`: connected accounts and model sign-in (see @alfred/protocol). The host and
+ * origin checks of http.ts have already run, and only this machine reaches these routes. Nothing here
+ * returns a secret.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { ModelSignInError, type ModelAccounts } from "@alfred/engine-pi";
 import type { ConnectionsResponse, GoogleConnectRequest } from "@alfred/protocol";
 import { GoogleError, isGoogleCapability, type GoogleConnections } from "./google.ts";
 
@@ -29,13 +31,65 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 const ACCOUNT = /^\/api\/connections\/google\/([^/]{3,200})\/(disable|disconnect|check)$/;
 const FLOW = /^\/api\/connections\/flows\/([A-Za-z0-9_-]{1,32})(\/cancel)?$/;
+const MODEL_PROVIDER = /^\/api\/connections\/models\/([a-z0-9][a-z0-9._-]{0,63})\/(login|logout)$/;
+const MODEL_FLOW = /^\/api\/connections\/models\/flows\/([A-Za-z0-9_-]{1,32})(?:\/(answer|cancel))?$/;
+
+/** What the connections routes can reach; each part's routes are 404 without it. */
+export interface Connections { google?: GoogleConnections; models?: ModelAccounts }
+
+/** Model sign-in: providers, signing in and out, importing keys from Pi. */
+async function modelRoutes(models: ModelAccounts, req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+  const method = req.method ?? "GET";
+  if (method === "GET" && path === "/api/connections/models") return send(res, 200, await models.describe()), true;
+  if (method === "POST" && path === "/api/connections/models/import") {
+    const body = await readJson(req);
+    const providers = Array.isArray(body.providers) ? body.providers.filter((item): item is string => typeof item === "string") : [];
+    return send(res, 200, await models.importFromPi(providers)), true;
+  }
+  const flow = MODEL_FLOW.exec(path);
+  if (flow) {
+    const [, id, action] = flow;
+    if (method === "GET" && !action) {
+      const state = models.flow(id);
+      return send(res, state ? 200 : 404, state ?? { error: "No such sign-in (finished long ago, or the home node restarted)" }), true;
+    }
+    if (method === "POST" && action === "answer") {
+      const body = await readJson(req);
+      if (typeof body.promptId !== "string" || typeof body.value !== "string") return send(res, 400, { error: "promptId and value are required" }), true;
+      return send(res, 200, models.answer(id, body.promptId, body.value)), true;
+    }
+    if (method === "POST" && action === "cancel") {
+      await readJson(req);
+      const state = models.cancel(id);
+      return send(res, state ? 200 : 404, state ?? { error: "No such sign-in" }), true;
+    }
+  }
+  const provider = MODEL_PROVIDER.exec(path);
+  if (provider && method === "POST") {
+    const body = await readJson(req);
+    if (provider[2] === "logout") return send(res, 200, await models.logout(provider[1])), true;
+    if (body.method !== "oauth" && body.method !== "api_key") return send(res, 400, { error: "method is oauth or api_key" }), true;
+    return send(res, 200, await models.start(provider[1], body.method)), true;
+  }
+  return false;
+}
 
 /** Handles the request when it is under /api/connections; false when it is not. */
-export async function handleConnections(google: GoogleConnections, req: IncomingMessage, res: ServerResponse, url: URL, log?: (message: string) => void): Promise<boolean> {
+export async function handleConnections(services: Connections, req: IncomingMessage, res: ServerResponse, url: URL, log?: (message: string) => void): Promise<boolean> {
   const path = url.pathname;
   if (!path.startsWith("/api/connections")) return false;
   const method = req.method ?? "GET";
+  const { google, models } = services;
   try {
+    if (path.startsWith("/api/connections/models")) {
+      if (models && await modelRoutes(models, req, res, path)) return true;
+      send(res, 404, { error: "Not found" });
+      return true;
+    }
+    if (!google) {
+      send(res, 404, { error: "Not found" });
+      return true;
+    }
     if (method === "GET" && path === "/api/connections") {
       send(res, 200, { google: google.status() } satisfies ConnectionsResponse);
       return true;
@@ -74,7 +128,10 @@ export async function handleConnections(google: GoogleConnections, req: Incoming
     }
     send(res, 404, { error: "Not found" });
   } catch (error) {
-    if (error instanceof GoogleError) {
+    if (error instanceof ModelSignInError) {
+      const status = error.code === "unknown_provider" || error.code === "missing" ? 404 : error.code === "busy" || error.code === "state" ? 409 : 400;
+      send(res, status, { error: error.message, code: error.code });
+    } else if (error instanceof GoogleError) {
       const status = error.code === "unknown_account" ? 404 : error.code === "no_client" ? 409 : error.code === "busy" ? 429 : 502;
       send(res, status, { error: error.message, code: error.code });
     } else if (error instanceof SyntaxError) {

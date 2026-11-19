@@ -87,13 +87,22 @@ test("declined, superseded and expired proposals leave the inbox", () => {
 
 test("settings: the language is set once, audited, and checked", () => {
   const w = world();
-  assert.deepEqual(getSettings(w), { locale: null });
+  assert.deepEqual(getSettings(w), { locale: null, model: null, thinking: null });
   assert.equal(userLocale(w), "en");
-  assert.deepEqual(updateSettings(w, { locale: "zh" }), { locale: "zh" });
+  assert.deepEqual(updateSettings(w, { locale: "zh" }), { locale: "zh", model: null, thinking: null });
   updateSettings(w, { locale: "zh" });
   assert.equal(listEvents(w).events.filter((event) => event.kind === "settings.changed").length, 1, "an unchanged value records nothing");
   assert.equal(userLocale(w), "zh");
   assert.throws(() => updateSettings(w, { locale: "fr" }), SettingsError);
   assert.throws(() => updateSettings(w, { theme: "dark" }), /Unknown setting/);
+});
+
+test("settings: the default model and thinking level are checked", () => {
+  const w = world();
+  assert.deepEqual(updateSettings(w, { model: "anthropic/claude-opus-5-5", thinking: "high" }), { locale: null, model: "anthropic/claude-opus-5-5", thinking: "high" });
+  assert.throws(() => updateSettings(w, { model: "no-slash" }), SettingsError);
+  assert.throws(() => updateSettings(w, { model: 3 }), SettingsError);
+  assert.throws(() => updateSettings(w, { thinking: "huge" }), SettingsError);
+  assert.deepEqual(updateSettings(w, { model: null, thinking: null }), { locale: null, model: null, thinking: null });
 });
 

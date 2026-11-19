@@ -57,8 +57,17 @@
 .pair-code { width: 11em; min-height: 40px; padding: 0 14px; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink);
   font-family: var(--mono, ui-monospace, monospace); font-size: 1.0625rem; letter-spacing: .08em; text-align: center; text-transform: uppercase; }
 .pair .set-button { min-height: 40px; }
-@media (max-width: 760px) {
+@container page (max-width: 600px) {
   .settings { padding: 0 16px 32px; }
   .dev-pair { flex-direction: column; align-items: center; }
   .set-row.sub { padding-left: 0; }
 }
+
+/* Settings → Models (ModelSettings.tsx). */
+.set-rows-item .set-flow { margin: 10px 0 12px; }
+.model-select { max-width: 280px; min-height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: .8125rem; }
+.model-device { display: flex; flex-direction: column; gap: 8px; }
+.model-code { font-family: var(--mono, ui-monospace, monospace); font-size: 1.5rem; letter-spacing: .12em; color: var(--ink); }
+.model-answer { display: flex; flex-direction: column; gap: 8px; }
+.model-input { flex: 1; min-width: 200px; min-height: 34px; padding: 0 12px; border-radius: 10px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-size: .875rem; }
+.model-input:focus { outline: 2px solid var(--accent); outline-offset: 0; }

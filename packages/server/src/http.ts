@@ -22,12 +22,14 @@ import {
 import { applyStep, invokeOp, runQuery } from "@alfred/module-kit";
 import type {
   AddProjectRequest, ConversationDetail, CoreEvent, ErrorResponse, StartSessionRequest, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
-  RemoteResponse, RespondRequest, ReviseRequest, NewAutomationRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
+  RemoteResponse, RespondRequest, ReviseRequest, NewAutomationRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest, SessionChanges,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
 import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE, type Home } from "./home.ts";
 import { handleConnections } from "./connections-http.ts";
+import { snapshot, workspaceChanges, workspaceDiff, type ChangedFile } from "./workspace.ts";
 import type { GoogleConnections } from "./google.ts";
+import type { ModelAccounts } from "@alfred/engine-pi";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
 import type { PushService } from "./push.ts";
 
@@ -159,6 +161,15 @@ function state(home: Home): StateResponse {
     automations: listAutomations(home.world),
     projects: listProjects(home.world),
   };
+}
+
+/** The files a session's runs changed, from their receipts, oldest first. */
+function sessionWrites(home: Home, conversationId: string): ChangedFile[] {
+  const runs = listRuns(home.world, { conversationId, limit: 500 }).reverse();
+  const receipts = listRunReceipts(home.world, runs.map((run) => run.id));
+  return runs.flatMap((run) => receipts[run.id] ?? []).filter((event) => event.kind === "file.changed").map((event) => ({
+    path: String(event.payload.path), added: Number(event.payload.added) || 0, removed: Number(event.payload.removed) || 0, created: event.payload.created === true,
+  }));
 }
 
 /** The profile a new run in this conversation gets: a development session's, or the assistant's. A session whose
@@ -325,7 +336,10 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   if (method === "POST" && path === "/api/conversations") {
     const body = await readJson<StartSessionRequest>(req);
     if (typeof body.projectId !== "string" || typeof body.title !== "string" || !body.title.trim()) throw new HttpError(400, "projectId and title are required");
-    return send(res, 201, startSession(home.world, { projectId: body.projectId, title: body.title }));
+    if (body.mode !== undefined && !["plan", "ask", "edits"].includes(body.mode)) throw new HttpError(400, "mode is plan, ask or edits");
+    // The snapshot its changes are measured against, taken before it can change anything.
+    const base = await snapshot(getProject(home.world, body.projectId).path);
+    return send(res, 201, startSession(home.world, { projectId: body.projectId, title: body.title, mode: body.mode, base }));
   }
   // Projects: only from the home node's own machine (dispatch refuses other devices).
   if (method === "POST" && path === "/api/projects") {
@@ -348,7 +362,17 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     if (body.archived !== undefined && typeof body.archived !== "boolean") throw new HttpError(400, "archived must be true or false");
     if (body.model !== undefined && body.model !== null && typeof body.model !== "string") throw new HttpError(400, "model is provider/model or null");
     if (body.thinking !== undefined && body.thinking !== null && typeof body.thinking !== "string") throw new HttpError(400, "thinking is a level or null");
-    return send(res, 200, updateConversation(home.world, conversation[1], { title: body.title, archived: body.archived, model: body.model, thinking: body.thinking }));
+    if (body.mode !== undefined && typeof body.mode !== "string") throw new HttpError(400, "mode is plan, ask or edits");
+    return send(res, 200, updateConversation(home.world, conversation[1], { title: body.title, archived: body.archived, model: body.model, thinking: body.thinking, mode: body.mode }));
+  }
+  // A development session's changes since its snapshot, and one file's diff.
+  const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff)$/.exec(path);
+  if (session && method === "GET") {
+    const found = getConversation(home.world, session[1]);
+    if (!found.projectId) throw new HttpError(404, "Not a development session");
+    const root = getProject(home.world, found.projectId).path;
+    if (session[2] === "diff") return send(res, 200, { diff: await workspaceDiff(root, found.base, url.searchParams.get("path") ?? "") });
+    return send(res, 200, await workspaceChanges(root, found.base, sessionWrites(home, found.id)) satisfies SessionChanges);
   }
 
   if (method === "GET" && path === "/api/models") {
@@ -493,6 +517,8 @@ export interface ServeOptions {
   log?: (message: string) => void;
   /** Connected Google accounts (`/api/connections`); left out, those routes are 404. */
   google?: GoogleConnections;
+  /** Model providers and signing in to them (`/api/connections/models`); left out, those routes are 404. */
+  models?: ModelAccounts;
   /** Remote access and devices (`/api/remote`, `/api/devices`, `/api/pair`); left out, those routes are 404. */
   remote?: RemoteAccess;
   /** Push notifications to paired devices (`/api/push`). */
@@ -517,8 +543,8 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
         req.on("close", () => remote.events.off("revoked", onRevoked));
       }
     }
-    const google = options.google;
-    if (google && path.startsWith("/api/connections") && await handleConnections(google, req, res, url, options.log)) return;
+    if (path.startsWith("/api/connections") && (options.google || options.models)
+      && await handleConnections({ google: options.google, models: options.models }, req, res, url, options.log)) return;
     await route(home, req, res, url);
   };
   answer().catch((error: unknown) => {

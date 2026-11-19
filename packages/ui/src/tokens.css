@@ -38,6 +38,9 @@
   --warm: oklch(.57 .12 70);
   --now: oklch(.6 .2 25);
   --ok: oklch(.58 .12 155);
+  /* A picked control (a selected chip): solid ink in light; in dark a raised grey, never a white slab. */
+  --pick: var(--ink);
+  --on-pick: var(--bg);
   --shadow: 0 1px 2px oklch(0 0 0 / .04), 0 12px 40px oklch(0 0 0 / .1);
 }
 
@@ -59,6 +62,8 @@
   --warm: oklch(.79 .11 72);
   --now: oklch(.68 .18 25);
   --ok: oklch(.75 .12 155);
+  --pick: oklch(.4 calc(var(--c) * .5) var(--h));
+  --on-pick: var(--ink);
   --shadow: 0 1px 2px oklch(0 0 0 / .3), 0 16px 50px oklch(0 0 0 / .5);
 }
 

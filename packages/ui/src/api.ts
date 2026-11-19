@@ -4,7 +4,7 @@
 import type {
   Automation, Schedule,
   Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
-  Project, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
+  Project, SessionChanges, SessionMode, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
 import { t } from "./i18n/dict.ts";
@@ -71,7 +71,7 @@ export const api = {
   submit: (goal: string, conversationId?: string, context?: ViewContext) =>
     post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}) }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
-  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null }) =>
+  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }) =>
     post<Conversation>(`/api/conversations/${id}`, change),
   /** Words into the run now working; rejects with 409 when it is not. */
   steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),
@@ -80,7 +80,10 @@ export const api = {
   addProject: (path: string) => post<Project>("/api/projects", { path }),
   trustProject: (id: string) => post<Project>(`/api/projects/${id}/trust`, {}),
   /** A development session in a trusted project; its first message is then submitted to it. */
-  startSession: (projectId: string, title: string) => post<Conversation>("/api/conversations", { projectId, title }),
+  startSession: (projectId: string, title: string, mode?: SessionMode) => post<Conversation>("/api/conversations", { projectId, title, ...(mode ? { mode } : {}) }),
+  /** A development session's changed files since its snapshot, and one file's diff. */
+  changes: (id: string) => call<SessionChanges>(`/api/conversations/${id}/changes`),
+  diff: (id: string, path: string) => call<{ diff: string | null }>(`/api/conversations/${id}/diff?path=${encodeURIComponent(path)}`),
   respond: (runId: string, requestId: string, answer: string) => post<Run>(`/api/runs/${runId}/respond`, { requestId, answer }),
   run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
   cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, {}),
@@ -99,11 +102,6 @@ export const api = {
   query: <T>(name: string, input: unknown) => post<{ result: T }>(`/api/queries/${name}`, { input }).then((response) => response.result),
   /** Refresh a module's mirror of an outside service now; resolves when it has been read. */
   syncModule: (id: string) => post<Record<string, never>>(`/api/modules/${id}/sync`, {}),
-  /** Remote access and devices: on this machine the switch and the list, on another device just itself. */
-  remote: () => call<RemoteResponse>("/api/remote"),
-  setRemote: (enabled: boolean) => post<RemoteResponse>("/api/remote", { enabled }),
-  pairingCode: () => post<PairingCode>("/api/remote/pairing", {}),
-  revokeDevice: (id: string) => post<RemoteResponse>(`/api/devices/${id}/revoke`, {}),
   /** Automations: make one, change it (or switch it on and off), run it now, delete it. */
   createAutomation: (input: { name: string; goal: string; schedule: Schedule; enabled?: boolean }) =>
     post<Automation>("/api/automations", { requestId: newRequestId(), ...input }),
@@ -111,6 +109,11 @@ export const api = {
     post<Automation>(`/api/automations/${id}`, { requestId: newRequestId(), patch }),
   runAutomation: (id: string) => post<Run>(`/api/automations/${id}/run`, { requestId: newRequestId() }),
   deleteAutomation: (id: string) => post<Record<string, never>>(`/api/automations/${id}/delete`, { requestId: newRequestId() }),
+  /** Remote access and devices: on this machine the switch and the list, on another device just itself. */
+  remote: () => call<RemoteResponse>("/api/remote"),
+  setRemote: (enabled: boolean) => post<RemoteResponse>("/api/remote", { enabled }),
+  pairingCode: () => post<PairingCode>("/api/remote/pairing", {}),
+  revokeDevice: (id: string) => post<RemoteResponse>(`/api/devices/${id}/revoke`, {}),
   /** On a device that is not paired yet: the home node answers with the device token in a cookie. */
   pair: (code: string, name: string, kind: DeviceKind) => post<{ device: DeviceInfo }>("/api/pair", { code, name, kind }),
   forgetDevice: () => post<Record<string, never>>("/api/device/forget", {}),

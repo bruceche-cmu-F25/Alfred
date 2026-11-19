@@ -31,7 +31,7 @@ export {
 } from "./presence.ts";
 export {
   executeNextRun, createRunDrain, localDate,
-  type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext, type Workspace, type WorkspaceAccess,
+  type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext, type Workspace, type FileChange,
 } from "./executor.ts";
 export {
   openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, ProposalStateError, PROPOSAL_TTL_MS,
@@ -43,8 +43,9 @@ export {
   latestSlot, nextSlot, automationName, automationGoal, AutomationError, AUTOMATION_TEMPLATES, CATCH_UP_MS,
   type Automation, type AutomationView, type AutomationTemplate, type AutomationPatch, type NewAutomation, type Schedule,
 } from "./automations.ts";
-export { listProjects, getProject, addProject, trustProject, removeProject, ProjectError, PROJECT_ID, type Project } from "./projects.ts";
+export { listProjects, getProject, addProject, trustProject, removeProject, ProjectError, PROJECT_ID, SESSION_MODES, type Project, type SessionMode } from "./projects.ts";
 export { listDevices, pairDevice, deviceForToken, revokeDevice, hashToken, DeviceError, DEVICE_KINDS, type Device, type DeviceKind } from "./devices.ts";
+export { defaultSecretStore, fileStore, keychainStore, type SecretStore } from "./secrets.ts";
 export {
   enqueueOutbound, claimOutbound, finishOutbound, retryOutbound, interruptOutbound, getOutbound, listOutbound, OUTBOUND_STATES, OUTBOUND_MAX_ATTEMPTS,
   type Outbound, type OutboundState,

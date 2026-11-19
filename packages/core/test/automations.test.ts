@@ -122,7 +122,7 @@ test("an unattended run cannot stop to ask: external tools are refused and askin
   const automation = createAutomation(w, { name: "Brief", goal: "Brief me", schedule: { at: "07:30", days: EVERY_DAY } }, at(19, 6));
   runAutomationNow(w, automation.id, "dev.r1", { profile: "automation" });
   await createRunDrain(w, engine, { owner: "home", profiles }).kick();
-  assert.equal(seen[0], false);
+  assert.equal(seen[0], "deny");
   assert.match(String(seen[1]), /unattended/);
   assert.equal(listRuns(w)[0].state, "completed");
 });

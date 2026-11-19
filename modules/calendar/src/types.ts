@@ -21,7 +21,7 @@ export interface CalendarEvent {
   /** The user's own answer to an invitation. */
   response?: "accepted" | "declined" | "tentative" | "needsAction";
   attendees: number;
-  /** The colour slot of its calendar (tokens.css `data-k`). */
+  /** Its colour slot (tokens.css `data-k`): its series' own in one of the user's calendars, else its calendar's. */
   k: string;
   /** Alfred may propose moving it: the user organizes it, in a calendar they may change. */
   editable: boolean;
@@ -38,7 +38,8 @@ export interface CalendarSource {
   reconnect: boolean;
   /** The user let Alfred change this account's calendar (Settings: 日历：替你加和改). */
   canWrite: boolean;
-  calendars: Array<{ id: string; name: string; k: string; writable: boolean }>;
+  /** `varied`: one of the user's own, whose events are coloured series by series; the others are all `k`. */
+  calendars: Array<{ id: string; name: string; k: string; writable: boolean; varied: boolean }>;
 }
 
 export interface CalendarSnapshot {

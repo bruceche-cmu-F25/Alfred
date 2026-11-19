@@ -10,7 +10,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnectFlow, ConnectStart, ConnectionsResponse, GoogleAccount, GoogleCapability, GoogleCheck as Check, RemoteResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { Devices } from "./Devices.tsx";
+import { ModelSettings } from "./ModelSettings.tsx";
 import { setLocale, t, useLocale, type Key, type Locale } from "./i18n/index.ts";
+import { origin, setAppearance, useAppearance, type Appearance } from "./scheme.ts";
 import "./settings.css";
 
 const CAPS: GoogleCapability[] = ["calRead", "calWrite", "mailRead", "mailSend"];
@@ -18,6 +20,8 @@ const capName = (id: GoogleCapability) => t(`settings.cap.${id}` as Key);
 const capNote = (id: GoogleCapability) => t(`settings.cap.${id}.note` as Key);
 /** Each language named in itself. */
 const LANGUAGES: Array<[Locale, string]> = [["zh", "中文"], ["en", "English"]];
+
+const APPEARANCES: Appearance[] = ["system", "light", "dark"];
 
 type CheckState = { reading: true } | { error: string } | { result: Check };
 
@@ -44,6 +48,7 @@ interface Pending { flow: ConnectStart; for: string }
 
 export function Settings() {
   const locale = useLocale();
+  const appearance = useAppearance();
   const [data, setData] = useState<ConnectionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
@@ -153,6 +158,18 @@ export function Settings() {
               </span>
             </span>
           </div>
+          <div className="set-row">
+            <span className="set-name">{t("settings.appearance")}</span>
+            <span className="set-note">{t("settings.appearance.note")}</span>
+            <span className="set-end">
+              <span className="chips set-chips" role="radiogroup" aria-label={t("settings.appearance")}>
+                {APPEARANCES.map((id) => (
+                  <button type="button" key={id} className="chip" role="radio" aria-checked={appearance === id} aria-pressed={appearance === id}
+                    onClick={(event) => setAppearance(id, origin(event))}>{t(`settings.appearance.${id}`)}</button>
+                ))}
+              </span>
+            </span>
+          </div>
         </div>
       </section>
 
@@ -235,10 +252,8 @@ export function Settings() {
         </div>
       </section>}
 
-      <section className="set-section">
-        <h2>{t("settings.models")}</h2>
-        <p className="quiet small">{t("settings.models.later")}</p>
-      </section>
+      {/* Signing in to models, like accounts, happens only on the Mac that holds the credentials. */}
+      {remote?.local !== false && <ModelSettings />}
     </div>
   );
 }

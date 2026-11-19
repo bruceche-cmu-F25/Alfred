@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   answerRequest, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, listConversations, listEvents, listNotices,
-  openWorld, recordDomainEvent, requestCancel, RunError, submitRun, updateConversation,
+  openWorld, recordDomainEvent, requestCancel, RunError, submitRun, updateConversation, updateSettings,
   type EnginePort, type RunProfile, type RunTool, type World,
 } from "../src/index.ts";
 
@@ -173,4 +173,16 @@ test("a run remembers the page it was asked from and hands it to the engine; a m
   await createRunDrain(w, { submit: async (request) => { seen.push(request.context); return { reply: "ok" }; } }, { owner: "home", profiles: profiles(w) }).kick();
   assert.equal(seen.length, 2);
   assert.deepEqual(seen.filter(Boolean), [context], "only the run asked from a page carries one");
+});
+
+test("a conversation without its own model uses the user's default model and thinking level", async () => {
+  const w = world();
+  updateSettings(w, { model: "anthropic/claude-sonnet-5-5", thinking: "low" });
+  const first = submitRun(w, { requestId: "m1", goal: "hi", profile: "tasks" }).run;
+  const second = submitRun(w, { requestId: "m2", goal: "hi", profile: "tasks" }).run;
+  updateConversation(w, second.conversationId, { model: "openai/gpt-5.4", thinking: "high" });
+  const seen: Record<string, [unknown, unknown]> = {};
+  await createRunDrain(w, { submit: async (request) => { seen[request.thread] = [request.model, request.thinking]; return { reply: "ok" }; } }, { owner: "home", profiles: profiles(w) }).kick();
+  assert.deepEqual(seen[first.conversationId], ["anthropic/claude-sonnet-5-5", "low"]);
+  assert.deepEqual(seen[second.conversationId], ["openai/gpt-5.4", "high"], "the conversation's own choice wins");
 });

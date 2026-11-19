@@ -1,0 +1,5 @@
+# Your voice and API keys stay on this Mac.
+clips/
+results/
+.env
+bin/

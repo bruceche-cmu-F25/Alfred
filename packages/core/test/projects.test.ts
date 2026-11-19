@@ -13,7 +13,7 @@ const world = (): World => openWorld(":memory:", CORE_MIGRATIONS);
 const folder = () => mkdtempSync(join(tmpdir(), "alfred-project-"));
 const PROFILES: Record<string, RunProfile> = {
   assistant: { instructions: "", tools: [] },
-  developer: { instructions: "", tools: [], workspace: "read" },
+  developer: { instructions: "", tools: [], workspace: true },
 };
 
 test("a project is a real folder, added once, untrusted until the user says so", () => {
@@ -52,7 +52,7 @@ test("a session's runs get the project's folder; a wrong profile or a removed pr
   const ok = submitRun(w, { requestId: "r1", goal: "Where is checkout?", profile: "developer", conversationId: session.id }).run;
   await drain.kick();
   assert.equal(getRun(w, ok.id).run.state, "completed");
-  assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", access: "read" });
+  assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask" });
 
   // The everyday profile in a session, or a session profile outside one, never reaches the engine.
   const wrong = submitRun(w, { requestId: "r2", goal: "Hi", profile: "assistant", conversationId: session.id }).run;

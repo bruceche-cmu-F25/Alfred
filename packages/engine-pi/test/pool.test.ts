@@ -21,7 +21,7 @@ test.after(async () => { await Promise.all(engines.map((created) => created.clos
 const pidOf = (reply: string) => Number(reply.split("pid=")[1]);
 const signal = () => new AbortController().signal;
 
-const noExternal: EngineRequest["external"] = { allow: async () => false, step: () => {}, receipt: () => {} };
+const noExternal: EngineRequest["external"] = { allow: async () => "deny", step: () => {}, receipt: () => {} };
 function request(goal: string, tools: RunTool[] = [], extra: Partial<EngineRequest> = {}): EngineRequest {
   return { thread: "t1", goal, instructions: "", history: [], tools, today: "2026-11-18", timezone: "UTC", external: noExternal, ...extra };
 }
@@ -81,7 +81,7 @@ test("the engine's own tools ask through the home node; only a yes runs them, an
   const steps: string[] = [];
   const receipts: string[] = [];
   const hooks = (answer: boolean): EngineRequest["external"] => ({
-    allow: async (question) => { asked.push(question); return answer; },
+    allow: async (question) => { asked.push(question); return answer ? "allow" : "deny"; },
     step: (step) => steps.push(`${step.tool}:${step.status}`),
     receipt: (call) => receipts.push(call.tool),
   });

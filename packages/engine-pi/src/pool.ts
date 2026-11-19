@@ -206,11 +206,12 @@ export function createWorkerEngine(options: WorkerEngineOptions): WorkerEngine {
           else if (message.type === "error") finish(() => reject(Object.assign(new Error(message.message), message.code ? { name: message.code } : {})));
           else if (message.type === "step") request.external.step(message.step);
           else if (message.type === "receipt") request.external.receipt({ tool: message.tool, label: message.label, about: message.about });
+          else if (message.type === "changed") request.external.changed?.(message.file);
           else if (message.type === "allow") {
             // Anything but an explicit yes, including a failure to ask, is a no.
-            request.external.allow(message.question)
-              .catch(() => false)
-              .then((allowed) => to({ type: "allow_result", run, call: message.call, allowed }));
+            request.external.allow(message.question, { detail: message.detail, always: message.always })
+              .catch(() => "deny" as const)
+              .then((answer) => to({ type: "allow_result", run, call: message.call, allowed: answer !== "deny", always: answer === "always" }));
           } else if (message.type === "tool") {
             const tool = tools.get(message.name);
             if (!tool) { to({ type: "tool_result", run, call: message.call, ok: false, error: `Unknown tool ${message.name}` }); return; }

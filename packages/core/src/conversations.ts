@@ -6,7 +6,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { appendEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
-import { getProject, ProjectError } from "./projects.ts";
+import { getProject, ProjectError, SESSION_MODES, type SessionMode } from "./projects.ts";
 import type { World } from "./world.ts";
 
 export interface Conversation {
@@ -27,6 +27,10 @@ export interface Conversation {
   lastGoal: string | null;
   /** The project it works in (a development session); null for an everyday conversation. Fixed at creation. */
   projectId: string | null;
+  /** A development session's permission mode; null for an everyday conversation. */
+  mode: SessionMode | null;
+  /** The commit a development session's changes are measured against; null when its folder is not a git repository. */
+  base: string | null;
 }
 
 export class ConversationError extends Error {
@@ -62,14 +66,16 @@ function toConversation(row: Record<string, unknown>): Conversation {
     busy: row.busy as number, attention: row.attention as number,
     lastGoal: row.last_goal ? String(row.last_goal).slice(0, 120) : null,
     projectId: (row.project_id as string | null) ?? null,
+    mode: (row.mode as SessionMode | null) ?? null,
+    base: (row.base as string | null) ?? null,
   };
 }
 
 /** Only inside a world transaction. */
-export function createConversation(db: DatabaseSync, input: { title: string; now: number; projectId?: string }): string {
+export function createConversation(db: DatabaseSync, input: { title: string; now: number; projectId?: string; mode?: SessionMode; base?: string | null }): string {
   const id = newId();
-  db.prepare("INSERT INTO core_conversations (id, title, created_at, updated_at, project_id) VALUES (?, ?, ?, ?, ?)")
-    .run(id, input.title.slice(0, 200), iso(input.now), iso(input.now), input.projectId ?? null);
+  db.prepare("INSERT INTO core_conversations (id, title, created_at, updated_at, project_id, mode, base) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(id, input.title.slice(0, 200), iso(input.now), iso(input.now), input.projectId ?? null, input.projectId ? input.mode ?? "ask" : null, input.base ?? null);
   appendEvent(db, {
     kind: "conversation.created", subject: `conversation:${id}`, runId: null, now: input.now,
     payload: { title: input.title.slice(0, 200), ...(input.projectId ? { projectId: input.projectId } : {}) },
@@ -79,11 +85,13 @@ export function createConversation(db: DatabaseSync, input: { title: string; now
 
 /** A development session in a trusted project, created before its first message (an everyday conversation is
  * created by its first message instead). The title comes from what the user is about to ask. */
-export function startSession(world: World, input: { projectId: string; title: string; now?: number }): Conversation {
+export function startSession(world: World, input: { projectId: string; title: string; mode?: SessionMode; base?: string | null; now?: number }): Conversation {
   const now = input.now ?? Date.now();
   const project = getProject(world, input.projectId);
   if (!project.trustedAt) throw new ProjectError("untrusted");
-  const id = world.tx((db) => createConversation(db, { title: titleFrom(input.title), now, projectId: project.id }));
+  if (input.mode !== undefined && !SESSION_MODES.includes(input.mode)) throw new ConversationError("invalid", "Unknown permission mode");
+  if (input.base !== undefined && input.base !== null && !/^[0-9a-f]{4,64}$/.test(input.base)) throw new ConversationError("invalid", "A base is a commit id");
+  const id = world.tx((db) => createConversation(db, { title: titleFrom(input.title), now, projectId: project.id, mode: input.mode, base: input.base }));
   return getConversation(world, id);
 }
 
@@ -109,14 +117,20 @@ export function listConversations(world: World, options: { includeArchived?: boo
 export function updateConversation(
   world: World,
   id: string,
-  change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; now?: number },
+  change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode; now?: number },
 ): Conversation {
   const now = change.now ?? Date.now();
   if (change.model !== undefined && change.model !== null && !MODEL.test(change.model)) throw new ConversationError("invalid", "A model is written provider/model");
   if (change.thinking !== undefined && change.thinking !== null && !THINKING_LEVELS.includes(change.thinking)) throw new ConversationError("invalid", "Unknown thinking level");
   world.tx((db) => {
-    const row = db.prepare("SELECT title, archived_at, model, thinking FROM core_conversations WHERE id = ?").get(id);
+    const row = db.prepare("SELECT title, archived_at, model, thinking, project_id, mode FROM core_conversations WHERE id = ?").get(id);
     if (!row) throw new ConversationError("missing");
+    if (change.mode !== undefined && change.mode !== row.mode) {
+      if (!row.project_id) throw new ConversationError("invalid", "Only a development session has a permission mode");
+      if (!SESSION_MODES.includes(change.mode)) throw new ConversationError("invalid", "Unknown permission mode");
+      db.prepare("UPDATE core_conversations SET mode = ? WHERE id = ?").run(change.mode, id);
+      appendEvent(db, { kind: "conversation.mode_set", subject: `conversation:${id}`, payload: { from: row.mode ?? null, to: change.mode }, runId: null, now });
+    }
     for (const field of ["model", "thinking"] as const) {
       const value = change[field];
       if (value === undefined || value === row[field]) continue;

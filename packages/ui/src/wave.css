@@ -1,0 +1,56 @@
+/* The wave that carries a change of light or dark (scheme.ts sets data-wave on <html> to the scheme it is going to,
+   and where it starts: --wave-x, --wave-y, and --wave-reach, the distance to the farthest corner).
+
+   A view transition: the old page stays still underneath, the new one is revealed through a growing circle, and a
+   ring of colour rides its edge. The ring is Alfred's indigo leading, then violet, pink and a warm tail (the same
+   hues as tokens.css). On light it tints the page faintly; on dark it is screened on, so it adds light and glows.
+   One number, --wave-p (0 → 1), drives both, so the ring and the edge cannot drift apart. */
+@property --wave-p { syntax: "<number>"; inherits: false; initial-value: 0; }
+
+:root {
+  --wave-ms: 1100ms;
+  --wave-ease: cubic-bezier(.16, .84, .3, 1);
+  /* The ring's width, and how soft the edge of the new page is under it. */
+  --wave-w: clamp(120px, 20vmax, 320px);
+  --wave-soft: 48px;
+}
+
+@keyframes wave-spread { from { --wave-p: 0; } to { --wave-p: 1; } }
+@keyframes wave-glow { 0% { opacity: 0; } 10% { opacity: 1; } 55% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Something for the ring to belong to: an empty layer over the page, only while a wave runs. */
+html[data-wave] body::after { content: ""; position: fixed; inset: 0; pointer-events: none; view-transition-name: scheme-wave; }
+
+html[data-wave]::view-transition-group(root) { animation: none; }
+html[data-wave]::view-transition-old(root) { animation: none; mix-blend-mode: normal; }
+html[data-wave]::view-transition-new(root) {
+  animation: wave-spread var(--wave-ms) var(--wave-ease) both;
+  mix-blend-mode: normal;
+  --r: calc(var(--wave-p) * (var(--wave-reach) + var(--wave-w)));
+  -webkit-mask-image: radial-gradient(circle at var(--wave-x) var(--wave-y), #000 calc(var(--r) - var(--wave-soft)), #0000 var(--r));
+  mask-image: radial-gradient(circle at var(--wave-x) var(--wave-y), #000 calc(var(--r) - var(--wave-soft)), #0000 var(--r));
+}
+
+html[data-wave]::view-transition-image-pair(scheme-wave) { display: none; }
+html[data-wave]::view-transition-group(scheme-wave) {
+  animation: wave-spread var(--wave-ms) var(--wave-ease) both, wave-glow var(--wave-ms) linear both;
+  --r: calc(var(--wave-p) * (var(--wave-reach) + var(--wave-w)));
+  --w: calc(var(--wave-w) * (.35 + .65 * var(--wave-p)));
+  /* From the inside out: nothing, the warm tail, pink, violet, indigo on the edge, and a short fall-off ahead of it. */
+  background: radial-gradient(circle at var(--wave-x) var(--wave-y) in oklab,
+    #0000 calc(var(--r) - var(--w)),
+    var(--wave-4) calc(var(--r) - var(--w) * .68),
+    var(--wave-3) calc(var(--r) - var(--w) * .44),
+    var(--wave-2) calc(var(--r) - var(--w) * .22),
+    var(--wave-1) calc(var(--r) - var(--w) * .04),
+    #0000 calc(var(--r) + var(--w) * .1));
+}
+/* Tint: colours the page, faintly. */
+html[data-wave="light"]::view-transition-group(scheme-wave) {
+  --wave-1: oklch(.68 .17 268 / .44); --wave-2: oklch(.7 .17 300 / .38); --wave-3: oklch(.74 .16 355 / .32); --wave-4: oklch(.84 .11 60 / .26);
+}
+/* Screen: adds light, so it glows. */
+html[data-wave="dark"]::view-transition-group(scheme-wave) {
+  mix-blend-mode: screen;
+  --wave-1: oklch(.64 .2 268 / .85); --wave-2: oklch(.64 .2 300 / .72); --wave-3: oklch(.7 .18 355 / .55); --wave-4: oklch(.84 .09 55 / .22);
+}

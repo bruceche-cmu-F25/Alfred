@@ -9,7 +9,8 @@ export type AlfredMode = "open" | "wide" | "closed";
 export interface Layout { nav: NavMode; navW: number; alfW: number; alfred: AlfredMode }
 
 export const NAV = { min: 168, max: 300, def: 208, rail: 56, foldAt: 120 };
-export const ALF = { min: 300, max: 640, def: 400, pageMin: 420 };
+/** pageMin: what the page keeps while Alfred has width to give. pageFloor: what it keeps at any window size (a phone's width). */
+export const ALF = { min: 300, max: 640, def: 400, pageMin: 420, pageFloor: 320 };
 /** Below this width the workspace is a phone: one column, a dock, Alfred as a sheet. The Mac window never gets this narrow. */
 export const PHONE = "(max-width: 700px)";
 const KEY = "alfred.layout";
@@ -54,11 +55,21 @@ export function useLayout(): [Layout, (patch: Partial<Layout>) => void] {
   return [layout, update];
 }
 
-/** The pixel widths to draw with: the page never drops below ALF.pageMin unless Alfred is already at its minimum. */
-export function widths(layout: Layout, viewport: number): { nav: number; alf: number } {
-  const nav = layout.nav === "rail" ? NAV.rail : layout.navW;
+/**
+ * What to draw: the page never drops below ALF.pageMin unless Alfred is already at its minimum. In a window too small
+ * for a full sidebar, Alfred and a page of ALF.pageFloor, the sidebar gives way: it narrows, then draws as its rail
+ * (`navMode`; the remembered choice in `layout.nav` is left alone, so it comes back when there is room).
+ */
+export function widths(layout: Layout, viewport: number, alfredBeside = false): { nav: number; navMode: NavMode; alf: number } {
+  let navMode = layout.nav;
+  let nav = navMode === "rail" ? NAV.rail : layout.navW;
+  if (alfredBeside && navMode === "full") {
+    const spare = viewport - ALF.min - ALF.pageFloor;
+    if (spare < NAV.min) { navMode = "rail"; nav = NAV.rail; }
+    else nav = Math.min(nav, spare);
+  }
   const room = viewport - nav - ALF.pageMin;
-  return { nav, alf: Math.max(ALF.min, Math.min(layout.alfW, ALF.max, room)) };
+  return { nav, navMode, alf: Math.max(ALF.min, Math.min(layout.alfW, ALF.max, room)) };
 }
 
 export function useViewportWidth(): number {

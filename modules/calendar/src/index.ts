@@ -17,8 +17,12 @@ export { mapEvent, addDays, type GoogleEvent } from "./google.ts";
 export { deliverCalendar, newEventId, type AddInput, type MoveInput, type RespondInput } from "./write.ts";
 
 const WINDOW = { back: 7, ahead: 35 };
-/** Colour slots for calendars, in order: the first account's primary calendar is blue. */
+/** Colour slots, in order. A calendar the user only reads (holidays, a school's) is one colour, taken in this order.
+ * In a calendar of their own, each series (events with the same title) has its own colour, so a week that is mostly
+ * theirs is not all one colour. */
 const KS = ["blue", "green", "orange", "violet", "teal", "pink", "yellow"];
+/** What makes events the same series: their title, however it is spaced or cased. */
+const seriesOf = (title: string) => title.trim().toLowerCase().replace(/\s+/g, " ") || "-";
 
 const MIGRATIONS = [{
   id: "calendar:1",
@@ -61,7 +65,44 @@ ALTER TABLE calendar_events ADD COLUMN organizer_self INTEGER NOT NULL DEFAULT 0
 ALTER TABLE calendar_sources ADD COLUMN can_write INTEGER NOT NULL DEFAULT 0 CHECK (can_write IN (0, 1));
 UPDATE calendar_sources SET digest = NULL;
 `,
+}, {
+  // The colour of each series in the user's own calendars: kept, so a series does not change colour between syncs.
+  id: "calendar:3",
+  sql: `
+CREATE TABLE calendar_colours (
+  account TEXT NOT NULL,
+  series TEXT NOT NULL CHECK (length(series) BETWEEN 1 AND 300),
+  k TEXT NOT NULL,
+  PRIMARY KEY (account, series)
+) STRICT;
+UPDATE calendar_sources SET digest = NULL;
+`,
 }];
+
+/** Gives each series that has no colour yet the one that carries the fewest of this account's events (those of its
+ * read-only calendars count too); the most frequent series choose first, so what is seen most is furthest apart. */
+function colourSeries(world: World, account: string): void {
+  const calendars = calendarSources(world).find((source) => source.account === account)?.calendars ?? [];
+  const own = new Set(calendars.filter((calendar) => calendar.varied).map((calendar) => calendar.id));
+  if (!own.size) return;
+  const known = new Map(world.db.prepare("SELECT series, k FROM calendar_colours WHERE account = ?").all(account).map((row) => [row.series as string, row.k as string]));
+  const count = new Map<string, number>();
+  const load = new Map(KS.map((k) => [k, 0]));
+  const carry = (k: string | undefined, n: number) => { if (k && load.has(k)) load.set(k, load.get(k)! + n); };
+  for (const row of world.db.prepare("SELECT calendar_id, title, count(*) AS n FROM calendar_events WHERE account = ? GROUP BY calendar_id, title").all(account)) {
+    if (!own.has(row.calendar_id as string)) { carry(calendars.find((calendar) => calendar.id === row.calendar_id)?.k, row.n as number); continue; }
+    const series = seriesOf(row.title as string);
+    count.set(series, (count.get(series) ?? 0) + (row.n as number));
+    carry(known.get(series), row.n as number);
+  }
+  const insert = world.db.prepare("INSERT OR REPLACE INTO calendar_colours (account, series, k) VALUES (?, ?, ?)");
+  const fresh = [...count.keys()].filter((series) => !known.has(series)).sort((a, b) => count.get(b)! - count.get(a)! || a.localeCompare(b));
+  for (const series of fresh) {
+    const k = KS.reduce((least, candidate) => (load.get(candidate)! < load.get(least)! ? candidate : least));
+    carry(k, count.get(series)!);
+    insert.run(account, series, k);
+  }
+}
 
 const canRead = (capabilities: readonly string[]) => capabilities.includes("calRead") || capabilities.includes("calWrite");
 
@@ -78,6 +119,7 @@ export async function syncCalendar(world: World, services: ModuleServices, signa
     for (const account of gone) {
       db.prepare("DELETE FROM calendar_events WHERE account = ?").run(account);
       db.prepare("DELETE FROM calendar_sources WHERE account = ?").run(account);
+      db.prepare("DELETE FROM calendar_colours WHERE account = ?").run(account);
       recordDomainEvent(world, { kind: "calendar.synced", subject: `calendar:${account}`, payload: { removed: true } });
     }
   }));
@@ -112,6 +154,7 @@ export async function syncCalendar(world: World, services: ModuleServices, signa
         insert.run(account, event.id, event.calendarId, event.calendar, event.title, event.allDay ? 1 : 0, event.startDate, event.endDate,
           event.startAt, event.endAt, event.location, event.link, event.meeting, event.organizer, event.response, event.attendees, event.etag, event.organizerSelf ? 1 : 0);
       }
+      colourSeries(world, account);
       recordDomainEvent(world, { kind: "calendar.synced", subject: `calendar:${account}`, payload: { events: result!.events.length } });
     }));
   }
@@ -126,7 +169,7 @@ export function calendarSources(world: World): CalendarSource[] {
     reconnect: row.reconnect === 1,
     canWrite: row.can_write === 1,
     calendars: (JSON.parse(row.calendars as string) as Array<{ id: string; name: string; writable?: boolean }>)
-      .map((calendar) => ({ id: calendar.id, name: calendar.name, writable: !!calendar.writable, k: KS[next++ % KS.length] })),
+      .map((calendar) => ({ id: calendar.id, name: calendar.name, writable: !!calendar.writable, varied: !!calendar.writable, k: KS[next++ % KS.length] })),
   }));
 }
 
@@ -134,6 +177,8 @@ export function calendarSources(world: World): CalendarSource[] {
 export function listEvents(world: World, from: string, to: string): CalendarEvent[] {
   const sources = calendarSources(world);
   const colour = new Map(sources.flatMap((source) => source.calendars.map((calendar) => [`${source.account}|${calendar.id}`, calendar.k] as const)));
+  const varied = new Set(sources.flatMap((source) => source.calendars.filter((calendar) => calendar.varied).map((calendar) => `${source.account}|${calendar.id}`)));
+  const series = new Map(world.db.prepare("SELECT account, series, k FROM calendar_colours").all().map((row) => [`${row.account as string}|${row.series as string}`, row.k as string]));
   const writable = new Set(sources.flatMap((source) => source.canWrite ? source.calendars.filter((calendar) => calendar.writable).map((calendar) => `${source.account}|${calendar.id}`) : []));
   return world.db.prepare(`SELECT * FROM calendar_events WHERE end_date >= ? AND start_date <= ?
     ORDER BY start_date, all_day DESC, start_at, title`).all(from, to).map((row) => ({
@@ -146,7 +191,8 @@ export function listEvents(world: World, from: string, to: string): CalendarEven
     ...(row.organizer ? { organizer: row.organizer as string } : {}),
     ...(row.response ? { response: row.response as CalendarEvent["response"] } : {}),
     attendees: row.attendees as number,
-    k: colour.get(`${row.account as string}|${row.calendar_id as string}`) ?? "gray",
+    k: (varied.has(`${row.account as string}|${row.calendar_id as string}`) ? series.get(`${row.account as string}|${seriesOf(row.title as string)}`) : undefined)
+      ?? colour.get(`${row.account as string}|${row.calendar_id as string}`) ?? "gray",
     editable: row.organizer_self === 1 && writable.has(`${row.account as string}|${row.calendar_id as string}`),
     invited: !!row.response && row.organizer_self !== 1 && writable.has(`${row.account as string}|${row.calendar_id as string}`),
   }));

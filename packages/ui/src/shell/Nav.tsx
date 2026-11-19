@@ -1,6 +1,7 @@
 import type { Conversation, StateResponse } from "@alfred/protocol";
 import { api, type Connection } from "../api.ts";
 import { getLocale, intlLocale, t } from "../i18n/index.ts";
+import { origin, setAppearance, useScheme } from "../scheme.ts";
 import { Icon } from "./icons.tsx";
 import { moduleOf, type PageDef } from "./pages.tsx";
 import type { NavMode } from "./layout.ts";
@@ -43,6 +44,8 @@ export interface NavProps {
 
 /** The sidebar: the workspace's pages, then the conversations, like a session list. Folds to a rail of icons. */
 export function Nav({ state, pages, page, mode, selected, session, onSession, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet, onLanguage }: NavProps) {
+  const scheme = useScheme();
+  const other = scheme === "dark" ? "light" : "dark";
   const rename = (conversation: Conversation) => {
     const title = window.prompt(t("nav.rename"), conversation.title);
     if (title && title.trim() && title.trim() !== conversation.title) api.updateConversation(conversation.id, { title }).catch(() => {});
@@ -142,7 +145,13 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
 
       <div className="nav-foot">
         <p className="connection" data-state={connection} title={t(CONNECTION[connection])}><span aria-hidden="true" /><b>{t(CONNECTION[connection])}</b></p>
-        <button type="button" className="lang" onClick={onLanguage} title={t("nav.languageTitle")} lang={getLocale() === "zh" ? "en" : "zh"}>{t("nav.language")}</button>
+        <span className="nav-foot-end">
+          <button type="button" className="icon-btn scheme" onClick={(event) => setAppearance(other, origin(event))}
+            aria-label={t(`scheme.to.${other}`)} title={t(`scheme.to.${other}`)}>
+            <Icon name={other === "dark" ? "moon" : "sun"} />
+          </button>
+          <button type="button" className="lang" onClick={onLanguage} title={t("nav.languageTitle")} lang={getLocale() === "zh" ? "en" : "zh"}>{t("nav.language")}</button>
+        </span>
       </div>
     </nav>
   );

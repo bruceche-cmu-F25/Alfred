@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@alfred/core": "*",
+    "@alfred/protocol": "*",
     "@earendil-works/pi-coding-agent": "1.5.2"
   }
 }

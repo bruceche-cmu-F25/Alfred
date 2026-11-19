@@ -3,8 +3,10 @@ import { createFigure, type Figure as Live, type FigureState } from "../entity/t
 
 const isDark = () => document.documentElement.dataset.scheme === "dark";
 
-/** Alfred's figure at a given size. Its far lines fade toward whatever it sits on, and it follows light and dark. */
-export function Figure({ state, size, className }: { state: FigureState; size: number; className?: string }) {
+/** Alfred's figure at a given size. Its far lines fade toward whatever it sits on, and it follows light and dark.
+ * `anchor`: Alfred speaks from this one (shell/Says.tsx); it is wrapped so the drawing can hop while the wrapper
+ * stays still to measure. */
+export function Figure({ state, size, className, anchor }: { state: FigureState; size: number; className?: string; anchor?: boolean }) {
   const svg = useRef<SVGSVGElement>(null);
   const live = useRef<Live | null>(null);
 
@@ -22,5 +24,7 @@ export function Figure({ state, size, className }: { state: FigureState; size: n
   // Moving between places (panel, floating button) changes what it sits on.
   useEffect(() => { live.current?.refresh(); });
 
-  return <svg ref={svg} className={className ? `figure ${className}` : "figure"} viewBox="0 0 120 120" style={{ width: size, height: size }} aria-hidden="true" />;
+  const drawing = <svg ref={svg} className={className ? `figure ${className}` : "figure"} viewBox="0 0 120 120" style={{ width: size, height: size }} aria-hidden="true" />;
+  return anchor ? <span className="figure-anchor" data-alfred-anchor="">{drawing}</span> : drawing;
 }
+

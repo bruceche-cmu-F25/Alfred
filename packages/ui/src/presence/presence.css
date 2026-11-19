@@ -1,33 +1,68 @@
 /* Colours come from tokens.css (light or dark follows the system, set by public/scheme.js).
-   The figure sits on a small plate so it reads on any wallpaper; its far lines fade toward the plate. */
+   The figure sits on a small plate so it reads on any wallpaper; its far lines fade toward the plate.
+   The card and the hop are speech/speech.css. The figure sits in the corner it was dragged toward
+   (data-h, data-v on .presence); the card goes on the side with room. */
 @import "../tokens.css";
 :root {
   --plate: color-mix(in oklch, var(--raise) 95%, transparent);
+  --speech-bg: var(--plate);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --out: cubic-bezier(.23, 1, .32, 1);
 }
 html, body, #root { margin: 0; height: 100%; background: transparent; overflow: hidden; }
 body { font: 13px/1.5 var(--sans); color: var(--ink); -webkit-user-select: none; user-select: none; }
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: left; }
 
-.presence { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end; gap: 10px; padding: 12px; }
+.presence { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end; gap: 16px; padding: 14px 16px; }
+.presence[data-h="left"] { flex-direction: row-reverse; }
+.presence[data-v="top"] { align-items: flex-start; }
+.presence .speech { margin-bottom: 30px; }
+.presence[data-v="top"] .speech { margin: 30px 0 0; }
+
+/* ── The figure ── */
+/* The hold carries it: lift under the pointer, lean while carried, bump on landing. */
+.hold {
+  flex: none; transform: translate(var(--dx), var(--dy)) rotate(var(--tilt));
+  transition: transform 260ms cubic-bezier(.34, 1.56, .64, 1);
+}
+.hold:hover { transform: translate(var(--dx), calc(var(--dy) - 3px)) rotate(var(--tilt)); }
+.hold[data-dragging] { transition: transform 90ms linear; }
+.hold[data-dragging] .figure { cursor: grabbing; box-shadow: 0 22px 40px #00000052; transform: scale(1.06); }
+.hold[data-landed="0"] .figure:not([data-speaking]) { animation: land-a 420ms var(--out); }
+.hold[data-landed="1"] .figure:not([data-speaking]) { animation: land-b 420ms var(--out); }
+@keyframes land-a { 30% { transform: scale(1.12, .86); } 60% { transform: scale(.96, 1.05); } }
+@keyframes land-b { 30% { transform: scale(1.12, .86); } 60% { transform: scale(.96, 1.05); } }
+
 .figure {
-  flex: none; width: 76px; height: 76px; padding: 5px; border: 1px solid var(--line); border-radius: 22px;
+  position: relative; display: block; width: 76px; height: 76px; padding: 5px; border: 1px solid var(--line); border-radius: 22px;
   background: var(--plate); box-shadow: 0 8px 24px #0000003d; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  cursor: grab; touch-action: none; transition: transform 200ms var(--out), box-shadow 200ms var(--out);
 }
-.figure svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.figure:active:not([data-speaking]) { transform: scale(.95); }
+.figure[data-speaking] { transition: transform 420ms cubic-bezier(.34, 1.56, .64, 1), box-shadow 200ms var(--out); }
+.figure svg { width: 100%; height: 100%; display: block; overflow: visible; pointer-events: none; }
 .figure:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+.figure[data-speaking="speak"], .figure[data-speaking="hop"] { box-shadow: 0 14px 34px #00000047; }
+.presence[data-v="top"] .figure { --up: 1; transform-origin: 50% 0; }
 
-.bubble {
-  position: relative; max-width: 310px; margin-bottom: 14px; display: flex; align-items: flex-start;
-  border: 1px solid var(--line); border-radius: 14px 14px 4px 14px; background: var(--plate);
-  box-shadow: 0 10px 30px #0000004d; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
-  animation: arrive 360ms cubic-bezier(.23, 1, .32, 1);
+/* Hidden by the user: Alfred rises from beyond the screen's edge to say it, and goes back after. */
+.visiting .figure[data-speaking="hop"] { animation: rise 640ms var(--out) both; }
+.visiting .figure[data-speaking="sink"] { animation: sink 520ms cubic-bezier(.55, 0, .75, .2) both; }
+@keyframes rise {
+  0%   { transform: translateY(calc(var(--up) * -160px)) scale(1); }
+  62%  { transform: translateY(calc(var(--up) * 14px)) scale(calc(var(--big) - .04), calc(var(--big) + .06)); }
+  82%  { transform: translateY(calc(var(--up) * -2px)) scale(calc(var(--big) + .05), calc(var(--big) - .06)); }
+  100% { transform: translateY(0) scale(var(--big)); }
 }
-.bubble-body { display: flex; flex-direction: column; gap: 2px; padding: 10px 6px 10px 14px; }
-.greeting { color: var(--ink); }
-.summary { color: var(--copy); }
-.bubble-close { flex: none; width: 26px; height: 26px; margin: 4px 4px 0 0; border-radius: 50%; color: var(--copy); font-size: 16px; line-height: 26px; text-align: center; }
-.bubble-close:hover { color: var(--ink); }
+@keyframes sink {
+  0%   { transform: translateY(0) scale(1); }
+  24%  { transform: translateY(calc(var(--up) * 8px)) scale(.96, 1.06); }
+  100% { transform: translateY(calc(var(--up) * -160px)) scale(1); }
+}
 
-@keyframes arrive { from { opacity: 0; transform: translateX(10px); } }
-@media (prefers-reduced-motion: reduce) { .bubble { animation: none; } }
+/* In a browser with ?demo: a stand-in desktop to see it against. */
+html[data-demo] body { background: linear-gradient(160deg, oklch(.72 .06 240), oklch(.55 .08 290)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .hold, .figure { animation: none !important; transition: none !important; }
+}

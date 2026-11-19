@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音识别比较 · 录音</title>
+<style>
+  :root {
+    --bg: #f6f3ee; --panel: #fffdf9; --ink: #26231f; --dim: #78716a; --line: #e4ddd3;
+    --accent: #c2410c; --ok: #15803d; --rec: #dc2626; --sel: #fdf2e6;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #171614; --panel: #1f1d1a; --ink: #ece7df; --dim: #9a9188; --line: #34302b; --accent: #fb923c; --ok: #4ade80; --rec: #f87171; --sel: #2a241d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .lede { color: var(--dim); margin: 0 0 16px; }
+  .lede kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--panel); }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; gap: 12px; align-items: center; padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .meter { flex: 0 0 160px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width 60ms linear; }
+  .progress { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .grow { flex: 1; }
+  button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  button.rec { color: #fff; background: var(--rec); border-color: var(--rec); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr.sel td { background: var(--sel); }
+  td.id { font: 12px ui-monospace, monospace; color: var(--dim); white-space: nowrap; padding-top: 10px; }
+  td.cat { white-space: nowrap; padding-top: 9px; }
+  .tag { font-size: 12px; border-radius: 4px; padding: 1px 6px; border: 1px solid var(--line); color: var(--dim); }
+  input.ref, input.terms { width: 100%; font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 5px; }
+  input.ref:focus, input.terms:focus { border-color: var(--line); background: var(--panel); outline: none; }
+  input.terms { font-size: 12px; color: var(--dim); }
+  td.act { white-space: nowrap; text-align: right; }
+  .state { font-size: 12px; color: var(--dim); display: inline-block; min-width: 54px; text-align: right; font-variant-numeric: tabular-nums; }
+  .state.done { color: var(--ok); }
+  .problem { color: var(--rec); }
+  @media (max-width: 640px) { td.cat, td.id { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>语音识别比较：录音</h1>
+  <p class="lede">
+    选中一行，按 <kbd>空格</kbd> 开始，再按一次结束（或点「录」）。照平时跟 Alfred 说话的样子说，不用念得字正腔圆。
+    说法和文字不一样时，<b>改文字去对上你说的</b>，不要重录。关键词用逗号隔开，是打分时要看有没有认对的词。
+    <kbd>↑</kbd><kbd>↓</kbd> 换行，<kbd>P</kbd> 回放。录音只存在这台 Mac 的 <code>scripts/voice-bench/clips/</code>，不进 git。
+  </p>
+  <div class="bar">
+    <div class="meter" aria-label="音量"><i id="level"></i></div>
+    <span class="progress" id="progress"></span>
+    <span class="grow"></span>
+    <span class="problem" id="problem" role="alert"></span>
+    <button id="add" type="button">加一条</button>
+  </div>
+  <table><tbody id="rows"></tbody></table>
+</main>
+<script type="module">
+const TARGET_RATE = 16000;
+const CATS = { daily: "日常", mixed: "混说", dev: "开发" };
+let clips = [];
+let selected = 0;
+let recording = null; // { id, chunks, rate, started }
+let audio = null;     // { context, node, source, stream, analyser }
+
+const $ = (id) => document.getElementById(id);
+const problem = (text) => { $("problem").textContent = text ?? ""; };
+
+async function load() {
+  clips = await (await fetch("/api/clips")).json();
+  render();
+}
+
+function render() {
+  const rows = $("rows");
+  rows.replaceChildren(...clips.map((clip, i) => {
+    const tr = document.createElement("tr");
+    tr.className = i === selected ? "sel" : "";
+    tr.onclick = () => { selected = i; markSelected(); };
+    const isRec = recording?.id === clip.id;
+    tr.innerHTML = `
+      <td class="id">${clip.id}</td>
+      <td class="cat"><span class="tag">${CATS[clip.category] ?? clip.category}</span></td>
+      <td>
+        <input class="ref" value="" aria-label="标准文字">
+        <input class="terms" value="" placeholder="关键词，逗号隔开" aria-label="关键词">
+      </td>
+      <td class="act">
+        <span class="state ${clip.recorded ? "done" : ""}">${isRec ? "录音中…" : clip.recorded ? clip.seconds.toFixed(1) + " 秒" : "未录"}</span>
+        <button type="button" class="${isRec ? "rec" : ""}" data-act="rec">${isRec ? "停" : clip.recorded ? "重录" : "录"}</button>
+        <button type="button" data-act="play" ${clip.recorded ? "" : "disabled"}>放</button>
+      </td>`;
+    const [ref, terms] = tr.querySelectorAll("input");
+    ref.value = clip.ref;
+    terms.value = clip.terms.join(", ");
+    const save = () => saveMeta(clip, ref.value, terms.value);
+    ref.onchange = save; terms.onchange = save;
+    tr.querySelector('[data-act="rec"]').onclick = (e) => { e.stopPropagation(); selected = i; toggle(); };
+    tr.querySelector('[data-act="play"]').onclick = (e) => { e.stopPropagation(); play(clip); };
+    return tr;
+  }));
+  const done = clips.filter((c) => c.recorded).length;
+  $("progress").textContent = `已录 ${done} / ${clips.length}`;
+}
+
+function markSelected() {
+  [...$("rows").children].forEach((tr, i) => tr.classList.toggle("sel", i === selected));
+  $("rows").children[selected]?.scrollIntoView({ block: "nearest" });
+}
+
+async function saveMeta(clip, ref, terms) {
+  clip.ref = ref.trim();
+  clip.terms = terms.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
+  const res = await fetch(`/api/clips/${clip.id}`, { method: "PUT", body: JSON.stringify(clip) });
+  problem(res.ok ? "" : "没存上：" + (await res.text()));
+}
+
+async function openMic() {
+  if (audio) return audio;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  const context = new AudioContext();
+  await context.audioWorklet.addModule("/capture-worklet.js");
+  const source = context.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(context, "capture");
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(node);
+  source.connect(analyser);
+  node.port.onmessage = (event) => {
+    if (event.data === "flushed") { recording?.onFlushed?.(); return; }
+    recording?.chunks.push(event.data);
+  };
+  audio = { context, node, source, stream, analyser };
+  meter();
+  return audio;
+}
+
+function meter() {
+  const data = new Float32Array(audio.analyser.fftSize);
+  const tick = () => {
+    audio.analyser.getFloatTimeDomainData(data);
+    let peak = 0;
+    for (const v of data) peak = Math.max(peak, Math.abs(v));
+    $("level").style.width = recording ? Math.min(100, peak * 140) + "%" : "0";
+    requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+async function toggle() {
+  problem();
+  if (recording) return stop();
+  const clip = clips[selected];
+  if (!clip) return;
+  try {
+    const { context } = await openMic();
+    await context.resume();
+    recording = { id: clip.id, chunks: [], rate: context.sampleRate, started: performance.now() };
+    render(); markSelected();
+  } catch (error) {
+    problem("麦克风打不开：" + error.message);
+  }
+}
+
+async function stop() {
+  const rec = recording;
+  await new Promise((resolve) => { rec.onFlushed = resolve; audio.node.port.postMessage("flush"); });
+  recording = null;
+  const samples = concat(rec.chunks);
+  if (samples.length < rec.rate * 0.3) { problem("太短了，没存。"); render(); return; }
+  const wav = encodeWav(downsample(samples, rec.rate, TARGET_RATE), TARGET_RATE);
+  const res = await fetch(`/api/clips/${rec.id}/audio`, { method: "PUT", body: wav });
+  if (!res.ok) { problem("没存上：" + (await res.text())); render(); return; }
+  const clip = clips.find((c) => c.id === rec.id);
+  clip.recorded = true;
+  clip.seconds = samples.length / rec.rate;
+  // Next unrecorded line.
+  const next = clips.findIndex((c, i) => i > selected && !c.recorded);
+  if (next >= 0) selected = next;
+  render(); markSelected();
+}
+
+function concat(chunks) {
+  const out = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.length; }
+  return out;
+}
+
+/** Averages each output sample over its input window: a crude low-pass, plenty for speech. */
+function downsample(input, from, to) {
+  if (from === to) return input;
+  const ratio = from / to;
+  const out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const start = Math.floor(i * ratio), end = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += input[j];
+    out[i] = sum / Math.max(1, end - start);
+  }
+  return out;
+}
+
+function encodeWav(samples, rate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const text = (offset, s) => [...s].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+  text(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); text(8, "WAVE");
+  text(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  text(36, "data"); view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function play(clip) {
+  new Audio(`/api/clips/${clip.id}/audio?t=${Date.now()}`).play();
+}
+
+$("add").onclick = async () => {
+  const cat = prompt("类别：daily / mixed / dev", "daily");
+  if (!cat || !CATS[cat]) return;
+  const n = clips.filter((c) => c.id.startsWith("x")).length + 1;
+  const clip = { id: `x${String(n).padStart(2, "0")}`, category: cat, ref: "", terms: [], recorded: false, seconds: 0 };
+  clips.push(clip);
+  await saveMeta(clip, "", "");
+  selected = clips.length - 1;
+  render(); markSelected();
+  $("rows").children[selected].querySelector("input.ref").focus();
+};
+
+document.addEventListener("keydown", (event) => {
+  if (event.target instanceof HTMLInputElement) {
+    if (event.key === "Escape" || event.key === "Enter") event.target.blur();
+    return;
+  }
+  if (event.key === " ") { event.preventDefault(); toggle(); }
+  else if (event.key === "ArrowDown" && !recording) { event.preventDefault(); selected = Math.min(clips.length - 1, selected + 1); markSelected(); }
+  else if (event.key === "ArrowUp" && !recording) { event.preventDefault(); selected = Math.max(0, selected - 1); markSelected(); }
+  else if (event.key.toLowerCase() === "p" && clips[selected]?.recorded) play(clips[selected]);
+});
+
+load().catch((error) => problem("加载失败：" + error.message));
+</script>
+</body>
+</html>

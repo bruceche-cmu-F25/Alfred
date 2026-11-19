@@ -21,11 +21,15 @@ contextBridge.exposeInMainWorld("alfredDesktop", {
   onFocusRun: (listener) => listen("focus-run", (_event, runId) => listener(String(runId))),
   onFocusComposer: (listener) => listen("focus-composer", () => listener()),
   onAttention: (listener) => listen("attention", (_event, attending) => listener(Boolean(attending))),
-  onWelcome: (listener) => listen("welcome", (_event, notice) => listener(notice)),
+  onSay: (listener) => listen("say", (_event, notices, visiting) => listener(Array.isArray(notices) ? notices : [], Boolean(visiting))),
   toggleMain: () => ipcRenderer.send("toggle-main"),
   openMain: (runId) => ipcRenderer.send("open-main", typeof runId === "string" ? runId : null),
   setInteractive: (interactive) => ipcRenderer.send("set-interactive", Boolean(interactive)),
-  welcomeDone: (noticeId, opened) => ipcRenderer.send("welcome-done", String(noticeId), Boolean(opened)),
+  noticeDone: (noticeId, outcome) => ipcRenderer.send("notice-done", String(noticeId), String(outcome)),
+  settle: () => ipcRenderer.send("presence-settle"),
+  onSide: (listener) => listen("presence-side", (_event, side) => listener({ h: side?.h === "left" ? "left" : "right", v: side?.v === "top" ? "top" : "bottom" })),
+  dragFigure: (phase) => ipcRenderer.send("presence-drag", String(phase)),
+  figureMenu: () => ipcRenderer.send("presence-menu"),
   /** Main window: the system's folder picker; resolves with the chosen folder's path, or null. */
   pickFolder: () => ipcRenderer.invoke("pick-folder"),
 });

@@ -7,10 +7,11 @@
  * first, once, for exactly that call.
  */
 import { withCoreContext } from "./context.ts";
-import { getConversation, type ThinkingLevel } from "./conversations.ts";
-import { getProject } from "./projects.ts";
+import { getConversation, updateConversation, type ThinkingLevel } from "./conversations.ts";
+import { getProject, type SessionMode } from "./projects.ts";
 import { appendEvent, recordDomainEvent } from "./events.ts";
 import { newId } from "./ids.ts";
+import { getSettings } from "./settings.ts";
 import {
   claimNextRun, conversationBefore, finishRun, heartbeatRun, openRequest, RUN_LEASE_MS, runAnswers, sweepRuns,
   type Run, type RunRequest, type ViewContext,
@@ -44,18 +45,20 @@ export interface RunProfile {
   tools: readonly RunTool[];
   /** Nobody is there to answer (an automation's run): it can never stop to ask, and external tools that would ask are refused. */
   unattended?: boolean;
-  /** For development sessions only: what the run may do in its project's folder. Set exactly when the conversation is in a project. */
-  workspace?: WorkspaceAccess;
+  /** For development sessions only: the run works in its project's folder, as the session's mode allows.
+   * Set exactly when the conversation is in a project. */
+  workspace?: boolean;
 }
-/** What a development session may do in its project's folder. `read`: read, search and list its files. */
-export type WorkspaceAccess = "read";
 /** The folder a development session works in, for the engine. */
 export interface Workspace {
   /** Absolute, on the home node. */
   root: string;
   name: string;
-  access: WorkspaceAccess;
+  /** What it may do there without asking (projects.ts SESSION_MODES). */
+  mode: SessionMode;
 }
+/** A file a development session changed, as a receipt. */
+export interface FileChange { path: string; added: number; removed: number; created: boolean }
 export interface EngineRequest {
   /** A stable key for the conversation, for engines that keep a session per conversation. */
   thread: string;
@@ -99,8 +102,11 @@ export interface TurnUsage {
 export interface EngineModel { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }
 /** How an engine reports calls to its own tools, which Alfred did not define. */
 export interface ExternalHooks {
-  /** Asks the user to allow this one call; resolves true only on an explicit yes. */
-  allow(question: string): Promise<boolean>;
+  /** Asks the user to allow this one call, showing `detail` (a diff) with the question. Resolves `deny` unless the user
+   * said yes; `always` (offered only with `always: true`) means yes to this and to the rest of its kind in the session. */
+  allow(question: string, extra?: { detail?: string; always?: boolean }): Promise<"allow" | "deny" | "always">;
+  /** A file in the session's project changed: kept as a receipt. */
+  changed?(file: FileChange): void;
   /** A step, shown like Alfred's own tool calls. */
   step(step: { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined" }): void;
   /** A call that may have changed something outside Alfred's world succeeded: kept as a receipt. */
@@ -151,7 +157,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   if (conversation.projectId) {
     const project = (() => { try { return getProject(world, conversation.projectId!); } catch { return null; } })();
     if (!project?.trustedAt) return finishRun(world, run.id, options.owner, { status: "failed", error: "project_unavailable" });
-    workspace = { root: project.path, name: project.name, access: profile.workspace! };
+    workspace = { root: project.path, name: project.name, mode: conversation.mode ?? "plan" };
   }
 
   const context = { actor: "alfred" as const, run: { id: run.id, owner: options.owner } };
@@ -171,10 +177,10 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
       world.tx((db) => appendEvent(db, { kind: `run.${kind}`, subject: `run:${run.id}`, runId: run.id, actor: "alfred", payload }));
     } catch { /* a note is not worth failing the run */ }
   };
-  const ask: RunToolContext["ask"] = (request) => {
+  const ask = (request: Parameters<RunToolContext["ask"]>[0] & { detail?: string; always?: boolean }): Promise<string> => {
     // Unattended: a question would wait for no one. The profile offers no tool that asks; this is the backstop.
     if (profile.unattended) return Promise.reject(new Error("This run is unattended: nobody can answer. Propose the change instead."));
-    const opened = openRequest(world, run.id, options.owner, { kind: request.kind ?? "input", question: request.question, options: request.options });
+    const opened = openRequest(world, run.id, options.owner, { kind: request.kind ?? "input", question: request.question, options: request.options, detail: request.detail, always: request.always });
     return new Promise<string>((resolve, reject) => {
       const onAnswer = (runId: string, requestId: string, answer: string) => {
         if (runId !== run.id || requestId !== opened.id) return;
@@ -189,7 +195,21 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   };
   const toolContext: RunToolContext = { ask, note };
   const external: ExternalHooks = {
-    allow: async (question) => !profile.unattended && (await ask({ kind: "permission", question })) === "allow",
+    allow: async (question, extra) => {
+      if (profile.unattended) return "deny";
+      const answer = await ask({ kind: "permission", question, detail: extra?.detail, always: extra?.always && !!workspace });
+      // "Don't ask again" in a session: its mode becomes `edits`, from now on.
+      if (answer === "always" && workspace) {
+        try { withCoreContext({ actor: "user" }, () => updateConversation(world, conversation.id, { mode: "edits" })); } catch { /* the run goes on */ }
+      }
+      return answer === "allow" || answer === "always" ? answer : "deny";
+    },
+    changed: (file) => {
+      withCoreContext(context, () => world.tx(() => recordDomainEvent(world, {
+        kind: "file.changed", subject: `file:${file.path}`.slice(0, 160),
+        payload: { path: file.path.slice(0, 500), added: file.added, removed: file.removed, created: file.created },
+      })));
+    },
     step: (step) => note("step", { step: step.id, tool: step.tool, label: step.label, about: step.about?.slice(0, 200), status: step.status }),
     receipt: (call) => {
       // Under the run's lease, like any change: a lapsed executor records nothing.
@@ -224,10 +244,13 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
       }
     },
   }));
+  // The conversation's own choice, else the user's default model and thinking (settings).
+  const preferred = getSettings(world);
+  const model = conversation.model ?? preferred.model, thinking = conversation.thinking ?? preferred.thinking;
   const request: EngineRequest = {
     ...(workspace ? { workspace } : {}),
-    ...(conversation.model ? { model: conversation.model } : {}),
-    ...(conversation.thinking ? { thinking: conversation.thinking } : {}),
+    ...(model ? { model } : {}),
+    ...(thinking ? { thinking } : {}),
     onUsage: (usage) => note("usage", { ...usage }),
     thread: run.conversationId,
     goal: run.goal,

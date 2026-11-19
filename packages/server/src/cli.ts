@@ -19,6 +19,8 @@ import { RemoteAccess } from "./remote.ts";
 import { PushService } from "./push.ts";
 import { cliRunner, findTailscale, Tailscale } from "./tailscale.ts";
 import { GoogleConnections } from "./google.ts";
+import { createCredentialStore, ModelAccounts } from "@alfred/engine-pi";
+import { recordDomainEvent } from "@alfred/core";
 import { defaultSecretStore } from "./secrets.ts";
 
 const MODULES = [todoModule, calendarModule, mailModule];
@@ -57,6 +59,11 @@ if (command === "serve") {
   }
   // Google accounts: tokens in the keychain, Alfred's own OAuth client from the data directory (or the default one).
   const google = new GoogleConnections({ dataDir, secrets: defaultSecretStore(dataDir), world: home.world, clientDirs: [...new Set([dataDir, defaultDataDir()])], log });
+  // Model sign-in: credentials in the keychain too, shared with the engine workers (which use the same store).
+  const models = new ModelAccounts({
+    store: createCredentialStore({ secrets: defaultSecretStore(dataDir), lockDir: dataDir }), dataDir, log,
+    onChange: (kind, provider, detail) => home.world.tx(() => recordDomainEvent(home.world, { kind: `model.${kind}`, subject: `model:${provider}`, actor: "user", payload: { provider, ...detail } })),
+  });
   // The calendar and mail modules read the connected accounts through it.
   services = { google: googleService(google) };
   // Other devices: Tailscale Serve forwards to the ingress port, where every request needs a paired device.
@@ -67,8 +74,8 @@ if (command === "serve") {
   const push = new PushService({ dataDir, world: home.world, secrets: defaultSecretStore(dataDir), log });
   remote.events.on("revoked", (id) => push.unsubscribe(id));
   push.watch();
-  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, remote, push });
-  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, remote, push });
+  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, remote, push });
+  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, models, remote, push });
   server.on("error", (error: NodeJS.ErrnoException) => {
     void engine.close();
     home.close();
@@ -89,6 +96,7 @@ if (command === "serve") {
   ingress.on("error", (error: NodeJS.ErrnoException) => log(`ingress port ${ingressPort} unavailable (${error.code ?? error.message}); other devices cannot connect`));
   const stop = async () => {
     google.close();
+    models.close();
     push.close();
     server.close();
     server.closeAllConnections();

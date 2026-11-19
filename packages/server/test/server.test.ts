@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { EnginePort } from "@alfred/core";
 import { todoModule, type TodoSnapshot } from "@alfred/module-todo";
-import type { ConversationDetail, CoreEvent, RunDetail, StateResponse, SubmitRunResponse } from "@alfred/protocol";
+import type { ConversationDetail, CoreEvent, RunDetail, SessionChanges, StateResponse, SubmitRunResponse } from "@alfred/protocol";
 import { AUTOMATION_PROFILE, ASSISTANT_PROFILE, createHttpServer, openHome, profiles, type Home } from "../src/index.ts";
 
 /** Adds the todo named in the goal through the run's own tool. */
@@ -324,7 +324,7 @@ test("automations over HTTP: made by the user, fired once by the clock, unattend
   const seen: Array<{ tools: string[]; instructions: string; allowed: boolean; goal: string }> = [];
   const recording: EnginePort = {
     async submit(request) {
-      seen.push({ tools: request.tools.map((tool) => tool.name), instructions: request.instructions, allowed: await request.external.allow("Post this?"), goal: request.goal });
+      seen.push({ tools: request.tools.map((tool) => tool.name), instructions: request.instructions, allowed: (await request.external.allow("Post this?")) !== "deny", goal: request.goal });
       return { reply: "Two todos are due today." };
     },
   };
@@ -422,7 +422,7 @@ test("a development session: add and trust a folder, start a session, and its ru
     await home.idle();
     const detail = await (await fetch(`${base}/api/conversations/${session.id}`)).json() as ConversationDetail;
     assert.equal(detail.runs[0].state, "completed");
-    assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", access: "read" });
+    assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask" });
     assert.equal(seen[0].context, undefined, "a session is not asked from a page");
     assert.ok(!seen[0].tools.includes("show_view"));
 
@@ -479,6 +479,73 @@ test("calendar and mail over HTTP: a refresh reads Google, the state carries the
     }
   } finally {
     server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("a session that edits: changes since its snapshot, one file's diff, and 'don't ask again' switching it to edits", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "alfred-repo-"));
+  const sh = (...args: string[]) => execFileSync("git", ["-C", folder, ...args], { stdio: "pipe" });
+  sh("init", "-q");
+  sh("config", "user.email", "test@example.com");
+  sh("config", "user.name", "Test");
+  writeFileSync(join(folder, "a.txt"), "one\n");
+  writeFileSync(join(folder, "b.txt"), "bee\n");
+  sh("add", ".");
+  sh("commit", "-qm", "start");
+  // The user's own edit from before the session: not the session's change.
+  writeFileSync(join(folder, "b.txt"), "bee\nmine\n");
+
+  const editing: EnginePort = {
+    async submit(request) {
+      const answer = await request.external.allow("Change a.txt?", { detail: "--- a.txt\n+++ a.txt\n+two", always: true });
+      if (answer === "deny") return { reply: "Left it." };
+      appendFileSync(join(folder, "a.txt"), "two\n");
+      request.external.changed?.({ path: "a.txt", added: 1, removed: 0, created: false });
+      writeFileSync(join(folder, "new.txt"), "x\ny\n");
+      request.external.changed?.({ path: "new.txt", added: 2, removed: 0, created: true });
+      return { reply: `Done (${answer}).` };
+    },
+  };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: editing, modules: [todoModule] });
+  const { server, base } = await start(home);
+  try {
+    const project = await (await post(base, "/api/projects", { path: folder })).json() as { id: string };
+    await post(base, `/api/projects/${project.id}/trust`, {});
+    const session = await (await post(base, "/api/conversations", { projectId: project.id, title: "Add a line", mode: "ask" })).json() as { id: string; mode: string; base: string | null };
+    assert.equal(session.mode, "ask");
+    assert.match(String(session.base), /^[0-9a-f]{40}$/);
+    const { run } = await (await post(base, "/api/runs", { requestId: "edit-1", goal: "Add a line", conversationId: session.id })).json() as SubmitRunResponse;
+
+    let detail: ConversationDetail;
+    for (;;) {
+      detail = await (await fetch(`${base}/api/conversations/${session.id}`)).json() as ConversationDetail;
+      if (detail.runs[0].request) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const asked = detail.runs[0].request!;
+    assert.deepEqual(asked.options, ["allow", "deny", "always"]);
+    assert.match(String(asked.detail), /\+two/);
+    assert.equal((await post(base, `/api/runs/${run.id}/respond`, { requestId: asked.id, answer: "always" })).status, 200);
+    await home.idle();
+
+    detail = await (await fetch(`${base}/api/conversations/${session.id}`)).json() as ConversationDetail;
+    assert.equal(detail.runs[0].outcome?.reply, "Done (always).");
+    assert.equal(detail.conversation.mode, "edits", "don't ask again: the session now changes files without asking");
+    assert.deepEqual(detail.receipts[run.id].map((event) => event.kind), ["file.changed", "file.changed"]);
+
+    const changes = await (await fetch(`${base}/api/conversations/${session.id}/changes`)).json() as SessionChanges;
+    assert.deepEqual(changes.files, [
+      { path: "a.txt", added: 1, removed: 0, created: false },
+      { path: "new.txt", added: 2, removed: 0, created: true },
+    ], "b.txt was changed before the session, so it is not listed");
+    assert.ok(changes.branch);
+    const diff = await (await fetch(`${base}/api/conversations/${session.id}/diff?path=a.txt`)).json() as { diff: string };
+    assert.match(diff.diff, /^\+two$/m);
+    assert.match(((await (await fetch(`${base}/api/conversations/${session.id}/diff?path=new.txt`)).json()) as { diff: string }).diff, /^\+y$/m);
+    assert.equal(((await (await fetch(`${base}/api/conversations/${session.id}/diff?path=../b.txt`)).json()) as { diff: unknown }).diff, null);
+  } finally {
+    server.close();
     home.close();
   }
 });

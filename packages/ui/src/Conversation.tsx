@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, ThinkingLevel, ViewContext } from "@alfred/protocol";
+import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, SessionMode, ThinkingLevel, ViewContext } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
 import { t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
+import { Diff } from "./Diff.tsx";
 import { Icon } from "./shell/icons.tsx";
 
 const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
@@ -83,11 +84,15 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
   return (
     <div className="request" data-kind={request.kind} role="group" aria-label={t(permission ? "req.permission" : "req.input")}>
       <p className="request-question">{request.question}</p>
+      {request.detail && <Diff patch={request.detail} />}
       <div className="request-options">
         {permission ? (
           <>
             <button type="button" disabled={busy} onClick={() => answer("allow")}>{t("common.allow")}</button>
             <button type="button" className="ghost" disabled={busy} onClick={() => answer("deny")}>{t("common.deny")}</button>
+            {request.options.includes("always") && (
+              <button type="button" className="ghost" disabled={busy} onClick={() => answer("always")} title={t("req.alwaysTitle")}>{t("req.always")}</button>
+            )}
           </>
         ) : request.options.map((option) => (
           <button type="button" key={option} disabled={busy} onClick={() => answer(option)}>{option}</button>
@@ -149,7 +154,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
               </ol>
             )}
             {answers.map((event) => (
-              <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? t(event.payload.answer === "allow" ? "run.allowed" : "run.denied") : String(event.payload.answer)}</p>
+              <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? t(event.payload.answer === "allow" ? "run.allowed" : event.payload.answer === "always" ? "run.always" : "run.denied") : String(event.payload.answer)}</p>
             ))}
             {run.request && <Request run={run} request={run.request} />}
             {working && !run.request && (label || !live) && (
@@ -180,6 +185,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
   );
 }
 
+const MODES: SessionMode[] = ["plan", "ask", "edits"];
 const THINKING: Array<[ThinkingLevel | "", Key]> = [["", "think.default"], ["off", "think.off"], ["low", "think.low"], ["medium", "think.medium"], ["high", "think.high"]];
 let modelList: Promise<EngineModel[]> | null = null;
 
@@ -207,7 +213,7 @@ function ComposerBar({ conversation, onError }: { conversation: ConversationDeta
     void modelList.then(setModels);
   }, [exists]);
   if (!conversation) return null;
-  const change = (patch: { model?: string | null; thinking?: ThinkingLevel | null }) => {
+  const change = (patch: { model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }) => {
     onError(null);
     api.updateConversation(conversation.id, patch).catch((reason: Error) => onError(reason.message));
   };
@@ -228,6 +234,14 @@ function ComposerBar({ conversation, onError }: { conversation: ConversationDeta
           {THINKING.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
         </select>
       </label>
+      {conversation.projectId && (
+        <label className="pick mode" data-mode={conversation.mode ?? "plan"} title={t("mode.title")}>
+          <Icon name="shield" />
+          <select aria-label={t("mode.title")} value={conversation.mode ?? "plan"} onChange={(event) => change({ mode: event.target.value as SessionMode })}>
+            {MODES.map((mode) => <option key={mode} value={mode}>{t(`mode.${mode}` as Key)}</option>)}
+          </select>
+        </label>
+      )}
     </>
   );
 }

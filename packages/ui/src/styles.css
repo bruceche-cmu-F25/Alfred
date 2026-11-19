@@ -2,7 +2,7 @@
    Its neutrals (--bg, --paper, --raise, --wash, --line, --ink, --copy, --muted) and --warm are used as they are. */
 @import "./tokens.css";
 :root {
-  --accent: var(--alf); --accent-soft: var(--alf-soft); --accent-ink: #fff; --bad: var(--now);
+  --accent: var(--alf); --accent-soft: var(--alf-soft); --accent-ink: var(--raise); --bad: var(--now);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   --serif: Georgia, "Songti SC", STSong, serif;
   --mono: "SFMono-Regular", ui-monospace, Consolas, monospace;
@@ -57,7 +57,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .mark { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--k-solid, var(--muted)); }
 .mark.dim { opacity: .4; }
 .badge { min-width: 18px; height: 18px; padding: 0 5px; display: inline-grid; place-items: center; border-radius: 9px; font: .6875rem var(--mono); }
-.badge.attention { background: var(--warm); color: #fff; }
+.badge.attention { background: var(--warm); color: var(--raise); }
 
 /* Sidebar: pages, then conversations. Folds to a rail of icons. */
 .nav { grid-area: nav; min-width: 0; min-height: 0; position: relative; z-index: 5; display: flex; flex-direction: column; gap: 1px; padding: 10px 8px 10px; background: var(--paper); border-right: 1px solid var(--line-soft); overflow-y: auto; overflow-x: hidden; }
@@ -73,6 +73,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .nav-item:hover { background: var(--wash); }
 .nav-item[aria-current="page"] { background: var(--wash); color: var(--ink); font-weight: 500; }
 .nav-item svg { color: var(--k-solid, currentColor); }
+.nav-item .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nav-item .count { margin-left: auto; }
 .nav-spacer { flex: 1; min-height: 12px; }
 .conv-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 2px 4px 9px; color: var(--muted); font-size: .75rem; }
@@ -92,6 +93,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .conv-rail { display: none; }
 .nav-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 2px 0 0; }
 .connection { display: flex; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); font-size: .75rem; }
+.nav-foot-end { display: flex; align-items: center; gap: 2px; }
+.nav-foot .scheme { width: 24px; height: 24px; border-radius: 6px; }
+.nav-foot .scheme svg { width: 15px; height: 15px; }
 .lang { height: 24px; padding: 0 8px; border-radius: 6px; color: var(--muted); font-size: .75rem; }
 .lang:hover { background: var(--wash); color: var(--ink); }
 .connection b { font-weight: 400; }
@@ -109,21 +113,30 @@ body.resizing { cursor: col-resize; user-select: none; }
 .nav[data-mode="rail"] .nav-group { align-items: center; padding-top: 8px; }
 .nav[data-mode="rail"] .nav-item { width: 40px; height: 40px; justify-content: center; padding: 0; border-radius: 10px; }
 .nav[data-mode="rail"] .nav-item svg { width: 20px; height: 20px; }
-.nav[data-mode="rail"] .nav-item .count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; margin: 0; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: #fff; font-size: .625rem; }
+.nav[data-mode="rail"] .nav-item .count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; margin: 0; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: var(--raise); font-size: .625rem; }
 .nav[data-mode="rail"] .conv-rail { display: flex; }
 .nav[data-mode="rail"] .nav-foot { flex-direction: column; gap: 4px; padding: 8px 0 0; }
+.nav[data-mode="rail"] .nav-foot-end { flex-direction: column; gap: 4px; }
 .nav[data-mode="rail"] .connection { padding: 0; }
-.nav[data-mode="rail"] .lang { padding: 0 4px; }
+.nav[data-mode="rail"] .lang { max-width: 100%; padding: 0 2px; overflow: hidden; font-size: .6875rem; text-overflow: ellipsis; }
 
-/* The page: one module's view at a time. */
-.page { grid-area: page; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+/* The page: one module's view at a time. Its contents lay themselves out by the width of this column (@container page),
+   not the window's: with Alfred's panel open the column is narrow in a wide window. */
+.page { grid-area: page; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); container: page / inline-size; overflow: hidden; }
 .page-head { flex: none; padding: 36px 40px 14px; }
-.page-head h1 { display: flex; align-items: center; gap: 12px; font-size: 1.875rem; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; color: var(--ink); }
-.page-head h1 svg { width: 28px; height: 28px; color: var(--k-solid, var(--accent)); stroke-width: 1.9; }
+.page-head h1 { display: flex; align-items: center; gap: 12px; font-size: 1.875rem; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; color: var(--ink); overflow-wrap: anywhere; }
+.page-head h1 svg { flex: none; width: 28px; height: 28px; color: var(--k-solid, var(--accent)); stroke-width: 1.9; }
 .page-sub { margin-top: 6px; color: var(--muted); font-size: .875rem; }
 .page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .page .todos { background: none; max-width: 760px; width: 100%; padding: 0 24px; }
 .page .panel-head { display: none; }
+@container page (max-width: 600px) {
+  .page-head { padding: 22px 18px 10px; }
+  .page-head h1 { font-size: 1.625rem; }
+  .page .todos { padding: 0 6px; }
+  .todo-add { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .todo-add input:first-child { grid-column: 1 / -1; }
+}
 
 /* Alfred: the figure, a line on what it is doing, and the conversation. */
 .alfred { grid-area: alf; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--raise); border-left: 1px solid var(--line-soft); }
@@ -132,7 +145,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .alf-head .figure { flex: none; margin-top: 2px; }
 .alf-who { flex: 1; min-width: 0; }
 .alf-name { font-weight: 600; color: var(--ink); }
-.alf-looking { margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--wash); color: var(--muted); font-size: .6875rem; font-weight: 400; white-space: nowrap; vertical-align: 1px; }
+.alf-name { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.alf-looking { min-width: 0; max-width: 100%; padding: 1px 7px; border-radius: 999px; background: var(--wash); color: var(--muted); font-size: .6875rem; font-weight: 400; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .alf-line { margin-top: 2px; color: var(--copy); font-size: .875rem; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .alf-tools { display: flex; gap: 2px; }
 /* In the panel the conversation's title is a quiet line, with its usage at the right. */
@@ -150,7 +164,11 @@ body.resizing { cursor: col-resize; user-select: none; }
    below (shell/Says.tsx). The page's header keeps clear of it. */
 .fab { position: fixed; top: 18px; right: 16px; z-index: 20; display: flex; flex-direction: row-reverse; align-items: center; gap: 10px; max-width: min(340px, 38vw); padding: 6px 7px 6px 16px; border-radius: 999px; background: var(--raise); box-shadow: 0 4px 18px #0000001f, inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: .8125rem; text-align: left; }
 .fab:hover { box-shadow: 0 6px 22px #00000029, inset 0 0 0 1px var(--line); }
-.workspace[data-alfred="closed"] .page-head { padding-right: min(360px, 40vw); }
+.workspace[data-alfred="closed"]:not([data-phone]) .page-head { padding-right: min(360px, 40vw); }
+/* A narrow page has no room beside it: the header starts under it instead. */
+@container page (max-width: 640px) {
+  .workspace[data-alfred="closed"]:not([data-phone]) .page-head { padding-top: 72px; padding-right: 18px; }
+}
 html.desktop .fab { -webkit-app-region: no-drag; }
 .fab > span:not(.figure-anchor) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
@@ -235,7 +253,7 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 
 /* Questions worth asking from the page in view, one tap to send. */
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; max-width: 760px; width: calc(100% - 32px); margin: 0 auto; }
-.suggestion { flex: none; height: 28px; padding: 0 11px; border-radius: 999px; color: var(--copy); font-size: .8125rem; white-space: nowrap; box-shadow: inset 0 0 0 1px var(--line); }
+.suggestion { flex: none; max-width: 100%; height: 28px; padding: 0 11px; border-radius: 999px; color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; box-shadow: inset 0 0 0 1px var(--line); }
 .suggestion:hover { color: var(--ink); background: var(--wash); }
 .asked-on { align-self: center; color: var(--muted); font-size: .75rem; }
 .composer { display: flex; flex-direction: column; gap: 2px; max-width: 760px; width: calc(100% - 32px); margin: 8px auto calc(16px + env(safe-area-inset-bottom, 0px)); padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); }
@@ -261,7 +279,7 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 .chips { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; }
 .chip { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 999px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); }
 .chip:hover { color: var(--ink); }
-.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.chip[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); box-shadow: none; }
 .chip .mark { width: 7px; height: 7px; }
 .chip .count { color: inherit; opacity: .6; font-size: .75rem; }
 .todo-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; padding: 0 16px 4px; }
@@ -303,7 +321,7 @@ select.area-pick[data-empty] { background: none; color: var(--muted); box-shadow
 @media (hover: none) { .remove { opacity: .7; } }
 
 /* Inbox (通知): a list of what needs you on the left, the chosen item on the right. */
-.inbox { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; }
+.inbox { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; container: inbox / inline-size; }
 .inbox .chips { padding: 0 16px 12px; }
 .inbox-said { margin: 0 16px 10px; padding: 8px 12px; border-radius: 10px; background: var(--alf-soft); color: var(--copy); font-size: .8125rem; }
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 360px) minmax(0, 1fr); gap: 0; border-top: 1px solid var(--line-soft); margin: 0 -24px; }
@@ -332,14 +350,20 @@ select.area-pick[data-empty] { background: none; color: var(--muted); box-shadow
 .revise { display: flex; flex-direction: column; gap: 8px; }
 .revise textarea { width: 100%; padding: 10px 12px; border: 0; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); outline: none; resize: vertical; line-height: 1.5; }
 .revise textarea:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* When the page is narrow (Alfred's panel open, a small window): one column, like the phone — the list, or the chosen item with a way back. */
+@container inbox (max-width: 680px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .split .inbox-pane { display: none; }
+  .split[data-open] .inbox-list { display: none; }
+  .split[data-open] .inbox-pane { display: block; padding: 14px 18px 32px; }
+  .split:not([data-open]) .note[aria-current="true"]:not(:hover) { background: none; }
+  .inbox-pane .back { display: inline-block; margin-bottom: 10px; }
+  .inbox-list { border-right: 0; }
+}
 button.link { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in oklch, var(--accent) 35%, transparent); text-underline-offset: 3px; }
 
 /* Notices */
-.notices { position: fixed; right: 16px; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 10px; max-width: min(360px, calc(100vw - 32px)); z-index: 10; }
-.notice { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--raise); box-shadow: 0 14px 50px #0000003d; animation: rise 320ms var(--ease); }
-.notice-actions { display: flex; gap: 8px; justify-content: flex-end; }
 /* Beside Alfred's panel, not over it. */
-.workspace[data-alfred="open"]:not([data-phone]) .notices { right: calc(var(--alf-col) + 16px); bottom: 24px; }
 
 /* Inside the Mac app: the window buttons sit over the sidebar's top; the tops of the columns drag the window. */
 html.desktop .nav { padding-top: 40px; }
@@ -350,9 +374,6 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
 @media (max-width: 700px) {
   .workspace { grid-template-columns: minmax(0, 1fr); grid-template-areas: "page"; }
   .page { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
-  .page-head { padding: 22px 18px 10px; }
-  .page-head h1 { font-size: 1.625rem; }
-  .page .todos { padding: 0 6px; }
   .inbox { padding: 0 6px; }
   .split { grid-template-columns: minmax(0, 1fr); margin: 0 -6px; }
   .split .inbox-pane { display: none; }
@@ -360,8 +381,6 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
   .split[data-open] .inbox-pane { display: block; padding: 14px 18px 32px; }
   .inbox-pane .back { display: inline-block; margin-bottom: 10px; }
   .inbox-list { border-right: 0; padding: 4px 8px 24px; }
-  .todo-add { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .todo-add input:first-child { grid-column: 1 / -1; }
   .chips { flex-wrap: nowrap; overflow-x: auto; }
   .chip { flex: none; }
   .alfred { position: fixed; inset: 0; z-index: 30; border: 0; padding-top: env(safe-area-inset-top, 0px); }
@@ -375,9 +394,8 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
   .dock-tabs button[aria-current="page"] { color: var(--ink); }
   .dock-tabs button > svg { width: 22px; height: 22px; }
   .dock-tabs button[data-k] > svg { color: var(--k-solid); }
-  .dock .count { position: absolute; top: 7px; left: calc(50% + 8px); min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: #fff; font-size: .625rem; }
+  .dock .count { position: absolute; top: 7px; left: calc(50% + 8px); min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--warm); color: var(--raise); font-size: .625rem; }
   .dock-alfred { flex: none; width: 52px; height: 52px; margin-top: 6px; display: grid; place-items: center; border-radius: 50%; background: var(--raise); box-shadow: 0 6px 18px #0000001f, inset 0 0 0 1px var(--line-soft); }
-  .notices { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
   .find kbd, .pal kbd { display: none; }
 }
 
@@ -395,6 +413,7 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
 .auto-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 16px; align-items: center; padding: 14px 4px; border-bottom: 1px solid var(--line-soft); }
 .auto-row:not([data-enabled]) .auto-name, .auto-row:not([data-enabled]) .auto-sched { opacity: .62; }
 .auto-row.editing { display: block; padding: 16px 4px; }
+.auto-row > div { overflow-wrap: anywhere; }
 .auto-row small { display: block; overflow: hidden; color: var(--muted); font-size: .75rem; white-space: nowrap; text-overflow: ellipsis; }
 .auto-name { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .auto-name i { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--k-fill); color: var(--k-solid); }
@@ -405,7 +424,7 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
 .auto-last .link:hover { color: var(--ink); }
 .auto-last[data-state="failed"] .link, .auto-last[data-state="interrupted"] .link { color: var(--bad); }
 .auto-actions { display: flex; align-items: center; gap: 6px; }
-.auto-actions .small { min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: .75rem; }
+.auto-actions .small { min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: .75rem; white-space: nowrap; }
 .auto-actions .danger { background: var(--bad); color: #fff; box-shadow: none; }
 .auto-error { grid-column: 1 / -1; }
 .auto-add { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; min-height: 32px; padding: 0 14px 0 10px; border-radius: 999px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); }
@@ -422,16 +441,24 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
 .auto-when { display: flex; flex-wrap: wrap; gap: 16px; }
 .day-picks { display: flex; gap: 4px; }
 .day-pick { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 8px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); }
-.day-pick[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.day-pick[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); box-shadow: none; }
 .auto-form-actions { display: flex; gap: 8px; }
 .auto-form-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; }
 .auto-form-actions button.ghost { background: none; color: var(--copy); }
 .auto-form-actions button:disabled { opacity: .5; }
-@media (max-width: 760px) {
-  .automations { padding: 0 16px 80px; }
+/* Four columns need room. In a narrower page: what and when in one column, the switch and actions beside it;
+   narrower still, the actions go under as a row that wraps. */
+@container page (max-width: 860px) {
   .auto-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
   .auto-name, .auto-sched, .auto-last { grid-column: 1; }
   .auto-actions { grid-column: 2; grid-row: 1 / span 3; flex-direction: column; align-items: flex-end; }
+}
+@container page (max-width: 600px) {
+  .automations { padding: 0 16px 80px; }
+}
+@container page (max-width: 380px) {
+  .auto-row { grid-template-columns: minmax(0, 1fr); }
+  .auto-actions { grid-column: 1; grid-row: auto; flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 6px; }
 }
 
 /* ── Code: projects and development sessions (Dev.tsx) ─────────── */
@@ -485,10 +512,61 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
 .dev-recent .t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink); }
 .dev-recent .p { flex: none; color: var(--muted); font: .75rem var(--mono); }
 .dev-recent .time { flex: none; color: var(--muted); font: .6875rem var(--mono); }
-@media (max-width: 760px) {
+@container page (max-width: 600px) {
   .dev-new { padding: 24px 14px 32px; }
+}
+@media (max-width: 700px) {
   .dev-bar { padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
 }
+
+/* Coding sessions that change files (D3): diffs, the permission mode, the session's panel. */
+.diff { margin: 0; max-height: 360px; overflow: auto; padding: 8px 0; border-radius: 10px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line-soft); font: .75rem/1.55 var(--mono); color: var(--copy); white-space: pre; }
+.diff span { display: block; padding: 0 12px; }
+.diff [data-line="add"] { background: color-mix(in oklch, var(--ok) 15%, transparent); color: var(--ink); }
+.diff [data-line="del"] { background: color-mix(in oklch, var(--now) 14%, transparent); color: var(--ink); }
+.diff [data-line="hunk"], .diff [data-line="note"] { color: var(--muted); }
+.request .diff { align-self: stretch; }
+.pick.mode[data-mode="ask"] svg { color: var(--warm); }
+.pick.mode[data-mode="edits"] svg { color: var(--ok); }
+.dev-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.dev-layout[data-panel] { grid-template-columns: minmax(0, 1fr) 300px; }
+.dev-layout .dev-session { position: relative; }
+.dev-panel-toggle { margin-left: auto; }
+.dev-panel-toggle[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+.dev-panel { min-height: 0; overflow-y: auto; padding: 8px 16px 32px; border-left: 1px solid var(--line-soft); background: var(--paper); font-size: .8125rem; }
+.dev-panel section { padding: 12px 0 14px; border-bottom: 1px solid var(--line-soft); }
+.dev-panel section:last-child { border-bottom: 0; }
+.dev-panel h3 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--ink); font: 600 .8125rem/1.4 var(--sans); }
+.dev-panel h3 .mono { font: .75rem var(--mono); }
+.dev-panel .kv { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--copy); min-width: 0; }
+.dev-panel .kv svg { width: 14px; height: 14px; color: var(--muted); flex: none; }
+.dev-panel .mono, .dev-files .p { font: .75rem var(--mono); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dev-panel .small { margin-top: 6px; font-size: .75rem; }
+.add { color: var(--ok); }
+.del { color: var(--now); }
+.dev-modes { display: flex; flex-direction: column; gap: 4px; }
+.dev-modes button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 10px; border-radius: 9px; text-align: left; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.dev-modes button:hover { background: var(--wash); }
+.dev-modes button b { color: var(--ink); font-weight: 500; font-size: .8125rem; }
+.dev-modes button span { color: var(--muted); font-size: .75rem; }
+.dev-modes button[aria-checked="true"] { box-shadow: inset 0 0 0 1.5px var(--accent); background: var(--accent-soft); }
+.dev-modes.row { flex-direction: row; padding: 0 10px 10px; }
+.dev-modes.row button { flex: 1; min-width: 0; }
+.dev-files { display: flex; flex-direction: column; gap: 1px; }
+.dev-files button { width: 100%; display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin: 0 -6px; border-radius: 7px; text-align: left; font: .75rem var(--mono); color: var(--copy); }
+.dev-files button:hover, .dev-files button[aria-current] { background: var(--wash); }
+.dev-files .p { flex: 1; min-width: 0; direction: rtl; text-align: left; }
+.dev-files .new { color: var(--accent); font: .6875rem var(--sans); }
+.dev-drawer { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; gap: 10px; padding: 10px max(12px, calc((100% - 792px) / 2)) 16px; background: var(--bg); }
+.dev-drawer header { display: flex; align-items: center; gap: 8px; font: .8125rem var(--mono); color: var(--copy); }
+.dev-drawer .diff { flex: 1; max-height: none; }
+/* Narrow: the panel opens over the session from the right, by its button. */
+.dev-layout { position: relative; }
+@media (max-width: 1000px) {
+  .dev-layout[data-panel] { grid-template-columns: minmax(0, 1fr); }
+  .dev-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; width: min(320px, 88%); box-shadow: -12px 0 32px #0000002e; }
+}
+@media (max-width: 760px) { .dev-modes.row { flex-direction: column; } }
 
 /* Calendar and mail (W6/W7): mirrors of Google. Where the data comes from, then the page. */
 .source-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--muted); font-size: .8125rem; }
@@ -506,6 +584,8 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
 /* Calendars are toggles that are mostly on: on is a quiet raised pill with its colour dot, off fades out. */
 .cal-legend .chip[aria-pressed="true"] { background: var(--raise); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
 .cal-legend .chip[data-off] { opacity: .45; }
+/* A calendar of the user's own has a colour per series: its mark shows three of them. */
+.mark[data-varied] { background: conic-gradient(oklch(.6 .15 250) 0 33.3%, oklch(.63 .15 45) 0 66.6%, oklch(.62 .15 142) 0); }
 .ev-card { flex: none; max-width: 520px; margin: 0 0 10px; padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--k-fill); box-shadow: inset 3px 0 0 var(--k-solid); color: var(--copy); font-size: .8125rem; }
 .ev-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .ev-card-head b { color: var(--k-text, var(--ink)); font-size: .9375rem; font-weight: 600; }
@@ -560,7 +640,8 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
 .mail-body { margin: 18px 0; max-width: 72ch; color: var(--copy); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mail-back { display: none; }
 
-@media (max-width: 760px) {
+/* A week of seven columns needs room: in a narrow page the days are a list. */
+@container page (max-width: 640px) {
   .calendar { padding: 0 16px; }
   .week-grid { display: none; }
   .agenda { display: flex; flex-direction: column; gap: 14px; padding-bottom: 80px; overflow-y: auto; }
@@ -568,13 +649,32 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
   .agenda li[data-today] h3 { color: var(--now); }
   .agenda-ev { width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-radius: 8px; color: var(--copy); text-align: left; }
   .agenda-ev time { flex: none; width: 3.6em; color: var(--muted); font: .75rem var(--mono); }
+  .agenda-ev > span:last-child { min-width: 0; overflow-wrap: anywhere; }
   .agenda-ev[data-declined] span:last-child { text-decoration: line-through; opacity: .6; }
+}
+/* Mail in a narrow page: the list, or the message with a way back. */
+@container page (max-width: 760px) {
   .mail { padding: 0 16px; }
   .mail-split { grid-template-columns: minmax(0, 1fr); margin: 0 -16px; }
   .mail-split[data-reading] .mail-list, .mail-split:not([data-reading]) .mail-read { display: none; }
   .mail-read { padding: 14px 18px 60px; }
   .mail-back { display: inline-flex; margin-bottom: 10px; }
 }
+
+/* Alfred telling you something (shell/Says.tsx, speech/speech.css): the card sits by the figure it comes out of. */
+.figure-anchor { display: inline-flex; flex: none; }
+.figure-anchor > [data-speaking] { --hop: 12px; --big: 1.3; }
+.says { position: fixed; z-index: 40; }
+/* No figure in sight: a small Alfred comes up in the corner to say it. */
+.says-own {
+  position: fixed; right: 20px; bottom: 20px; z-index: 39; display: flex; padding: 8px; border-radius: 16px;
+  background: var(--raise); box-shadow: 0 10px 30px #00000026, inset 0 0 0 1px var(--line-soft);
+  animation: says-rise 560ms cubic-bezier(.23, 1, .32, 1) both;
+}
+.says-own[data-phase="sink"] { animation: says-sink 520ms cubic-bezier(.55, 0, .75, .2) both; }
+@keyframes says-rise { 0% { transform: translateY(120px); } 65% { transform: translateY(-8px); } 100% { transform: none; } }
+@keyframes says-sink { 25% { transform: translateY(-6px); } 100% { transform: translateY(120px); } }
+@media (prefers-reduced-motion: reduce) { .says-own { animation: none !important; } }
 
 /* A proposal step with more than a line to read (an email's whole text). */
 .step-detail { margin: 6px 0 2px; max-height: 320px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--wash); color: var(--copy); font: .8125rem/1.6 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
