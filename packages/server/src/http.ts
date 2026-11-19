@@ -1,9 +1,11 @@
 /** The client protocol over HTTP (see @alfred/protocol), plus the UI's files.
  *
- * Step 1 is local only: the server binds to loopback and accepts requests only
- * for a loopback Host (DNS-rebinding defence) and, when a browser sends an
- * Origin, only from itself. Paired devices and their tokens come with
- * multi-device support.
+ * Two listeners, both on loopback:
+ * - the local port, for this machine (the Mac app, a browser here): it accepts requests only for a loopback Host
+ *   (DNS-rebinding defence) and, when a browser sends an Origin, only from itself; everything is allowed.
+ * - the ingress port (remote.ts), which only Tailscale Serve forwards to: every request is another device's and,
+ *   apart from the UI's files and pairing, needs a paired device's token. Devices cannot touch credentials,
+ *   remote access or other devices; those stay on this machine.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -13,24 +15,32 @@ import {
   AREAS, acceptProposal, declineProposal, getSettings, listOpenProposals, supersedeProposal, runCommand, updateSettings, userLocale, withCoreContext,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
-  type LiveUpdate,
+  deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
 } from "@alfred/core";
 import { applyStep, invokeOp } from "@alfred/module-kit";
 import type {
-  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PresenceRequest, ProposalRequest, ProposalResponse,
-  RespondRequest, ReviseRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
+  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
+  RemoteResponse, RespondRequest, ReviseRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
 import { ASSISTANT_PROFILE, type Home } from "./home.ts";
 import { handleConnections } from "./connections-http.ts";
 import type { GoogleConnections } from "./google.ts";
+import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
+import type { PushService } from "./push.ts";
 
 const MAX_BODY = 64 * 1024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".woff2": "font/woff2",
+  ".webmanifest": "application/manifest+json",
 };
+/** A year and a bit; revoking on the Mac ends it sooner. */
+const COOKIE_MAX_AGE = 400 * 24 * 3600;
+
+/** Who is asking: this machine, or another device (paired or not) that came through Tailscale Serve. */
+type Peer = { local: true } | { local: false; device: Device | null; login: string | null };
 
 class HttpError extends Error {
   readonly status: number;
@@ -48,6 +58,23 @@ function hostAllowed(req: IncomingMessage, port: number): boolean {
   const host = req.headers.host ?? "";
   const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(host);
   return !!match && LOOPBACK_HOSTS.has(match[1].toLowerCase()) && Number(match[2] ?? 80) === port;
+}
+
+/** The ingress takes this machine's tailnet name (through Serve, which keeps the Host) or its own loopback port. */
+function ingressHostAllowed(req: IncomingMessage, port: number, dnsName: string | null): boolean {
+  const host = (req.headers.host ?? "").toLowerCase();
+  const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(host);
+  if (!match) return false;
+  if (dnsName && match[1] === dnsName.toLowerCase()) return true;
+  return LOOPBACK_HOSTS.has(match[1]) && Number(match[2] ?? 80) === port;
+}
+
+function cookieToken(req: IncomingMessage): string {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const [name, ...value] = part.trim().split("=");
+    if (name === DEVICE_COOKIE) return value.join("=");
+  }
+  return "";
 }
 
 function originAllowed(req: IncomingMessage): boolean {
@@ -84,6 +111,10 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
   const message = error instanceof Error ? error.message : "Request failed";
   const code = (error as { code?: unknown }).code;
   if (name === "SettingsError") return { status: 400, body: { error: message } };
+  if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
+  if (name === "PairingError") return { status: 400, body: { error: message, code: String(code) } };
+  if (name === "RemoteError") return { status: 409, body: { error: message } };
+  if (name === "PushError") return { status: 400, body: { error: message } };
   if (name === "ProposalStateError") {
     const state = (error as { state?: string }).state;
     return { status: state === "missing" ? 404 : 409, body: { error: message, code: state ?? "state" } };
@@ -171,6 +202,89 @@ function serveFile(res: ServerResponse, uiDir: string, pathname: string): void {
     "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
   });
   createReadStream(file).pipe(res);
+}
+
+const LOCAL_ONLY = "Only on the machine Alfred runs on";
+const guessKind = (kind: unknown): DeviceKind => (DEVICE_KINDS as readonly unknown[]).includes(kind) ? kind as DeviceKind : "browser";
+
+/** The device list, with which devices get push notifications. */
+function withPush<T extends RemoteResponse>(response: T, push: PushService | undefined): T {
+  if (!push) return response;
+  if (response.local) return { ...response, devices: response.devices.map((device) => ({ ...device, push: push.subscribed(device.id) })) };
+  return { ...response, device: { ...response.device, push: push.subscribed(response.device.id) } };
+}
+
+/** Push notifications for the device asking (only other devices: this machine shows its own). */
+async function pushRoute(push: PushService | undefined, device: Device, req: IncomingMessage, res: ServerResponse, path: string, locale: string): Promise<void> {
+  const method = req.method ?? "GET";
+  if (!push) throw new HttpError(404, "Not found");
+  const info = async (): Promise<PushInfo> => ({ publicKey: await push.publicKey(), subscribed: push.subscribed(device.id) });
+  if (method === "GET" && path === "/api/push") return send(res, 200, await info());
+  if (method === "POST" && path === "/api/push/subscribe") {
+    const body = await readJson<{ subscription?: unknown }>(req);
+    push.subscribe(device.id, body.subscription);
+    return send(res, 200, await info());
+  }
+  if (method === "POST" && path === "/api/push/unsubscribe") {
+    await readJson(req);
+    push.unsubscribe(device.id);
+    return send(res, 200, await info());
+  }
+  if (method === "POST" && path === "/api/push/test") {
+    await readJson(req);
+    if (!push.subscribed(device.id)) throw new HttpError(409, "Turn notifications on first");
+    const zh = locale === "zh";
+    return send(res, 200, await push.sendTo({ title: "Alfred", body: zh ? "推送通知能用了。" : "Notifications work.", url: "/", tag: "test" }, [device.id]) satisfies PushResult);
+  }
+  throw new HttpError(404, "Not found");
+}
+
+/** Remote access and devices. True when it answered. */
+async function remoteRoute(home: Home, options: ServeOptions, peer: Peer, req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+  const method = req.method ?? "GET";
+  const remote = options.remote;
+  const isPush = path === "/api/push" || path.startsWith("/api/push/");
+  if (!remote || !(isPush || path === "/api/remote" || path.startsWith("/api/remote/") || path.startsWith("/api/devices/") || path === "/api/pair" || path === "/api/device/forget")) return false;
+  if (isPush && peer.local) throw new HttpError(400, "This machine shows notifications itself");
+  if (method === "POST" && path === "/api/pair") {
+    if (peer.local) throw new HttpError(400, "This machine needs no pairing");
+    const body = await readJson<PairRequest>(req);
+    if (typeof body.code !== "string" || typeof body.name !== "string") throw new HttpError(400, "code and name are required");
+    const { device, token } = remote.pair({ code: body.code, name: body.name, kind: guessKind(body.kind), via: peer.login });
+    res.setHeader("Set-Cookie", `${DEVICE_COOKIE}=${token}; Path=/; Max-Age=${COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Strict`);
+    send(res, 200, { device });
+    return true;
+  }
+  if (!peer.local) {
+    if (!peer.device) throw new HttpError(401, "This device is not paired with Alfred yet", "unpaired");
+    if (method === "GET" && path === "/api/remote") return send(res, 200, withPush({ local: false, device: peer.device } satisfies RemoteResponse, options.push)), true;
+    if (isPush) return await pushRoute(options.push, peer.device, req, res, path, userLocale(home.world)), true;
+    if (method === "POST" && path === "/api/device/forget") {
+      await readJson(req);
+      remote.revoke(peer.device.id);
+      res.setHeader("Set-Cookie", `${DEVICE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
+      return send(res, 200, {}), true;
+    }
+    throw new HttpError(403, LOCAL_ONLY, "local_only");
+  }
+  if (method === "GET" && path === "/api/remote") return send(res, 200, withPush(await remote.describe(), options.push) satisfies RemoteResponse), true;
+  if (method === "POST" && path === "/api/remote") {
+    const body = await readJson<{ enabled?: unknown }>(req);
+    if (typeof body.enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
+    return send(res, 200, withPush(await remote.setEnabled(body.enabled), options.push) satisfies RemoteResponse), true;
+  }
+  if (method === "POST" && path === "/api/remote/pairing") {
+    await readJson(req);
+    await remote.describe();
+    return send(res, 200, remote.newPairing()), true;
+  }
+  const revoke = /^\/api\/devices\/([A-Za-z0-9_-]{1,64})\/revoke$/.exec(path);
+  if (revoke && method === "POST") {
+    await readJson(req);
+    remote.revoke(revoke[1]);
+    return send(res, 200, withPush(await remote.describe(), options.push) satisfies RemoteResponse), true;
+  }
+  throw new HttpError(404, "Not found");
 }
 
 async function route(home: Home, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -286,25 +400,71 @@ export interface ServeOptions {
   log?: (message: string) => void;
   /** Connected Google accounts (`/api/connections`); left out, those routes are 404. */
   google?: GoogleConnections;
+  /** Remote access and devices (`/api/remote`, `/api/devices`, `/api/pair`); left out, those routes are 404. */
+  remote?: RemoteAccess;
+  /** Push notifications to paired devices (`/api/push`). */
+  push?: PushService;
 }
 
-/** `port: 0` picks a free port; the Host check then uses the one actually bound. */
+function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMessage, res: ServerResponse, url: URL): void {
+  const path = url.pathname;
+  const answer = async () => {
+    if (await remoteRoute(home, options, peer, req, res, path)) return;
+    if (!peer.local) {
+      if (!peer.device) throw new HttpError(401, "This device is not paired with Alfred yet", "unpaired");
+      if (path.startsWith("/api/connections")) throw new HttpError(403, LOCAL_ONLY, "local_only");
+      if (path === "/api/events" && options.remote) {
+        // Revoking ends the device's stream at once; its reconnect is refused.
+        const id = peer.device.id;
+        const remote = options.remote;
+        const onRevoked = (revoked: string) => { if (revoked === id) res.end(); };
+        remote.events.on("revoked", onRevoked);
+        req.on("close", () => remote.events.off("revoked", onRevoked));
+      }
+    }
+    const google = options.google;
+    if (google && path.startsWith("/api/connections") && await handleConnections(google, req, res, url, options.log)) return;
+    await route(home, req, res, url);
+  };
+  answer().catch((error: unknown) => {
+    const { status, body } = statusOf(error);
+    if (status >= 500) options.log?.(`${req.method} ${path} failed: ${error instanceof Error ? error.stack : String(error)}`);
+    if (!res.headersSent) send(res, status, body);
+    else res.end();
+  });
+}
+
+function serveUi(options: ServeOptions, req: IncomingMessage, res: ServerResponse, url: URL): boolean {
+  if ((req.method !== "GET" && req.method !== "HEAD") || url.pathname.startsWith("/api/")) return false;
+  try { serveFile(res, options.uiDir, url.pathname); } catch { send(res, 400, { error: "Bad path" }); }
+  return true;
+}
+
+/** This machine's listener. `port: 0` picks a free port; the Host check then uses the one actually bound. */
 export function createHttpServer(home: Home, options: ServeOptions): Server {
   const server: Server = createServer((req, res) => {
     const port = options.port || (server.address() as AddressInfo | null)?.port || 0;
     if (!hostAllowed(req, port) || !originAllowed(req)) return send(res, 403, { error: "Forbidden host or origin" });
     const url = new URL(req.url ?? "/", "http://localhost");
-    if ((req.method === "GET" || req.method === "HEAD") && !url.pathname.startsWith("/api/")) {
-      try { return serveFile(res, options.uiDir, url.pathname); } catch { return send(res, 400, { error: "Bad path" }); }
-    }
-    const google = options.google;
-    const handled = google && url.pathname.startsWith("/api/connections") ? handleConnections(google, req, res, url, options.log) : Promise.resolve(false);
-    handled.then((done) => (done ? undefined : route(home, req, res, url))).catch((error: unknown) => {
-      const { status, body } = statusOf(error);
-      if (status >= 500) options.log?.(`${req.method} ${url.pathname} failed: ${error instanceof Error ? error.stack : String(error)}`);
-      if (!res.headersSent) send(res, status, body);
-      else res.end();
-    });
+    if (serveUi(options, req, res, url)) return;
+    dispatch(home, options, { local: true }, req, res, url);
+  });
+  return server;
+}
+
+/** The listener Tailscale Serve forwards other devices to (bind it to loopback). Nothing here counts as local. */
+export function createIngressServer(home: Home, options: ServeOptions & { remote: RemoteAccess }): Server {
+  const server: Server = createServer((req, res) => {
+    const port = (server.address() as AddressInfo | null)?.port || 0;
+    if (!ingressHostAllowed(req, port, options.remote.dnsName) || !originAllowed(req)) return send(res, 403, { error: "Forbidden host or origin" });
+    // Serve sets this for tailnet users (and drops any the device sent). Another account's device is refused outright.
+    const header = req.headers["tailscale-user-login"];
+    const login = typeof header === "string" && header ? header : null;
+    if (login && options.remote.owner && login !== options.remote.owner) return send(res, 403, { error: "This Alfred belongs to another Tailscale account", code: "other_account" });
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (serveUi(options, req, res, url)) return;
+    const device = deviceForToken(home.world, cookieToken(req));
+    dispatch(home, options, { local: false, device, login }, req, res, url);
   });
   return server;
 }

@@ -10,6 +10,7 @@ import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, wid
 import { MOD, Nav } from "./shell/Nav.tsx";
 import { availablePages, moduleOf, pageView } from "./shell/pages.tsx";
 import { Palette } from "./shell/Palette.tsx";
+import { Pair } from "./Pair.tsx";
 import { detectLocale, getLocale, setLocale, t, useLocale, type Locale } from "./i18n/index.ts";
 import { useAlfred } from "./useAlfred.ts";
 import { welcomeLines } from "./welcome.ts";
@@ -140,7 +141,7 @@ const editable = (target: EventTarget | null) => target instanceof HTMLElement &
 
 /** The workspace: sidebar, one page at a time, and Alfred beside it (or across it, or folded to a button). */
 export function App() {
-  const { state, connection, error, fresh, live, onEvent } = useAlfred();
+  const { state, connection, error, unpaired, fresh, live, onEvent } = useAlfred();
   const route = useRoute();
   const selected = route.selected;
   const [layout, setLayout] = useLayout();
@@ -273,6 +274,7 @@ export function App() {
   }, [toggleAlfred, toggleNav, goPage, pages]);
 
   // Another device that is not paired (or was revoked): pair first; a reload then starts with its token.
+  if (unpaired) return <Pair onPaired={() => location.reload()} />;
   if (!state) {
     return (
       <main className="boot">

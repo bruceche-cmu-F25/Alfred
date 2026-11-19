@@ -16,6 +16,11 @@
     "@alfred/engine-pi": "*",
     "@alfred/module-kit": "*",
     "@alfred/module-todo": "*",
-    "@alfred/protocol": "*"
+    "@alfred/protocol": "*",
+    "@alfred/ui": "*",
+    "web-push": "3.6.7"
+  },
+  "devDependencies": {
+    "@types/web-push": "3.6.4"
   }
 }

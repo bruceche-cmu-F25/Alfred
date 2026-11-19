@@ -36,7 +36,29 @@
 .set-switch[aria-checked="true"] { background: var(--ok); }
 .set-switch[aria-checked="true"]::after { transform: translateX(16px); }
 .set-switch:disabled { opacity: .45; cursor: default; }
+/* Devices (Devices.tsx) and pairing (Pair.tsx). */
+.set-sub { margin-top: 10px; font-size: .875rem; font-weight: 600; color: var(--copy); }
+.dev-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.dev-link:hover { text-decoration: underline; }
+.dev-url { font-family: var(--mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.dev-none { padding: 12px 2px; border-bottom: 1px solid var(--line-soft); }
+.dev-pair { flex-direction: row; align-items: flex-start; gap: 22px; }
+.dev-qr { flex: none; width: 168px; height: 168px; border-radius: 10px; }
+.dev-qr path, .dev-qr rect { stroke: none; } /* icons give every svg path a stroke */
+.dev-pair-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dev-steps { margin: 0; padding-left: 1.2em; color: var(--copy); font-size: .875rem; display: flex; flex-direction: column; gap: 4px; }
+.dev-code-label { margin-top: 6px; }
+.dev-code { font-family: var(--mono, ui-monospace, monospace); font-size: 1.5rem; letter-spacing: .12em; color: var(--ink); }
+.pair { padding: 24px 16px; max-width: 420px; margin: 0 auto; }
+.pair .figure { margin: 0 auto; }
+.pair-title { font-size: 1.25rem; font-weight: 600; color: var(--ink); }
+.pair-how { line-height: 1.6; }
+.pair-form { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+.pair-code { width: 11em; min-height: 40px; padding: 0 14px; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink);
+  font-family: var(--mono, ui-monospace, monospace); font-size: 1.0625rem; letter-spacing: .08em; text-align: center; text-transform: uppercase; }
+.pair .set-button { min-height: 40px; }
 @media (max-width: 760px) {
   .settings { padding: 0 16px 32px; }
+  .dev-pair { flex-direction: column; align-items: center; }
   .set-row.sub { padding-left: 0; }
 }

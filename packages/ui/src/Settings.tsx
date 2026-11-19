@@ -7,8 +7,9 @@
  * token in the keychain. This page only starts the sign-in and watches it finish.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ConnectFlow, ConnectStart, ConnectionsResponse, GoogleAccount, GoogleCapability, GoogleCheck as Check } from "@alfred/protocol";
+import type { ConnectFlow, ConnectStart, ConnectionsResponse, GoogleAccount, GoogleCapability, GoogleCheck as Check, RemoteResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
+import { Devices } from "./Devices.tsx";
 import { setLocale, t, useLocale, type Key, type Locale } from "./i18n/index.ts";
 import "./settings.css";
 
@@ -51,11 +52,16 @@ export function Settings() {
   const [pick, setPick] = useState<GoogleCapability[]>(["calRead", "mailRead"]);
   const [checks, setChecks] = useState<Record<string, CheckState>>({});
   const [confirming, setConfirming] = useState<string | null>(null);
+  /** Null until known; on another device, credentials stay on the Mac and their section is not shown. */
+  const [remote, setRemote] = useState<RemoteResponse | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
   const load = useCallback(() => call<ConnectionsResponse>("/api/connections").then(setData, (reason: Error) => setError(reason.message)), []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // An older home node without remote access answers 404: treat this as the Mac.
+    api.remote().then((next) => { setRemote(next); if (next.local) void load(); }, () => void load());
+  }, [load]);
 
   // Watch the sign-in until Google sends the browser back (or the user gives up).
   useEffect(() => {
@@ -150,7 +156,9 @@ export function Settings() {
         </div>
       </section>
 
-      <section className="set-section">
+      <Devices remote={remote} />
+
+      {remote?.local !== false && <section className="set-section">
         <h2>{t("settings.accounts")}</h2>
         <p className="quiet">{t("settings.accounts.sub")}</p>
         {error && <p className="problem small" role="alert">{error}</p>}
@@ -225,7 +233,7 @@ export function Settings() {
           )}
           <p className="quiet small">{t("settings.google.privacy")}</p>
         </div>
-      </section>
+      </section>}
 
       <section className="set-section">
         <h2>{t("settings.models")}</h2>

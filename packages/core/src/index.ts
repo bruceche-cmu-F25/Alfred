@@ -38,3 +38,4 @@ export {
   type Proposal, type ProposalState, type ProposalStep,
 } from "./proposals.ts";
 export { getSettings, updateSettings, userLocale, LOCALES, SettingsError, type Locale, type UserSettings } from "./settings.ts";
+export { listDevices, pairDevice, deviceForToken, revokeDevice, hashToken, DeviceError, DEVICE_KINDS, type Device, type DeviceKind } from "./devices.ts";

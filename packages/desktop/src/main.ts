@@ -25,6 +25,8 @@ const PRESENCE_SIZE = { width: 420, height: 116 };
 const NOTIFY_GRACE_MS = 1500;
 const HEARTBEAT_MS = 60_000;
 const IDLE_AFTER_S = 300;
+/** Locked, or no input for this long: the user is not at the Mac, so notices are left for the phone (push). */
+const AWAY_FOR_NOTICES_S = 120;
 
 app.setName("Alfred");
 // The app's own files (window state, device id) live beside the world, never inside it:
@@ -223,6 +225,9 @@ let notifyTimer: NodeJS.Timeout | null = null;
 async function handleNotices(state: StateResponse): Promise<void> {
   const now = Date.now();
   const mainAttending = !!main && main.isVisible() && main.isFocused();
+  // Nobody at the Mac: leave notices pending, and the home node pushes them to the phone. Back at the Mac, whatever
+  // the phone did not take is shown here then.
+  const atMac = powerMonitor.getSystemIdleState(AWAY_FOR_NOTICES_S) === "active";
   const results: Notice[] = [];
   for (const notice of state.notices) {
     if (handled.has(notice.id)) continue;
@@ -231,7 +236,7 @@ async function handleNotices(state: StateResponse): Promise<void> {
       continue;
     }
     if (notice.kind !== "run_result" && notice.kind !== "run_interrupted" && notice.kind !== "run_request" && notice.kind !== "proposal") continue;
-    if (notice.state !== "pending" || mainAttending) continue;
+    if (notice.state !== "pending" || mainAttending || !atMac) continue;
     const age = now - Date.parse(notice.createdAt);
     if (age < NOTIFY_GRACE_MS) {
       if (!notifyTimer) notifyTimer = setTimeout(() => { notifyTimer = null; void refresh(); }, NOTIFY_GRACE_MS - age + 50);

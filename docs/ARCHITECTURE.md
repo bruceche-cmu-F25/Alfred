@@ -283,7 +283,7 @@ interface EnginePort {
 
 - 新设备通过 Mac App 上的二维码配对，拿到一个设备令牌。设置里列出所有设备，可以随时吊销，吊销立即生效。
 - 每台设备有类别（桌面、手机、浏览器）和能力范围。默认：手机能对话、看和改业务记录、接推送、用语音；不能开终端、不能浏览整块磁盘、不能动 Mac 本机能力。这延续了 Robin 里终端和 `/api/robin/mac` "只许本机"的规则，但改成按设备授权，而不是按是不是 localhost。
-- 远程访问**默认关闭**。推荐 Tailscale Serve：不开公网端口，并且自带 HTTPS。手机上的麦克风、Service Worker（PWA 安装和推送）都要求 HTTPS，局域网的 http 地址做不到。局域网加长密码作为备选。不提供直接暴露到公网的默认配置。
+- 远程访问**默认关闭**。走 Tailscale：不开公网端口，并且自带 HTTPS。先用 Mac 上已装的 Tailscale Serve，之后换成主节点内嵌 tsnet（自己的名字 `alfred.<tailnet>.ts.net`），见 `docs/research/remote-access.md`。手机默认要装 Tailscale App；以后做原生 App 时内嵌 libtailscale。手机上的麦克风、Service Worker（PWA 安装和推送）都要求 HTTPS，局域网的 http 地址做不到。局域网加长密码作为备选。不提供直接暴露到公网的默认配置。
 
 **设备能力**
 
@@ -469,7 +469,7 @@ docs/
 | 11 | 委派模式的语音模型发来委派时，谁判断它是新任务、补充、取消还是权限回答 | 暂不需要。只有接入 GPT-Live-1 这类模型时才要定 | 5.4 |
 | 12 | 第二个语音适配器选哪个 | 待讨论。候选：不需要 key 的本地"转写加朗读"、Gemini 3.8 Live | 5.4，第 4 步 |
 | 13 | Pi Web 的编程工作台（文件、终端、diff、worktree）进不进 Alfred | 第一版不进。编程继续用 Robin 或 Claude Code；"开发搭子"以后做成模块，或经 ACP 接 Claude Code | 范围 |
-| 14 | 远程访问的默认方案 | Tailscale Serve；局域网加长密码作为备选 | 第 3 步 |
+| 14 | 远程访问的默认方案 | **已定（2026-11-18）**：先 Tailscale Serve，后内嵌 tsnet；手机装 Tailscale App，不做公网入口；局域网加长密码作为备选 | 第 3 步 |
 | 15 | 手机端用 PWA 还是原生 App | PWA。Robin 已经跑通了安装和 Web Push；原生 App 等 PWA 不够用时再说 | 第 3 步 |
 | 16 | 个人模块的私有仓库怎么接进来 | 配置里列出模块包的路径，主节点启动时加载 | 第 5 步 |
 | 17 | 全部搬完后 Robin 是否退役 | 待讨论 | 迁移 |

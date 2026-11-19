@@ -2,8 +2,8 @@
  * retry after a dropped connection can never do the same thing twice.
  */
 import type {
-  Conversation, ConversationDetail, CoreEvent, LiveUpdate, ModelsResponse, Notice, OpResponse, ProposalResponse, Run, StateResponse,
-  SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
+  Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
+  PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
 import { t } from "./i18n/dict.ts";
@@ -34,8 +34,12 @@ export const newRequestId = () => `${deviceId}.${random()}`;
 
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) { super(message); this.status = status; }
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) { super(message); this.status = status; this.code = code; }
 }
+
+/** This device is not paired with the home node (it came in through Tailscale without a device token). */
+export const isUnpaired = (error: unknown) => error instanceof ApiError && error.status === 401 && error.code === "unpaired";
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   // Network failures are retried with the same body (and so the same request id).
@@ -49,7 +53,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
       continue;
     }
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ApiError(response.status, (body as { error?: string }).error ?? t("api.failed", { status: response.status }));
+    if (!response.ok) {
+      const { error, code } = body as { error?: string; code?: string };
+      throw new ApiError(response.status, error ?? t("api.failed", { status: response.status }), code);
+    }
     return body as T;
   }
 }
@@ -82,6 +89,19 @@ export const api = {
   revise: (id: string, text: string) => post<ProposalResponse>(`/api/proposals/${id}/revise`, { requestId: newRequestId(), text }),
   /** The user's preferences that are not secrets, shared by every device (for now, the language). */
   settings: (patch: Partial<UserSettings>) => post<UserSettings>("/api/settings", { requestId: newRequestId(), patch }),
+  /** Remote access and devices: on this machine the switch and the list, on another device just itself. */
+  remote: () => call<RemoteResponse>("/api/remote"),
+  setRemote: (enabled: boolean) => post<RemoteResponse>("/api/remote", { enabled }),
+  pairingCode: () => post<PairingCode>("/api/remote/pairing", {}),
+  revokeDevice: (id: string) => post<RemoteResponse>(`/api/devices/${id}/revoke`, {}),
+  /** On a device that is not paired yet: the home node answers with the device token in a cookie. */
+  pair: (code: string, name: string, kind: DeviceKind) => post<{ device: DeviceInfo }>("/api/pair", { code, name, kind }),
+  forgetDevice: () => post<Record<string, never>>("/api/device/forget", {}),
+  /** Push notifications for this (paired) device. */
+  pushInfo: () => call<PushInfo>("/api/push"),
+  pushSubscribe: (subscription: PushSubscriptionJSON) => post<PushInfo>("/api/push/subscribe", { subscription }),
+  pushUnsubscribe: () => post<PushInfo>("/api/push/unsubscribe", {}),
+  pushTest: () => post<PushResult>("/api/push/test", {}),
 };
 
 export type Connection = "connecting" | "live" | "reconnecting";

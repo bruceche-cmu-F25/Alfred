@@ -135,4 +135,19 @@ CREATE TABLE core_settings (
   sql: `
 ALTER TABLE core_runs ADD COLUMN context TEXT CHECK (context IS NULL OR (json_valid(context) AND json_type(context) = 'object'));
 `,
+}, {
+  // Paired devices (devices.ts): only a hash of each device's token is kept.
+  id: "core:7",
+  sql: `
+CREATE TABLE core_devices (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
+  kind TEXT NOT NULL CHECK (kind IN ('desktop', 'phone', 'browser')),
+  via TEXT CHECK (via IS NULL OR length(via) <= 200),
+  token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+  paired_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  revoked_at TEXT
+) STRICT;
+`,
 }];

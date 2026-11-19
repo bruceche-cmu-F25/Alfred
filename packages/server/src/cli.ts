@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-/** alfred serve            run the home node (loopback only for now)
+/** alfred serve            run the home node (loopback; other devices come in through Tailscale Serve)
  *  alfred import-robin     copy Robin's todos into Alfred (read-only on Robin)
  *
- *  Options: --data-dir <dir>  --port <n>  --robin-dir <dir>  --dry-run  --check
+ *  Options: --data-dir <dir>  --port <n>  --ingress-port <n> (default port + 10)  --robin-dir <dir>  --dry-run  --check
  */
 import { parseArgs } from "node:util";
 import { join } from "node:path";
@@ -10,7 +10,10 @@ import { createPiEngine } from "@alfred/engine-pi";
 import { compareTodos, importTodos, readRobinTodos, robinDataDir, todoModule } from "@alfred/module-todo";
 import { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 import { openHome } from "./home.ts";
-import { createHttpServer } from "./http.ts";
+import { createHttpServer, createIngressServer } from "./http.ts";
+import { RemoteAccess } from "./remote.ts";
+import { PushService } from "./push.ts";
+import { cliRunner, findTailscale, Tailscale } from "./tailscale.ts";
 import { GoogleConnections } from "./google.ts";
 import { defaultSecretStore } from "./secrets.ts";
 
@@ -22,6 +25,7 @@ const { values, positionals } = parseArgs({
   options: {
     "data-dir": { type: "string" },
     port: { type: "string" },
+    "ingress-port": { type: "string" },
     "robin-dir": { type: "string" },
     "dry-run": { type: "boolean" },
     check: { type: "boolean" },
@@ -48,7 +52,16 @@ if (command === "serve") {
   }
   // Google accounts: tokens in the keychain, Alfred's own OAuth client from the data directory (or the default one).
   const google = new GoogleConnections({ dataDir, secrets: defaultSecretStore(dataDir), world: home.world, clientDirs: [...new Set([dataDir, defaultDataDir()])], log });
-  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google });
+  // Other devices: Tailscale Serve forwards to the ingress port, where every request needs a paired device.
+  const ingressPort = Number(values["ingress-port"] ?? process.env.ALFRED_INGRESS_PORT ?? port + 10);
+  const tailscaleBinary = findTailscale();
+  const remote = new RemoteAccess({ dataDir, world: home.world, tailscale: new Tailscale(tailscaleBinary ? cliRunner(tailscaleBinary) : null), ingressPort, log });
+  // Notices nobody took within seconds go to the devices that turned notifications on.
+  const push = new PushService({ dataDir, world: home.world, secrets: defaultSecretStore(dataDir), log });
+  remote.events.on("revoked", (id) => push.unsubscribe(id));
+  push.watch();
+  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, remote, push });
+  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, remote, push });
   server.on("error", (error: NodeJS.ErrnoException) => {
     void engine.close();
     home.close();
@@ -61,11 +74,19 @@ if (command === "serve") {
   server.listen(port, "127.0.0.1", () => {
     log(`home node on http://127.0.0.1:${port}  (data: ${dataDir})`);
     home.kick();
+    ingress.listen(ingressPort, "127.0.0.1", () => {
+      log(`ingress for other devices on http://127.0.0.1:${ingressPort}`);
+      remote.restore().then(() => { if (remote.url) log(`other devices: ${remote.url}`); }, (error: Error) => log(`remote access: ${error.message}`));
+    });
   });
+  ingress.on("error", (error: NodeJS.ErrnoException) => log(`ingress port ${ingressPort} unavailable (${error.code ?? error.message}); other devices cannot connect`));
   const stop = async () => {
     google.close();
+    push.close();
     server.close();
     server.closeAllConnections();
+    ingress.close();
+    ingress.closeAllConnections();
     // Workers close their sessions (and MCP servers) before the world closes.
     await engine.close();
     home.close();

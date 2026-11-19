@@ -3,12 +3,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoreEvent, LiveUpdate, StateResponse } from "@alfred/protocol";
-import { api, subscribe, type Connection } from "./api.ts";
+import { api, isUnpaired, subscribe, type Connection } from "./api.ts";
 
 export interface Alfred {
   state: StateResponse | null;
   connection: Connection;
   error: string | null;
+  /** This device came in from another machine and is not paired (or was revoked): show pairing instead. */
+  unpaired: boolean;
   /** Subjects (like `todo:abc`) that Alfred changed in the last few seconds. */
   fresh: ReadonlySet<string>;
   /** Replies being written, by run id. Dropped when the run's record arrives. */
@@ -22,14 +24,19 @@ export function useAlfred(): Alfred {
   const [state, setState] = useState<StateResponse | null>(null);
   const [connection, setConnection] = useState<Connection>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [unpaired, setUnpaired] = useState(false);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
   const [live, setLive] = useState<Record<string, string>>({});
   const listeners = useRef(new Set<(event: CoreEvent) => void>());
   const pending = useRef<number | null>(null);
 
-  const refresh = useCallback(() => {
-    api.state().then((next) => { setState(next); setError(null); }).catch((reason: Error) => setError(reason.message));
+  const failed = useCallback((reason: Error) => {
+    if (isUnpaired(reason)) setUnpaired(true);
+    else setError(reason.message);
   }, []);
+  const refresh = useCallback(() => {
+    api.state().then((next) => { setState(next); setError(null); }).catch(failed);
+  }, [failed]);
 
   const scheduleRefresh = useCallback(() => {
     if (pending.current !== null) return;
@@ -67,12 +74,13 @@ export function useAlfred(): Alfred {
         connection: (next) => {
           setConnection(next);
           // After a drop, the stream replays what was missed; the snapshot catches up too.
-          if (next === "live") scheduleRefresh();
+          // A drop can also mean this device was revoked: the snapshot request says so.
+          if (next === "live" || next === "reconnecting") scheduleRefresh();
         },
       });
-    }).catch((reason: Error) => setError(reason.message));
+    }).catch(failed);
     return () => { cancelled = true; unsubscribe(); };
-  }, [received, scheduleRefresh]);
+  }, [received, scheduleRefresh, failed]);
 
-  return { state, connection, error, fresh, live, onEvent, refresh };
+  return { state, connection, error, unpaired, fresh, live, onEvent, refresh };
 }

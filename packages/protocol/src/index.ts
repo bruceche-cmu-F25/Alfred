@@ -24,6 +24,7 @@
  *   POST /api/proposals/:id/revise          ReviseRequest -> ProposalResponse (supersedes it; a new run in its conversation revises it)
  *   POST /api/settings                      SettingsRequest -> UserSettings (preferences that are not secrets; replays by request id)
  *   POST /api/presence                      PresenceRequest -> PresenceResponse
+ *   (devices and pairing: see RemoteResponse below)
  */
 export const PROTOCOL_VERSION = 1;
 
@@ -257,3 +258,59 @@ export type ConnectFlow =
   | { id: string; status: "done"; account: string; capabilities: GoogleCapability[]; missing: GoogleCapability[] }
   | { id: string; status: "failed"; error: string }
   | { id: string; status: "cancelled" };
+
+/** Other devices (docs/research/remote-access.md). The home node's own machine is "local" and needs no pairing;
+ * every other device reaches it through Tailscale Serve and carries a device token in an HttpOnly cookie.
+ *
+ *   GET  /api/remote                    RemoteResponse (local: the switch, the address, the devices; a device: itself)
+ *   POST /api/remote                    { enabled } -> RemoteResponse            (local only)
+ *   POST /api/remote/pairing            -> PairingCode (one code at a time)      (local only)
+ *   POST /api/devices/:id/revoke        -> RemoteResponse                         (local only)
+ *   POST /api/pair                      PairRequest -> { device } and the cookie (a device that is not paired yet)
+ *   POST /api/device/forget             -> {} (a device revokes itself)
+ *   GET  /api/push                      PushInfo                                   (a paired device)
+ *   POST /api/push/subscribe            { subscription: PushSubscriptionJSON } -> PushInfo
+ *   POST /api/push/unsubscribe          -> PushInfo
+ *   POST /api/push/test                 -> PushResult (a test notification to this device)
+ *
+ * A device that is not paired gets 401 with code `unpaired` from every other /api/ route.
+ */
+export type DeviceKind = "desktop" | "phone" | "browser";
+export interface DeviceInfo {
+  id: string; name: string; kind: DeviceKind; via: string | null; pairedAt: string; lastSeenAt: string | null;
+  /** It receives push notifications (a notice nobody took within seconds goes to it). */
+  push?: boolean;
+}
+/** VAPID public key to subscribe with, and whether this device already is. */
+export interface PushInfo { publicKey: string; subscribed: boolean }
+/** Accepted by the push service, not proof it was seen. */
+export interface PushResult { accepted: number; failed: number; expired: number }
+/** What Tailscale on the home node's machine says. */
+export interface TailscaleStatus {
+  /** The `tailscale` command was found. */
+  installed: boolean;
+  /** Logged in and running. */
+  running: boolean;
+  /** This machine's name in the tailnet, e.g. mac-mini.tail1234.ts.net. */
+  dnsName: string | null;
+  /** The tailnet login that owns this machine; devices of other logins are refused. */
+  owner: string | null;
+  error?: string;
+}
+export type RemoteResponse =
+  | {
+    local: true;
+    /** The user turned remote access on. */
+    enabled: boolean;
+    /** Serve is set up and points at Alfred: devices can connect. */
+    serving: boolean;
+    /** Where devices open Alfred, when serving. */
+    url: string | null;
+    port: number;
+    tailscale: TailscaleStatus;
+    devices: DeviceInfo[];
+    error?: string;
+  }
+  | { local: false; device: DeviceInfo };
+export interface PairingCode { code: string; url: string | null; expiresAt: string }
+export interface PairRequest { code: string; name: string; kind: DeviceKind }
