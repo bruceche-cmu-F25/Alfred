@@ -22,6 +22,8 @@ import type {
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
 import { ASSISTANT_PROFILE, type Home } from "./home.ts";
+import { handleConnections } from "./connections-http.ts";
+import type { GoogleConnections } from "./google.ts";
 
 const MAX_BODY = 64 * 1024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -277,7 +279,14 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   throw new HttpError(405, "Method not allowed");
 }
 
-export interface ServeOptions { port: number; host?: string; uiDir: string; log?: (message: string) => void }
+export interface ServeOptions {
+  port: number;
+  host?: string;
+  uiDir: string;
+  log?: (message: string) => void;
+  /** Connected Google accounts (`/api/connections`); left out, those routes are 404. */
+  google?: GoogleConnections;
+}
 
 /** `port: 0` picks a free port; the Host check then uses the one actually bound. */
 export function createHttpServer(home: Home, options: ServeOptions): Server {
@@ -288,7 +297,9 @@ export function createHttpServer(home: Home, options: ServeOptions): Server {
     if ((req.method === "GET" || req.method === "HEAD") && !url.pathname.startsWith("/api/")) {
       try { return serveFile(res, options.uiDir, url.pathname); } catch { return send(res, 400, { error: "Bad path" }); }
     }
-    route(home, req, res, url).catch((error: unknown) => {
+    const google = options.google;
+    const handled = google && url.pathname.startsWith("/api/connections") ? handleConnections(google, req, res, url, options.log) : Promise.resolve(false);
+    handled.then((done) => (done ? undefined : route(home, req, res, url))).catch((error: unknown) => {
       const { status, body } = statusOf(error);
       if (status >= 500) options.log?.(`${req.method} ${url.pathname} failed: ${error instanceof Error ? error.stack : String(error)}`);
       if (!res.headersSent) send(res, status, body);

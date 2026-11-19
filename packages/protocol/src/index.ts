@@ -225,3 +225,35 @@ export interface AwayDigest {
 
 export interface ErrorResponse { error: string; code?: string }
 
+/** Connected accounts (docs/design/settings-and-connections.md). No secret ever appears here.
+ *
+ *   GET  /api/connections                             ConnectionsResponse
+ *   POST /api/connections/google/connect              GoogleConnectRequest -> { flow: ConnectStart } (open flow.url in the system browser)
+ *   GET  /api/connections/flows/:id                   ConnectFlow (poll until it is not `waiting`)
+ *   POST /api/connections/flows/:id/cancel            -> ConnectFlow
+ *   POST /api/connections/google/:email/disable       { capability } -> GoogleAccount (turning one on is `connect` with `account`)
+ *   POST /api/connections/google/:email/disconnect    -> { revoked } (revoked at Google, then forgotten here)
+ *   GET  /api/connections/google/:email/check         -> GoogleCheck (one small read-only count per capability that is on)
+ */
+export type GoogleCapability = "calRead" | "calWrite" | "mailRead" | "mailSend";
+export interface GoogleAccount {
+  email: string;
+  /** Turned on by the user and granted by Google. */
+  capabilities: GoogleCapability[];
+  connectedAt: string;
+  /** Google no longer honours the grant: connect again. */
+  broken?: boolean;
+}
+export interface ConnectionsResponse {
+  google: { client: { configured: boolean; source: string | null }; accounts: GoogleAccount[] };
+}
+/** A new account (no `account`), or more capabilities for one already connected. */
+export interface GoogleConnectRequest { capabilities: GoogleCapability[]; account?: string }
+export interface ConnectStart { id: string; url: string }
+/** Events on the primary calendar in the next 7 days, and messages in the mailbox; a device words them. */
+export interface GoogleCheck { calendar?: number; gmail?: number }
+export type ConnectFlow =
+  | { id: string; status: "waiting"; url: string }
+  | { id: string; status: "done"; account: string; capabilities: GoogleCapability[]; missing: GoogleCapability[] }
+  | { id: string; status: "failed"; error: string }
+  | { id: string; status: "cancelled" };

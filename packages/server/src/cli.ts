@@ -11,6 +11,8 @@ import { compareTodos, importTodos, readRobinTodos, robinDataDir, todoModule } f
 import { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 import { openHome } from "./home.ts";
 import { createHttpServer } from "./http.ts";
+import { GoogleConnections } from "./google.ts";
+import { defaultSecretStore } from "./secrets.ts";
 
 const MODULES = [todoModule];
 const log = (message: string) => console.log(`[alfred] ${message}`);
@@ -44,7 +46,9 @@ if (command === "serve") {
     console.error(`[alfred] ${error.message}. Stop it first, or use another --data-dir.`);
     process.exit(1);
   }
-  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log });
+  // Google accounts: tokens in the keychain, Alfred's own OAuth client from the data directory (or the default one).
+  const google = new GoogleConnections({ dataDir, secrets: defaultSecretStore(dataDir), world: home.world, clientDirs: [...new Set([dataDir, defaultDataDir()])], log });
+  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google });
   server.on("error", (error: NodeJS.ErrnoException) => {
     void engine.close();
     home.close();
@@ -59,6 +63,7 @@ if (command === "serve") {
     home.kick();
   });
   const stop = async () => {
+    google.close();
     server.close();
     server.closeAllConnections();
     // Workers close their sessions (and MCP servers) before the world closes.

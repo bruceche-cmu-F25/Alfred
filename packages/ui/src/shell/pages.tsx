@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import type { Area, StateResponse, ViewContext } from "@alfred/protocol";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
 import { Inbox } from "../Inbox.tsx";
+import { Settings } from "../Settings.tsx";
 import { Todos } from "../Todos.tsx";
 import { t, type Key } from "../i18n/index.ts";
 import { inboxItems, waitingCount } from "./inbox.ts";
@@ -31,8 +32,8 @@ export interface PageDef {
   icon: IconName;
   /** Category colour slot (tokens.css `data-k`). */
   k: string;
-  /** Sidebar group: the daily workspace, or the other modules. */
-  group: "work" | "modules";
+  /** Sidebar group: the daily workspace, the other modules, or the app itself (settings). */
+  group: "work" | "modules" | "system";
   /** A number for the sidebar, or nothing. */
   badge?(snapshot: unknown, state: StateResponse): number | undefined;
   /** One plain line under the page title: the facts. It also tells Alfred what you were looking at when you ask. */
@@ -95,6 +96,11 @@ const PAGES: PageDef[] = [
       return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
     render: ({ snapshot, fresh, areas }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} />,
+  },
+  {
+    key: "core.settings", get title() { return t("page.settings"); }, icon: "gear", k: "gray", group: "system",
+    summary: () => t("page.settings.summary"),
+    render: () => <Settings />,
   },
 ];
 

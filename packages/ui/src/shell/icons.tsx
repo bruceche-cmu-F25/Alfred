@@ -13,6 +13,7 @@ const PATHS = {
   archive: "M4 6h12M5 6v9h10V6M8 9h4",
   close: "M6 6l8 8M14 6l-8 8",
   menu: "M4 6h12M4 10h12M4 14h12",
+  gear: "M3.5 6.5h7M14.5 6.5h2M3.5 13.5h2M9.5 13.5h7M12.5 8.2a1.7 1.7 0 1 0 0-3.4 1.7 1.7 0 0 0 0 3.4zM7.5 15.2a1.7 1.7 0 1 0 0-3.4 1.7 1.7 0 0 0 0 3.4z",
 } as const;
 
 export type IconName = keyof typeof PATHS;

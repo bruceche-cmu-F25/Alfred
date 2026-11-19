@@ -49,7 +49,7 @@ export function Nav({ state, pages, page, mode, selected, connection, onPage, on
   };
   const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0);
   const groups: Array<[string, PageDef[]]> = [
-    [t("nav.g.work"), pages.filter((item) => item.group === "work")], [t("nav.g.modules"), pages.filter((item) => item.group === "modules")],
+    [t("nav.g.work"), pages.filter((item) => item.group === "work")], [t("nav.g.modules"), pages.filter((item) => item.group === "modules")], [t("nav.g.system"), pages.filter((item) => item.group === "system")],
   ];
 
   return (
