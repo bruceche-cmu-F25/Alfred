@@ -1,6 +1,6 @@
 /* Alfred's figure: a wireframe tesseract (the body), and a 3D wireframe one step simpler for every other state.
  *
- *   rest    tesseract, almost still (the body)       hello   tesseract, a hop and one turn (the body)
+ *   rest    tesseract, almost still (the body)       hello   tesseract, slowly unfolding and back (the body)
  *   listen  a globe turning, swelling with your voice think    an octahedron spinning like a top
  *   speak   four stacked rings swelling with a voice  work     a hex nut turned a sixth at a time
  *   notice  a tetrahedron, amber, hopping             done     a cube, settled, green
@@ -88,10 +88,19 @@ const HEXV = [...Array.from({ length: 6 }, (_, i) => [0.8 * Cs((i * PI) / 3), -0
 const HEXE = [...Array.from({ length: 6 }, (_, i) => [i, (i + 1) % 6]), ...Array.from({ length: 6 }, (_, i) => [6 + i, 6 + ((i + 1) % 6)]), ...Array.from({ length: 6 }, (_, i) => [i, 6 + i])];
 const BEAMV = CUBEV.map(([x, y, z]) => [x * 0.82, y * 0.13, z * 0.13]);
 
+/* The greeting's timing in s: still, unfold, held open, fold back (also `move`), then still again till the cycle ends. */
+const HELLO = { rest: 3, move: 2.6, hold: 1.2, cycle: 11 };
+
 /* ── States: (time in s, entry spin in rad) → { s: segments, col: palette key, dx, dy, depth }. ── */
 const STATE = {
   rest: (t) => ({ s: cut(tesseract({ xw: 0.12 * S(t * 0.55) }), "body"), col: "ind", depth: true }),
-  hello: (t) => { const ph = (t * 0.8) % 1; return { s: cut(tesseract({ xw: ease(ph / 0.45) * PI * 2 }), "body"), col: "ind", dy: ph < 0.45 ? -7 * S((ph / 0.45) * PI) : 0, depth: true }; },
+  // a slow, full turn through the fourth dimension: the inner cube swells out until it is the outer one, a pause,
+  // then it folds back the same way; long rests between
+  hello: (t) => {
+    const ph = t % HELLO.cycle, { rest, move, hold } = HELLO, glide = (x) => (1 - Cs(PI * Math.min(1, Math.max(0, x)))) / 2;
+    const u = ph < rest ? 0 : ph < rest + move ? glide((ph - rest) / move) : ph < rest + move + hold ? 1 : 1 - glide((ph - rest - move - hold) / move);
+    return { s: cut(tesseract({ xw: u * PI + 0.12 * S(t * 0.55) }), "body"), col: "ind", dy: -3 * S(u * PI), depth: true };
+  },
   // a globe: equator and three meridians, turning; it swells a little with your voice
   listen: (t, e) => {
     const R = 0.72 * (1 + 0.07 * voice(t * 0.7 + 3)), spin = t * 0.35 + e;
