@@ -13,6 +13,8 @@ import { CONVERSATION_ID, ConversationError, createConversation, titleFrom, touc
 import { appendEvent, readRunEvents, type CoreEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { createNotice } from "./notices.ts";
+import { TEMPLATE_TEXT, type AutomationTemplate } from "./automation-templates.ts";
+import { localeOf } from "./settings.ts";
 import { RUN_STATES } from "./schema.ts";
 import type { World } from "./world.ts";
 
@@ -55,6 +57,8 @@ export interface Run {
   request: RunRequest | null;
   /** What the user was looking at when they asked (a page of the workspace). Context for the engine, not an instruction. */
   context: ViewContext | null;
+  /** The automation that started this run on its schedule; null when the user asked. */
+  automationId: string | null;
 }
 
 /** The page a request came from: its view (`todo.list`, `core.inbox`), its title and one line of what it shows now,
@@ -115,6 +119,7 @@ function toRun(row: Record<string, unknown>): Run {
     cancelRequested: row.cancel_requested === 1, outcome: row.outcome ? JSON.parse(row.outcome as string) : null,
     request: row.request ? JSON.parse(row.request as string) : null,
     context: row.context ? JSON.parse(row.context as string) : null,
+    automationId: (row.automation_id as string | null) ?? null,
   };
 }
 
@@ -145,11 +150,20 @@ function closeRequestNotices(db: DatabaseSync, runId: string, now: number): void
     WHERE kind = 'run_request' AND state IN ('pending', 'claimed', 'presented') AND json_extract(payload, '$.runId') = ?`).run(iso(now), runId);
 }
 
+/** What a notice calls a run (`goal`): the user's words, or for an automation's run, the automation's name, which is
+ * what the user would call it (the instruction it gives Alfred is in the run). */
+function said(db: DatabaseSync, run: Run): { goal: string; automationId?: string } {
+  if (!run.automationId) return { goal: run.goal.slice(0, 200) };
+  const row = db.prepare("SELECT name, template FROM core_automations WHERE id = ?").get(run.automationId);
+  const name = (row?.name as string | null) ?? (row?.template ? TEMPLATE_TEXT[row.template as AutomationTemplate][localeOf(db)].name : null);
+  return { goal: (name ?? run.goal).slice(0, 200), automationId: run.automationId };
+}
+
 function interrupt(db: DatabaseSync, run: Run, now: number): void {
   setState(db, run, "interrupted", now, { lease_owner: null, lease_until: null, request: null });
   closeRequestNotices(db, run.id, now);
   const event = runEvent(db, run, "interrupted", now, { attempt: run.attempt });
-  createNotice(db, { eventSeq: event.seq, kind: "run_interrupted", payload: { runId: run.id, conversationId: run.conversationId, goal: run.goal.slice(0, 200) }, now });
+  createNotice(db, { eventSeq: event.seq, kind: "run_interrupted", payload: { runId: run.id, conversationId: run.conversationId, ...said(db, run) }, now });
 }
 
 export interface SubmitRunInput {
@@ -160,6 +174,8 @@ export interface SubmitRunInput {
   conversationId?: string;
   /** The page the user asked from. */
   context?: unknown;
+  /** Started by this automation, not by the user (automations.ts). */
+  automationId?: string;
   now?: number;
 }
 
@@ -173,7 +189,7 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
   const goal = input.goal.trim();
   if (!goal || goal.length > 8000) throw new Error("Goal must be 1–8000 characters");
   const context = viewContext(input.context);
-  const hash = createHash("sha256").update(JSON.stringify({ goal, profile: input.profile, conversationId: input.conversationId ?? null, ...(context ? { context } : {}) })).digest("hex");
+  const hash = createHash("sha256").update(JSON.stringify({ goal, profile: input.profile, conversationId: input.conversationId ?? null, ...(context ? { context } : {}), ...(input.automationId ? { automationId: input.automationId } : {}) })).digest("hex");
   const now = input.now ?? Date.now();
   return world.tx((db) => {
     const existing = db.prepare("SELECT * FROM core_runs WHERE request_id = ?").get(input.requestId);
@@ -185,8 +201,8 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
     if (conversationId) touchConversation(db, conversationId, now);
     else conversationId = createConversation(db, { title: titleFrom(goal), now });
     const id = newId();
-    db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at, context)
-      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`).run(id, input.requestId, hash, conversationId, goal, input.profile, iso(now), iso(now), context ? JSON.stringify(context) : null);
+    db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at, context, automation_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`).run(id, input.requestId, hash, conversationId, goal, input.profile, iso(now), iso(now), context ? JSON.stringify(context) : null, input.automationId ?? null);
     const run = load(db, id);
     runEvent(db, run, "queued", now, { conversationId });
     return { run, replayed: false };
@@ -274,7 +290,7 @@ export function finishRun(world: World, id: string, owner: string, result: Omit<
     createNotice(db, {
       eventSeq: event.seq, kind: "run_result", now,
       payload: {
-        runId: id, conversationId: run.conversationId, status: result.status, goal: run.goal.slice(0, 200), receipts: receipts.length,
+        runId: id, conversationId: run.conversationId, status: result.status, ...said(db, run), receipts: receipts.length,
         ...(outcome.reply ? { reply: outcome.reply.slice(0, 280) } : {}),
       },
     });

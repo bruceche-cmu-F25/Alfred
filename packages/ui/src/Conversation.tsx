@@ -55,7 +55,7 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
   );
 }
 
-function Turn({ run, receipts, activity, live, highlighted, askedOn }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean; askedOn?: string }) {
+function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = (action: () => Promise<unknown>) => {
@@ -72,7 +72,8 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn }: { run: Ru
   return (
     <li className="turn" data-highlighted={highlighted || undefined} id={`run-${run.id}`}>
       {askedOn && <p className="asked-on">{t("conv.askedFrom", { page: askedOn })}</p>}
-      <p className="said">{run.goal}</p>
+      {/* An automation's run: nobody said anything; say which automation started it, and when. */}
+      {startedBy ? <p className="asked-on auto-from" title={run.goal}>{startedBy}</p> : <p className="said">{run.goal}</p>}
       {added.map((event) => <p className="said added" key={event.id}>{String(event.payload.text)}</p>)}
       <div className="reply" data-state={run.state}>
         {runSteps.length > 0 && (
@@ -156,13 +157,15 @@ export interface ConversationProps {
   suggestions: string[];
   /** A page's title by its key, in the current language; for pages this device no longer has, the title saved with the run. */
   pageTitle(view: string): string | undefined;
+  /** An automation's name by its id, for runs it started; nothing once it is deleted. */
+  automationTitle(id: string): string | undefined;
   onEvent(listener: (event: CoreEvent) => void): () => void;
   /** A run in this conversation opened a module view. */
   onView(module: string, view: string): void;
   onStarted(conversationId: string): void;
 }
 
-export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, onEvent, onView, onStarted }: ConversationProps) {
+export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, automationTitle, onEvent, onView, onStarted }: ConversationProps) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -221,6 +224,9 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   };
 
   // Which page a question came from, said once each time it changes, not on every turn.
+  const startedBy = (run: Run) => run.automationId
+    ? t("auto.fromAt", { name: automationTitle(run.automationId) ?? t("auto.removed"), at: new Date(run.createdAt).toTimeString().slice(0, 5) })
+    : undefined;
   const askedOn = (run: Run, previous: Run | undefined) =>
     run.context && run.context.view !== previous?.context?.view ? pageTitle(run.context.view) ?? run.context.title ?? run.context.view : undefined;
   const offer = !draft.trim() && !working && !sending && suggestions.length > 0;
@@ -240,7 +246,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         <ol className="turns" ref={list}>
           {runs.map((run, index) => (
             <Turn key={run.id} run={run} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
-              live={live[run.id]} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} />
+              live={live[run.id]} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} />
           ))}
         </ol>
       )}

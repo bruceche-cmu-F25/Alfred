@@ -38,4 +38,9 @@ export {
   type Proposal, type ProposalState, type ProposalStep,
 } from "./proposals.ts";
 export { getSettings, updateSettings, userLocale, LOCALES, SettingsError, type Locale, type UserSettings } from "./settings.ts";
+export {
+  createAutomation, updateAutomation, deleteAutomation, getAutomation, listAutomations, fireDueAutomations, runAutomationNow, ensureTemplates,
+  latestSlot, nextSlot, automationName, automationGoal, AutomationError, AUTOMATION_TEMPLATES, CATCH_UP_MS,
+  type Automation, type AutomationView, type AutomationTemplate, type AutomationPatch, type NewAutomation, type Schedule,
+} from "./automations.ts";
 export { listDevices, pairDevice, deviceForToken, revokeDevice, hashToken, DeviceError, DEVICE_KINDS, type Device, type DeviceKind } from "./devices.ts";

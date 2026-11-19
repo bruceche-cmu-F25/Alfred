@@ -6,12 +6,18 @@ import { EventEmitter } from "node:events";
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CORE_MIGRATIONS, createRunDrain, interruptOrphanedRuns, openWorld,
+  CORE_MIGRATIONS, createRunDrain, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
   type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type World,
 } from "@alfred/core";
 import { assistantTools, moduleMigrations, runTools, type AlfredModule } from "@alfred/module-kit";
 
 export const ASSISTANT_PROFILE = "assistant";
+/** What an automation's runs get: nobody is there, so only reading and reversible changes; the rest is proposed. */
+export const AUTOMATION_PROFILE = "automation";
+/** Not for an automation's own runs: asking (nobody answers), and making or changing automations (only the user does). */
+const UNATTENDED_EXCLUDED = new Set(["ask_user", "automation_add", "automation_update"]);
+/** How often the home node's clock looks for automations that are due. */
+const CLOCK_MS = 30_000;
 
 const PERSONA = `You are Alfred, the user's personal assistant, carrying out one request in a conversation.
 Use only the tools you have. Make exactly the changes the request asks for. If a wrong guess would matter,
@@ -21,6 +27,11 @@ is easier to see than to read (a list, a schedule), also open it with show_view.
 Never claim a change you did not make with a tool. Some tools ask the user to allow each call; if they
 decline, accept it and do not try another way.
 Reply in one to three short sentences, in the language of the request.`;
+
+const UNATTENDED = `This run was started by one of the user's automations, on its schedule: nobody is watching
+and nobody can answer a question. Read, and make only changes that are easy to undo. For anything else (deleting,
+anything you are unsure the user wants), use propose: it waits in the user's inbox for their yes.
+Your reply is what the user reads when they come back, so make it complete on its own.`;
 
 export interface HomeOptions {
   dataDir: string;
@@ -45,6 +56,8 @@ export interface Home {
   steer(runId: string, text: string): Promise<boolean>;
   /** The models the engine can run, for choosing one per conversation. */
   models(): Promise<EngineModel[]>;
+  /** Starts the runs of automations that are due now (the clock calls it; tests call it with a time). */
+  tickAutomations(now?: number): Run[];
   /** Waits for the current drain (tests). */
   idle(): Promise<void>;
   close(): void;
@@ -92,6 +105,12 @@ export function profiles(world: World, modules: readonly AlfredModule[]): Record
       instructions: guidance ? `${PERSONA}\n\n${guidance}` : PERSONA,
       tools: [...runTools(world, modules), ...assistantTools(world, modules)],
     },
+    [AUTOMATION_PROFILE]: {
+      instructions: [PERSONA, UNATTENDED, guidance].filter(Boolean).join("\n\n"),
+      // Nothing irreversible is offered at all (not even to ask about), and nothing that asks.
+      tools: [...runTools(world, modules, { askFor: [] }), ...assistantTools(world, modules).filter((tool) => !UNATTENDED_EXCLUDED.has(tool.name))],
+      unattended: true,
+    },
   };
 }
 
@@ -120,6 +139,19 @@ export function openHome(options: HomeOptions): Home {
   const kick = () => {
     current = drain.kick().catch((error) => options.log?.(`drain stopped: ${error instanceof Error ? error.message : String(error)}`));
   };
+  ensureTemplates(world);
+  const tickAutomations = (now?: number): Run[] => {
+    const fired = fireDueAutomations(world, { profile: AUTOMATION_PROFILE, now });
+    if (fired.length) {
+      options.log?.(`automations: started ${fired.length} run(s)`);
+      kick();
+    }
+    return fired;
+  };
+  const clock = setInterval(() => {
+    try { tickAutomations(); } catch (error) { options.log?.(`automations: ${error instanceof Error ? error.message : String(error)}`); }
+  }, CLOCK_MS);
+  clock.unref();
   return {
     world,
     modules: options.modules,
@@ -129,8 +161,10 @@ export function openHome(options: HomeOptions): Home {
     kick,
     steer: (runId, text) => drain.steer(runId, text),
     models: () => options.engine.models?.() ?? Promise.resolve([]),
+    tickAutomations,
     idle: () => current,
     close() {
+      clearInterval(clock);
       world.close();
       unlock();
     },

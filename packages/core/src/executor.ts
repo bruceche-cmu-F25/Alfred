@@ -41,6 +41,8 @@ export interface RunTool {
 export interface RunProfile {
   instructions: string;
   tools: readonly RunTool[];
+  /** Nobody is there to answer (an automation's run): it can never stop to ask, and external tools that would ask are refused. */
+  unattended?: boolean;
 }
 export interface EngineRequest {
   /** A stable key for the conversation, for engines that keep a session per conversation. */
@@ -140,6 +142,8 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     } catch { /* a note is not worth failing the run */ }
   };
   const ask: RunToolContext["ask"] = (request) => {
+    // Unattended: a question would wait for no one. The profile offers no tool that asks; this is the backstop.
+    if (profile.unattended) return Promise.reject(new Error("This run is unattended: nobody can answer. Propose the change instead."));
     const opened = openRequest(world, run.id, options.owner, { kind: request.kind ?? "input", question: request.question, options: request.options });
     return new Promise<string>((resolve, reject) => {
       const onAnswer = (runId: string, requestId: string, answer: string) => {
@@ -155,7 +159,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   };
   const toolContext: RunToolContext = { ask, note };
   const external: ExternalHooks = {
-    allow: async (question) => (await ask({ kind: "permission", question })) === "allow",
+    allow: async (question) => !profile.unattended && (await ask({ kind: "permission", question })) === "allow",
     step: (step) => note("step", { step: step.id, tool: step.tool, label: step.label, about: step.about?.slice(0, 200), status: step.status }),
     receipt: (call) => {
       // Under the run's lease, like any change: a lapsed executor records nothing.

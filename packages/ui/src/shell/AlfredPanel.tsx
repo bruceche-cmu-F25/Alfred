@@ -45,6 +45,8 @@ export interface AlfredPanelProps {
   view?: PageView;
   /** A page's title by its key, for "asked on" labels. */
   pageTitle(view: string): string | undefined;
+  /** An automation's name by its id, for the runs it started. */
+  automationTitle(id: string): string | undefined;
   onEvent(listener: (event: CoreEvent) => void): () => void;
   onView(module: string, view: string): void;
   onStarted(conversationId: string): void;
@@ -53,7 +55,7 @@ export interface AlfredPanelProps {
 }
 
 /** Alfred beside the page: the figure, one line on what it is doing, and the open conversation. */
-export function AlfredPanel({ state, selected, figure, wide, phone, live, highlighted, view, pageTitle, onEvent, onView, onStarted, onWide, onClose }: AlfredPanelProps) {
+export function AlfredPanel({ state, selected, figure, wide, phone, live, highlighted, view, pageTitle, automationTitle, onEvent, onView, onStarted, onWide, onClose }: AlfredPanelProps) {
   return (
     <aside className="alfred" aria-label="Alfred">
       <header className="alf-head">
@@ -74,7 +76,7 @@ export function AlfredPanel({ state, selected, figure, wide, phone, live, highli
         </div>
       </header>
       <Conversation key={selected ?? "new"} id={selected} live={live} highlighted={highlighted}
-        context={wide ? undefined : view?.context} suggestions={wide ? [] : view?.suggestions ?? []} pageTitle={pageTitle}
+        context={wide ? undefined : view?.context} suggestions={wide ? [] : view?.suggestions ?? []} pageTitle={pageTitle} automationTitle={automationTitle}
         onEvent={onEvent} onView={onView} onStarted={onStarted} />
     </aside>
   );

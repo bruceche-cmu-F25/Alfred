@@ -9,6 +9,7 @@ import { Icon } from "./shell/icons.tsx";
 import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
 import { MOD, Nav } from "./shell/Nav.tsx";
 import { availablePages, moduleOf, pageView } from "./shell/pages.tsx";
+import { automationTitle } from "./automationText.ts";
 import { Palette } from "./shell/Palette.tsx";
 import { Pair } from "./Pair.tsx";
 import { detectLocale, getLocale, setLocale, t, useLocale, type Locale } from "./i18n/index.ts";
@@ -242,6 +243,7 @@ export function App() {
   // The page a question is asked from, unless Alfred spans the window and the page is out of sight.
   const view = state && (phone || layout.alfred !== "wide") ? pageView(current, state) : undefined;
   const pageTitle = (key: string) => pages.find((page) => page.key === key)?.title;
+  const automationOf = (id: string) => { const found = state?.automations?.find((automation) => automation.id === id); return found ? automationTitle(found) : undefined; };
 
   const ask = useCallback((text: string) => {
     showAlfred();
@@ -296,7 +298,7 @@ export function App() {
 
   const panel = (
     <AlfredPanel state={state} selected={selected} figure={figure} wide={alfredMode === "wide"} phone={phone}
-      live={live} highlighted={highlighted} view={view} pageTitle={pageTitle} onEvent={onEvent} onView={onView} onStarted={onStarted}
+      live={live} highlighted={highlighted} view={view} pageTitle={pageTitle} automationTitle={automationOf} onEvent={onEvent} onView={onView} onStarted={onStarted}
       onWide={() => setLayout({ alfred: layout.alfred === "wide" ? "open" : "wide" })}
       onClose={() => (phone ? setSheet(null) : setLayout({ alfred: "closed" }))} />
   );

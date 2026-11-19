@@ -5,6 +5,8 @@
 import type { ReactNode } from "react";
 import type { Area, StateResponse, ViewContext } from "@alfred/protocol";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
+import { Automations } from "../Automations.tsx";
+import { automationTitle, whenText } from "../automationText.ts";
 import { Inbox } from "../Inbox.tsx";
 import { Settings } from "../Settings.tsx";
 import { Todos } from "../Todos.tsx";
@@ -43,6 +45,11 @@ export interface PageDef {
   /** Questions worth asking from this page, most useful first; the chips above the composer. */
   suggestions?(snapshot: unknown, state: StateResponse): Key[];
   render(props: PageProps): ReactNode;
+}
+
+/** The automation that fires next, if any is on. */
+function soonest(state: StateResponse) {
+  return (state.automations ?? []).filter((automation) => automation.enabled && automation.nextAt).sort((a, b) => a.nextAt!.localeCompare(b.nextAt!))[0];
 }
 
 /** Counts the todo page and its lines share. A range running today counts as due today. */
@@ -96,6 +103,24 @@ const PAGES: PageDef[] = [
       return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
     render: ({ snapshot, fresh, areas }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} />,
+  },
+  {
+    key: "core.automations", get title() { return t("page.automations"); }, icon: "clock", k: "green", group: "modules",
+    summary: (_, state) => {
+      const all = state.automations ?? [], next = soonest(state);
+      if (!all.length) return t("auto.sum.empty");
+      return next ? t("auto.sum.next", { on: all.filter((automation) => automation.enabled).length, when: whenText(next.nextAt!) }) : t("auto.sum.off", { n: all.length });
+    },
+    headline: (_, state) => {
+      const next = soonest(state);
+      if (!state.automations?.length) return t("head.auto.empty");
+      return next ? t("head.auto.next", { name: automationTitle(next), when: whenText(next.nextAt!) }) : t("head.auto.off");
+    },
+    suggestions: (_, state) => [
+      ...(state.automations?.some((automation) => automation.template === "brief") ? ["sug.auto.brief" as const] : []),
+      "sug.auto.weekly", "sug.auto.which",
+    ],
+    render: ({ state, openConversation }) => <Automations state={state} onOpenConversation={openConversation} />,
   },
   {
     key: "core.settings", get title() { return t("page.settings"); }, icon: "gear", k: "gray", group: "system",

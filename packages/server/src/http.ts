@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { extname, join, normalize, sep } from "node:path";
 import {
   AREAS, acceptProposal, declineProposal, getSettings, listOpenProposals, supersedeProposal, runCommand, updateSettings, userLocale, withCoreContext,
+  createAutomation, deleteAutomation, listAutomations, runAutomationNow, updateAutomation, type World,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
   deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
@@ -20,10 +21,10 @@ import {
 import { applyStep, invokeOp } from "@alfred/module-kit";
 import type {
   ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
-  RemoteResponse, RespondRequest, ReviseRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
+  RemoteResponse, RespondRequest, ReviseRequest, NewAutomationRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
-import { ASSISTANT_PROFILE, type Home } from "./home.ts";
+import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, type Home } from "./home.ts";
 import { handleConnections } from "./connections-http.ts";
 import type { GoogleConnections } from "./google.ts";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
@@ -112,6 +113,7 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
   const code = (error as { code?: unknown }).code;
   if (name === "SettingsError") return { status: 400, body: { error: message } };
   if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
+  if (name === "AutomationError") return { status: code === "missing" ? 404 : 400, body: { error: message } };
   if (name === "PairingError") return { status: 400, body: { error: message, code: String(code) } };
   if (name === "RemoteError") return { status: 409, body: { error: message } };
   if (name === "PushError") return { status: 400, body: { error: message } };
@@ -128,6 +130,9 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
   if (name === "OpInputError" || name === "Error") return { status: 400, body: { error: message } };
   return { status: 500, body: { error: "Internal error" } };
 }
+
+/** An automation as devices see it (with its next time and last run). */
+const automationView = (world: World, id: string) => listAutomations(world).find((candidate) => candidate.id === id);
 
 function state(home: Home): StateResponse {
   // One synchronous read: no commit can land between these statements.
@@ -149,6 +154,7 @@ function state(home: Home): StateResponse {
     areas: [...AREAS],
     proposals: listOpenProposals(home.world),
     settings: getSettings(home.world),
+    automations: listAutomations(home.world),
   };
 }
 
@@ -363,6 +369,38 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     if (typeof body.requestId !== "string" || !body.patch || typeof body.patch !== "object") throw new HttpError(400, "requestId and patch are required");
     const result = withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId: body.requestId, command: "settings.update", input: body.patch }, () => updateSettings(home.world, body.patch as Record<string, unknown>)));
     return send(res, 200, result.result);
+  }
+
+  // Automations: the user's own rules, changed by device commands like any other. Their runs are unattended.
+  if (method === "POST" && path === "/api/automations") {
+    const body = await readJson<NewAutomationRequest>(req);
+    if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
+    const input = { name: body.name, goal: body.goal, schedule: body.schedule, ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}) };
+    const { result } = withCoreContext({ actor: "user" }, () =>
+      runCommand(home.world, { requestId: body.requestId, command: "automation.create", input }, () => createAutomation(home.world, input)));
+    return send(res, 200, automationView(home.world, result.id) ?? result);
+  }
+  const automation = /^\/api\/automations\/([A-Za-z0-9_-]{1,64})(?:\/(run|delete))?$/.exec(path);
+  if (automation && method === "POST") {
+    const [, id, action] = automation;
+    const body = await readJson<{ requestId?: unknown; patch?: unknown }>(req);
+    if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
+    const requestId = body.requestId;
+    if (action === "run") {
+      const { result } = withCoreContext({ actor: "user" }, () =>
+        runCommand(home.world, { requestId, command: "automation.run", input: { id } }, () => runAutomationNow(home.world, id, requestId, { profile: AUTOMATION_PROFILE })));
+      home.kick();
+      return send(res, 202, result);
+    }
+    if (action === "delete") {
+      withCoreContext({ actor: "user" }, () => runCommand(home.world, { requestId, command: "automation.delete", input: { id } }, () => deleteAutomation(home.world, id)));
+      return send(res, 200, {});
+    }
+    if (!body.patch || typeof body.patch !== "object") throw new HttpError(400, "patch is required");
+    const patch = body.patch as Record<string, unknown>;
+    const { result } = withCoreContext({ actor: "user" }, () =>
+      runCommand(home.world, { requestId, command: "automation.update", input: { id, patch } }, () => updateAutomation(home.world, id, patch)));
+    return send(res, 200, automationView(home.world, id) ?? result);
   }
 
   // The user's decisions on proposals. Accepting runs the steps as Alfred's changes, made on the user's yes.

@@ -1,0 +1,139 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+  CORE_MIGRATIONS, createAutomation, createRunDrain, deleteAutomation, ensureTemplates, fireDueAutomations, getConversation, latestSlot,
+  listAutomations, listEvents, listNotices, listRuns, nextSlot, openWorld, runAutomationNow, updateAutomation, updateSettings,
+  type EnginePort, type RunProfile, type World,
+} from "../src/index.ts";
+
+const world = (): World => openWorld(":memory:", CORE_MIGRATIONS);
+/** Local time, as the home node's clock reads it. 2026-11-19 is a Thursday. */
+const at = (day: number, hours: number, minutes = 0) => new Date(2026, 10, day, hours, minutes).getTime();
+const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7];
+const tick = (w: World, now: number) => fireDueAutomations(w, { profile: "automation", now });
+const kinds = (w: World, prefix: string) => listEvents(w).events.map((event) => event.kind).filter((kind) => kind.startsWith(prefix));
+
+test("slots: the latest due and the next, by local time and weekday", () => {
+  const weekdays = { at: "07:30", days: [1, 2, 3, 4, 5] };
+  assert.equal(latestSlot(weekdays, at(19, 8)), at(19, 7, 30));
+  assert.equal(latestSlot(weekdays, at(19, 7)), at(18, 7, 30), "before today's slot: yesterday's");
+  assert.equal(latestSlot(weekdays, at(22, 9)), at(20, 7, 30), "on Sunday: Friday's");
+  assert.equal(latestSlot(weekdays, at(23, 9)), at(23, 7, 30), "on Monday after 07:30: Monday's");
+  assert.equal(nextSlot(weekdays, at(20, 8)), at(23, 7, 30), "after Friday's: Monday's");
+  assert.equal(nextSlot(weekdays, at(19, 7, 30)), at(20, 7, 30), "exactly at a slot: the next one");
+});
+
+test("an automation fires once per slot, into its own conversation, never for a slot already past when it was made", () => {
+  const w = world();
+  const automation = createAutomation(w, { name: "Inbox sweep", goal: "Tidy my todos", schedule: { at: "07:30", days: EVERY_DAY } }, at(19, 8));
+  assert.deepEqual(tick(w, at(19, 8, 1)), [], "today's 07:30 had passed when it was made");
+
+  const [first] = tick(w, at(20, 7, 30));
+  assert.ok(first);
+  assert.equal(first.automationId, automation.id);
+  assert.equal(first.profile, "automation");
+  assert.equal(first.goal, "Tidy my todos");
+  assert.equal(getConversation(w, first.conversationId).title, "Inbox sweep");
+  assert.deepEqual(tick(w, at(20, 7, 31)), [], "the same slot fires once");
+  assert.deepEqual(tick(w, at(20, 23)), []);
+
+  const [second] = tick(w, at(21, 7, 30));
+  assert.equal(second.conversationId, first.conversationId, "every run goes to the automation's conversation");
+  assert.equal(listRuns(w).length, 2);
+  const [view] = listAutomations(w, at(21, 8));
+  assert.equal(view.lastRun?.id, second.id);
+  assert.equal(view.nextAt, new Date(at(22, 7, 30)).toISOString());
+});
+
+test("a slot missed while the node was off runs late at most once; one too late is skipped", () => {
+  const w = world();
+  createAutomation(w, { name: "Brief", goal: "Brief me", schedule: { at: "07:30", days: EVERY_DAY } }, at(18, 12));
+  // Off from the 18th to the 21st at 09:00: three slots missed, only the latest runs, and says it is late.
+  const late = tick(w, at(21, 9));
+  assert.equal(late.length, 1);
+  assert.match(late[0].goal, /running late/);
+  assert.deepEqual(tick(w, at(21, 9, 5)), []);
+  // Off from the 21st 09:00 to the 22nd 20:00: 07:30 is more than 12 hours late. Skipped, and recorded.
+  assert.deepEqual(tick(w, at(22, 20)), []);
+  assert.deepEqual(kinds(w, "automation."), ["automation.created", "automation.fired", "automation.skipped"]);
+  assert.equal(tick(w, at(23, 7, 30)).length, 1, "and the next slot runs as usual");
+});
+
+test("off never fires; on again or rescheduled starts from the next slot, not one already past", () => {
+  const w = world();
+  const automation = createAutomation(w, { name: "Brief", goal: "Brief me", schedule: { at: "07:30", days: EVERY_DAY }, enabled: false }, at(18, 12));
+  assert.deepEqual(tick(w, at(19, 7, 30)), []);
+  updateAutomation(w, automation.id, { enabled: true }, at(19, 9));
+  assert.deepEqual(tick(w, at(19, 9, 1)), [], "07:30 had passed when it was switched on");
+  updateAutomation(w, automation.id, { schedule: { at: "08:00", days: EVERY_DAY } }, at(20, 9));
+  assert.deepEqual(tick(w, at(20, 9, 1)), [], "08:00 had passed when it was moved there");
+  assert.equal(tick(w, at(21, 8)).length, 1);
+  updateAutomation(w, automation.id, { enabled: false }, at(21, 12));
+  assert.deepEqual(tick(w, at(22, 8)), []);
+  assert.deepEqual(kinds(w, "automation."), ["automation.created", "automation.toggled", "automation.updated", "automation.fired", "automation.toggled"]);
+  assert.throws(() => updateAutomation(w, automation.id, { schedule: { at: "25:00", days: [1] } }), /HH:MM/);
+  assert.throws(() => updateAutomation(w, automation.id, { schedule: { at: "08:00", days: [] } }), /weekdays/);
+  assert.throws(() => updateAutomation(w, automation.id, { colour: "red" } as never), /Unknown field/);
+});
+
+test("run now: one run per request, outside the schedule", () => {
+  const w = world();
+  const automation = createAutomation(w, { name: "Brief", goal: "Brief me", schedule: { at: "07:30", days: EVERY_DAY } }, at(19, 8));
+  const run = runAutomationNow(w, automation.id, "dev.r1", { profile: "automation", now: at(19, 10) });
+  assert.equal(runAutomationNow(w, automation.id, "dev.r1", { profile: "automation", now: at(19, 10) }).id, run.id, "a retried click replays");
+  assert.equal(tick(w, at(20, 7, 30)).length, 1, "the schedule is untouched");
+  deleteAutomation(w, automation.id, at(20, 9));
+  assert.deepEqual(listAutomations(w), []);
+  assert.equal(listRuns(w).length, 2, "its runs stay");
+});
+
+test("the morning brief is there from the start, off, in the user's language; deleted, it stays gone", () => {
+  const w = world();
+  ensureTemplates(w, at(19, 6));
+  ensureTemplates(w, at(19, 6));
+  const [brief] = listAutomations(w);
+  assert.equal(listAutomations(w).length, 1);
+  assert.deepEqual([brief.template, brief.enabled, brief.schedule.at, brief.name], ["brief", false, "07:30", null]);
+
+  updateAutomation(w, brief.id, { enabled: true }, at(19, 6, 30));
+  updateSettings(w, { locale: "zh" });
+  const [run] = tick(w, at(19, 7, 30));
+  assert.match(run.goal, /早报/);
+  assert.equal(getConversation(w, run.conversationId).title, "早报");
+  assert.equal(listEvents(w).events.find((event) => event.kind === "automation.created")?.actor, "system");
+
+  deleteAutomation(w, brief.id);
+  ensureTemplates(w);
+  assert.deepEqual(listAutomations(w), []);
+});
+
+test("an unattended run cannot stop to ask: external tools are refused and asking fails", async () => {
+  const w = world();
+  const seen: unknown[] = [];
+  const engine: EnginePort = {
+    async submit(request) {
+      seen.push(await request.external.allow("Send an email?"));
+      try { await request.tools[0].execute({}, new AbortController().signal); } catch (error) { seen.push((error as Error).message); }
+      return { reply: "done" };
+    },
+  };
+  const asking = { name: "ask_user", label: "Ask", description: "", parameters: { type: "object" }, execute: (_: unknown, __: unknown, context: { ask(request: { question: string }): Promise<string> }) => context.ask({ question: "Which?" }) };
+  const profiles: Record<string, RunProfile> = { automation: { instructions: "", tools: [asking as never], unattended: true } };
+  const automation = createAutomation(w, { name: "Brief", goal: "Brief me", schedule: { at: "07:30", days: EVERY_DAY } }, at(19, 6));
+  runAutomationNow(w, automation.id, "dev.r1", { profile: "automation" });
+  await createRunDrain(w, engine, { owner: "home", profiles }).kick();
+  assert.equal(seen[0], false);
+  assert.match(String(seen[1]), /unattended/);
+  assert.equal(listRuns(w)[0].state, "completed");
+});
+
+test("a notice about an automation's run calls it by the automation's name", async () => {
+  const w = world();
+  ensureTemplates(w, at(19, 6));
+  const [brief] = listAutomations(w);
+  runAutomationNow(w, brief.id, "dev.r1", { profile: "automation" });
+  await createRunDrain(w, { submit: async () => ({ reply: "Two things today." }) }, { owner: "home", profiles: { automation: { instructions: "", tools: [], unattended: true } } }).kick();
+  const notice = listNotices(w).find((candidate) => candidate.kind === "run_result")!;
+  assert.equal(notice.payload.goal, "Morning brief");
+  assert.equal(notice.payload.automationId, brief.id);
+});

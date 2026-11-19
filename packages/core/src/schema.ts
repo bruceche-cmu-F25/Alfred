@@ -150,4 +150,24 @@ CREATE TABLE core_devices (
   revoked_at TEXT
 ) STRICT;
 `,
+}, {
+  // Automations (automations.ts): rules that start a run on a schedule. A run they start says which (core_runs.automation_id).
+  id: "core:8",
+  sql: `
+CREATE TABLE core_automations (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  name TEXT CHECK (name IS NULL OR length(name) BETWEEN 1 AND 60),
+  template TEXT CHECK (template IS NULL OR template IN ('brief')),
+  goal TEXT CHECK (goal IS NULL OR length(goal) BETWEEN 1 AND 2000),
+  schedule TEXT NOT NULL CHECK (json_valid(schedule) AND json_type(schedule) = 'object'),
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  conversation_id TEXT,
+  last_slot TEXT,
+  last_run_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (template IS NOT NULL OR (name IS NOT NULL AND goal IS NOT NULL))
+) STRICT;
+ALTER TABLE core_runs ADD COLUMN automation_id TEXT CHECK (automation_id IS NULL OR length(automation_id) BETWEEN 1 AND 64);
+`,
 }];

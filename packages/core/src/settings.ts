@@ -2,6 +2,7 @@
  * itself (a proposal's steps, a permission question) agree. Each change is a `settings.changed` event, audited like
  * any other change (docs/design/settings-and-connections.md §3.5). The first field is the language.
  */
+import type { DatabaseSync } from "node:sqlite";
 import { recordDomainEvent } from "./events.ts";
 import { iso } from "./ids.ts";
 import type { World } from "./world.ts";
@@ -28,7 +29,14 @@ export function getSettings(world: World): UserSettings {
 
 /** The language for text the node writes itself; English until the user's devices have said otherwise. */
 export function userLocale(world: World): Locale {
-  return getSettings(world).locale ?? "en";
+  return localeOf(world.db);
+}
+
+/** The same, inside a transaction that has only the database. */
+export function localeOf(db: DatabaseSync): Locale {
+  const row = db.prepare("SELECT value FROM core_settings WHERE key = 'locale'").get();
+  const locale = row ? JSON.parse(row.value as string) as unknown : null;
+  return LOCALES.includes(locale as Locale) ? locale as Locale : "en";
 }
 
 function pick(value: Record<string, unknown>): Partial<UserSettings> {

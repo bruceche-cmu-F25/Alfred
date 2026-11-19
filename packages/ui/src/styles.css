@@ -344,3 +344,49 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Automations (自动任务): one row each, name and what it does, when, how it last went, then the switch and actions. */
+.automations { flex: 1; min-height: 0; overflow-y: auto; padding: 0 32px 80px; }
+.auto-note { max-width: 940px; margin: 0 0 12px; font-size: .8125rem; }
+.auto-list { max-width: 940px; border-top: 1px solid var(--line-soft); }
+.auto-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 16px; align-items: center; padding: 14px 4px; border-bottom: 1px solid var(--line-soft); }
+.auto-row:not([data-enabled]) .auto-name, .auto-row:not([data-enabled]) .auto-sched { opacity: .62; }
+.auto-row.editing { display: block; padding: 16px 4px; }
+.auto-row small { display: block; overflow: hidden; color: var(--muted); font-size: .75rem; white-space: nowrap; text-overflow: ellipsis; }
+.auto-name { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.auto-name i { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--k-fill); color: var(--k-solid); }
+.auto-name span { min-width: 0; }
+.auto-name b { display: block; color: var(--ink); font-weight: 500; }
+.auto-sched, .auto-last { min-width: 0; color: var(--copy); font-size: .8125rem; }
+.auto-last .link { color: var(--copy); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; text-align: left; }
+.auto-last .link:hover { color: var(--ink); }
+.auto-last[data-state="failed"] .link, .auto-last[data-state="interrupted"] .link { color: var(--bad); }
+.auto-actions { display: flex; align-items: center; gap: 6px; }
+.auto-actions .small { min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: .75rem; }
+.auto-actions .danger { background: var(--bad); color: #fff; box-shadow: none; }
+.auto-error { grid-column: 1 / -1; }
+.auto-add { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; min-height: 32px; padding: 0 14px 0 10px; border-radius: 999px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); }
+.auto-add:hover { color: var(--ink); background: var(--wash); }
+.auto-add svg { width: 16px; height: 16px; }
+.switch { position: relative; flex: none; width: 38px; height: 22px; border-radius: 11px; background: var(--line); }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; transition: transform 200ms var(--ease); }
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); }
+.auto-form { display: flex; flex-direction: column; gap: 12px; max-width: 620px; }
+.auto-form .field { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: .75rem; }
+.auto-form input, .auto-form textarea { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: .875rem; }
+.auto-form textarea { resize: vertical; line-height: 1.5; }
+.auto-when { display: flex; flex-wrap: wrap; gap: 16px; }
+.day-picks { display: flex; gap: 4px; }
+.day-pick { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 8px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); }
+.day-pick[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.auto-form-actions { display: flex; gap: 8px; }
+.auto-form-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; }
+.auto-form-actions button.ghost { background: none; color: var(--copy); }
+.auto-form-actions button:disabled { opacity: .5; }
+@media (max-width: 760px) {
+  .automations { padding: 0 16px 80px; }
+  .auto-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+  .auto-name, .auto-sched, .auto-last { grid-column: 1; }
+  .auto-actions { grid-column: 2; grid-row: 1 / span 3; flex-direction: column; align-items: flex-end; }
+}

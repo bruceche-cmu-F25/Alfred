@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { EnginePort } from "@alfred/core";
 import { todoModule, type TodoSnapshot } from "@alfred/module-todo";
 import type { ConversationDetail, CoreEvent, RunDetail, StateResponse, SubmitRunResponse } from "@alfred/protocol";
-import { createHttpServer, openHome, type Home } from "../src/index.ts";
+import { AUTOMATION_PROFILE, ASSISTANT_PROFILE, createHttpServer, openHome, profiles, type Home } from "../src/index.ts";
 
 /** Adds the todo named in the goal through the run's own tool. */
 const engine: EnginePort = {
@@ -316,6 +316,86 @@ test("asking from a page: the run keeps the page, the engine hears about it, a m
     assert.equal(refused.status, 400);
   } finally {
     server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("automations over HTTP: made by the user, fired once by the clock, unattended, run now, switched off", async () => {
+  const seen: Array<{ tools: string[]; instructions: string; allowed: boolean; goal: string }> = [];
+  const recording: EnginePort = {
+    async submit(request) {
+      seen.push({ tools: request.tools.map((tool) => tool.name), instructions: request.instructions, allowed: await request.external.allow("Post this?"), goal: request.goal });
+      return { reply: "Two todos are due today." };
+    },
+  };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: recording, modules: [todoModule] });
+  const { server, base } = await start(home);
+  try {
+    const initial = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    assert.deepEqual(initial.automations.map((automation) => [automation.template, automation.enabled]), [["brief", false]], "the brief is there, off");
+
+    const now = Date.now();
+    const soon = new Date(now + 60_000);
+    const hhmm = `${String(soon.getHours()).padStart(2, "0")}:${String(soon.getMinutes()).padStart(2, "0")}`;
+    const created = await post(base, "/api/automations", { requestId: "a-1", name: "Sweep", goal: "Look over my todos", schedule: { at: hhmm, days: [1, 2, 3, 4, 5, 6, 7] } });
+    assert.equal(created.status, 200);
+    const automation = (await created.json()) as StateResponse["automations"][number];
+    assert.equal(automation.nextAt !== null, true);
+    assert.equal((await post(base, "/api/automations", { requestId: "a-1", name: "Sweep", goal: "Look over my todos", schedule: { at: hhmm, days: [1, 2, 3, 4, 5, 6, 7] } })).status, 200, "a retry replays");
+    assert.equal((await post(base, "/api/automations", { requestId: "a-2", name: "Bad", goal: "x", schedule: { at: "7:30", days: [1] } })).status, 400);
+
+    const slot = Date.parse(automation.nextAt!);
+    assert.equal(home.tickAutomations(slot + 1000).length, 1);
+    assert.equal(home.tickAutomations(slot + 2000).length, 0, "once per slot");
+    await home.idle();
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].goal, "Look over my todos");
+    assert.equal(seen[0].allowed, false, "nobody to allow an external call");
+    assert.ok(!seen[0].tools.includes("ask_user") && !seen[0].tools.includes("todo_delete"), "nothing that asks, nothing irreversible");
+    assert.ok(seen[0].tools.includes("propose") && seen[0].tools.includes("todo_add"));
+    assert.match(seen[0].instructions, /nobody is watching/);
+
+    const ran = await post(base, `/api/automations/${automation.id}/run`, { requestId: "a-run" });
+    assert.equal(ran.status, 202);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await home.idle();
+    const after = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    const mine = after.automations.find((candidate) => candidate.id === automation.id)!;
+    assert.equal(mine.lastRun?.state, "completed");
+    assert.equal(mine.lastRun?.reply, "Two todos are due today.");
+    const detail = (await (await fetch(`${base}/api/conversations/${mine.conversationId}`)).json()) as ConversationDetail;
+    assert.deepEqual(detail.runs.map((run) => run.automationId), [automation.id, automation.id], "both runs went to its conversation");
+
+    const off = await post(base, `/api/automations/${automation.id}`, { requestId: "a-off", patch: { enabled: false } });
+    assert.equal(((await off.json()) as StateResponse["automations"][number]).nextAt, null);
+    assert.equal(home.tickAutomations(slot + 24 * 3600_000).length, 0, "off: the next day's slot does not fire");
+    assert.equal((await post(base, `/api/automations/${automation.id}/delete`, { requestId: "a-del" })).status, 200);
+    assert.equal((await post(base, `/api/automations/${automation.id}`, { requestId: "a-gone", patch: { enabled: true } })).status, 404);
+  } finally {
+    server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("Alfred can list, make and change automations when asked; an automation's own run cannot", async () => {
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [todoModule] });
+  try {
+    const all = profiles(home.world, [todoModule]);
+    const tool = (name: string) => all[ASSISTANT_PROFILE].tools.find((candidate) => candidate.name === name)!;
+    const signal = new AbortController().signal;
+    const made = await tool("automation_add").execute({ name: "Monday sweep", goal: "Go over my todos", at: "08:30", days: [1] }, signal);
+    assert.match(made, /Made the automation "Monday sweep"/);
+    const listed = await tool("automation_list").execute({}, signal);
+    assert.match(listed, /Monday sweep \| weekdays 1 at 08:30 \| on/);
+    assert.match(listed, /Morning brief .*\| off/, "the brief, by its name in the user's language");
+    const id = listed.split("\n").find((line) => line.includes("Monday sweep"))!.split(":")[0];
+    assert.match(await tool("automation_update").execute({ id, at: "09:00", enabled: false }, signal), /at 09:00 \| off/);
+    assert.match(await tool("automation_add").execute({ name: "Bad", goal: "x", at: "8:30" }, signal), /^Not done: /);
+
+    const unattended = all[AUTOMATION_PROFILE];
+    assert.equal(unattended.unattended, true);
+    assert.deepEqual(unattended.tools.map((candidate) => candidate.name).filter((name) => name.startsWith("automation_") || name === "ask_user"), ["automation_list"]);
+  } finally {
     home.close();
   }
 });

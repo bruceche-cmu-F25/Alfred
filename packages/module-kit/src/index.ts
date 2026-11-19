@@ -7,6 +7,7 @@
  */
 import {
   coreContext, getRun, openProposal, runCommand, withCoreContext, type Actor, type Migration, type ProposalStep, type RunTool, type World,
+  automationName, createAutomation, listAutomations, updateAutomation, userLocale, type AutomationView,
 } from "@alfred/core";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -225,6 +226,66 @@ export function assistantTools(world: World, modules: readonly AlfredModule[]): 
       },
     });
   }
+  // The user's automations, so "every Monday morning, go over my todos" can be said, not only clicked.
+  const days = Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 7 }), { minItems: 1, maxItems: 7, description: "Weekdays, 1 Monday to 7 Sunday; every day if left out" }));
+  const at = Type.String({ pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", description: "Time of day, HH:MM, 24-hour, the user's local time" });
+  const sayAutomation = (automation: AutomationView) => [
+    `${automation.id}: ${automationName(automation, userLocale(world))}`,
+    `${automation.schedule.days.length === 7 ? "every day" : `weekdays ${automation.schedule.days.join(",")}`} at ${automation.schedule.at}`,
+    automation.enabled ? `on, next ${automation.nextAt}` : "off",
+    ...(automation.goal ? [`does: ${automation.goal}`] : []),
+  ].join(" | ");
+  const attempt = (action: () => string) => { try { return action(); } catch (error) { return `Not done: ${(error as Error).message}`; } };
+  tools.push({
+    name: "automation_list",
+    label: "Automations",
+    description: "List the user's automations (what you do on your own on a schedule, like the morning brief): id, name, when, on or off, what each does.",
+    parameters: Type.Object({}) as unknown as Record<string, unknown>,
+    execute: () => listAutomations(world).map(sayAutomation).join("\n") || "No automations.",
+  }, {
+    name: "automation_add",
+    label: "New automation",
+    description: [
+      "Make an automation: something you will do on your own, on a schedule, when the user asks for something recurring (\"every Monday morning, go over my todos\").",
+      "Its runs are unattended: they read and make reversible changes, and propose anything else. It starts switched on.",
+    ].join(" "),
+    parameters: Type.Object({
+      name: Type.String({ maxLength: 60, description: "A short name, in the user's language" }),
+      goal: Type.String({ maxLength: 2000, description: "What to do each time, as the instruction you will be given then, in the user's language" }),
+      at, days,
+    }) as unknown as Record<string, unknown>,
+    describe: (params) => String(params.name ?? "").slice(0, 60),
+    execute: (params) => attempt(() => {
+      const made = createAutomation(world, {
+        name: String(params.name ?? ""), goal: String(params.goal ?? ""),
+        schedule: { at: params.at, days: Array.isArray(params.days) ? params.days : [1, 2, 3, 4, 5, 6, 7] },
+      });
+      return `Made the automation "${made.name}" (${made.id}). It is on; the user can change or switch it off on the Automations page.`;
+    }),
+  }, {
+    name: "automation_update",
+    label: "Change automation",
+    description: "Change one of the user's automations: rename it, reword what it does, move its time or days, or switch it on or off. Get its id from automation_list.",
+    parameters: Type.Object({
+      id: Type.String(),
+      name: Type.Optional(Type.String({ maxLength: 60 })),
+      goal: Type.Optional(Type.String({ maxLength: 2000 })),
+      at: Type.Optional(at), days,
+      enabled: Type.Optional(Type.Boolean()),
+    }) as unknown as Record<string, unknown>,
+    describe: (params) => String(params.id ?? ""),
+    execute: (params) => attempt(() => {
+      const current = listAutomations(world).find((automation) => automation.id === params.id);
+      if (!current) return `No automation ${String(params.id)}. Use automation_list.`;
+      const changed = updateAutomation(world, current.id, {
+        ...(params.name !== undefined ? { name: params.name } : {}),
+        ...(params.goal !== undefined ? { goal: params.goal } : {}),
+        ...(params.at !== undefined || params.days !== undefined ? { schedule: { at: params.at ?? current.schedule.at, days: params.days ?? current.schedule.days } } : {}),
+        ...(params.enabled !== undefined ? { enabled: params.enabled } : {}),
+      });
+      return `Changed: ${sayAutomation({ ...current, ...changed })}.`;
+    }),
+  });
   const views = modules.flatMap((module) => (module.views ?? []).map((view) => ({ key: `${module.id}.${view.id}`, module: module.id, view: view.id, title: view.title })));
   if (views.length) {
     tools.push({

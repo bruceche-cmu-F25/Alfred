@@ -82,6 +82,8 @@ export interface Run {
   request: RunRequest | null;
   /** The page the user asked from. */
   context: ViewContext | null;
+  /** The automation that started it on its schedule; null when the user asked. */
+  automationId: string | null;
 }
 /** The page a request came from: its view, title, one line of what it shows, and what was selected on it. */
 export interface ViewContext { view: string; title?: string; summary?: string; selection?: { id: string; title?: string } }
@@ -199,6 +201,8 @@ export interface StateResponse {
   /** Proposals waiting for the user's decision, oldest first. */
   proposals: Proposal[];
   settings: UserSettings;
+  /** The user's automations (the morning brief among them), with when each fires next. */
+  automations: Automation[];
 }
 
 export interface SubmitRunRequest { requestId: string; goal: string; conversationId?: string; context?: ViewContext }
@@ -314,3 +318,34 @@ export type RemoteResponse =
   | { local: false; device: DeviceInfo };
 export interface PairingCode { code: string; url: string | null; expiresAt: string }
 export interface PairRequest { code: string; name: string; kind: DeviceKind }
+
+/** Automations: rules that start a run on a schedule (docs/design/workspace-architecture.md §5.2). Their runs are
+ * unattended: reading and reversible changes only, everything else proposed. Every command replays by request id.
+ *
+ *   POST /api/automations                 NewAutomationRequest -> Automation
+ *   POST /api/automations/:id             UpdateAutomationRequest -> Automation (rename, reword, reschedule, on/off)
+ *   POST /api/automations/:id/run         { requestId } -> Run (now, outside the schedule)
+ *   POST /api/automations/:id/delete      { requestId } -> {} (its runs and conversation stay)
+ */
+/** A time of day (HH:MM, the home node's local time) and weekdays, 1 (Monday) to 7 (Sunday). */
+export interface Schedule { at: string; days: number[] }
+export interface Automation {
+  id: string;
+  /** Null for a template (the morning brief), which is named in the user's language. */
+  name: string | null;
+  template: "brief" | null;
+  /** What Alfred is told each time; null for a template. */
+  goal: string | null;
+  schedule: Schedule;
+  enabled: boolean;
+  conversationId: string | null;
+  lastSlot: string | null;
+  lastRunId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** When it fires next; null when it is off. */
+  nextAt: string | null;
+  lastRun: { id: string; state: RunState; at: string; reply: string | null } | null;
+}
+export interface NewAutomationRequest { requestId: string; name: string; goal: string; schedule: Schedule; enabled?: boolean }
+export interface UpdateAutomationRequest { requestId: string; patch: { name?: string; goal?: string; schedule?: Schedule; enabled?: boolean } }

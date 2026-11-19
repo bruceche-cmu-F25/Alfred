@@ -2,6 +2,7 @@
  * retry after a dropped connection can never do the same thing twice.
  */
 import type {
+  Automation, Schedule,
   Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
   PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
@@ -94,6 +95,13 @@ export const api = {
   setRemote: (enabled: boolean) => post<RemoteResponse>("/api/remote", { enabled }),
   pairingCode: () => post<PairingCode>("/api/remote/pairing", {}),
   revokeDevice: (id: string) => post<RemoteResponse>(`/api/devices/${id}/revoke`, {}),
+  /** Automations: make one, change it (or switch it on and off), run it now, delete it. */
+  createAutomation: (input: { name: string; goal: string; schedule: Schedule; enabled?: boolean }) =>
+    post<Automation>("/api/automations", { requestId: newRequestId(), ...input }),
+  updateAutomation: (id: string, patch: { name?: string; goal?: string; schedule?: Schedule; enabled?: boolean }) =>
+    post<Automation>(`/api/automations/${id}`, { requestId: newRequestId(), patch }),
+  runAutomation: (id: string) => post<Run>(`/api/automations/${id}/run`, { requestId: newRequestId() }),
+  deleteAutomation: (id: string) => post<Record<string, never>>(`/api/automations/${id}/delete`, { requestId: newRequestId() }),
   /** On a device that is not paired yet: the home node answers with the device token in a cookie. */
   pair: (code: string, name: string, kind: DeviceKind) => post<{ device: DeviceInfo }>("/api/pair", { code, name, kind }),
   forgetDevice: () => post<Record<string, never>>("/api/device/forget", {}),
