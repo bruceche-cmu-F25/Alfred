@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   addProject, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, listEvents, listProjects, openWorld, ProjectError,
-  removeProject, startSession, submitRun, trustProject,
+  removeProject, startSession, submitRun, trustProject, updateConversation,
   type EngineRequest, type EnginePort, type RunProfile, type World,
 } from "../src/index.ts";
 
@@ -13,7 +13,7 @@ const world = (): World => openWorld(":memory:", CORE_MIGRATIONS);
 const folder = () => mkdtempSync(join(tmpdir(), "alfred-project-"));
 const PROFILES: Record<string, RunProfile> = {
   assistant: { instructions: "", tools: [] },
-  developer: { instructions: "", tools: [], workspace: true },
+  developer: { instructions: "Work in the project.", tools: [], workspace: true, modes: { plan: "Read only.", ask: "Ask before each change.", edits: "Change freely." } },
 };
 
 test("a project is a real folder, added once, untrusted until the user says so", () => {
@@ -53,6 +53,12 @@ test("a session's runs get the project's folder; a wrong profile or a removed pr
   await drain.kick();
   assert.equal(getRun(w, ok.id).run.state, "completed");
   assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask" });
+  assert.equal(seen[0].instructions, "Work in the project.\n\nAsk before each change.", "the run is told what its mode allows");
+  updateConversation(w, session.id, { mode: "plan" });
+  submitRun(w, { requestId: "r1b", goal: "And the cart?", profile: "developer", conversationId: session.id });
+  await drain.kick();
+  assert.equal(seen[1].instructions, "Work in the project.\n\nRead only.");
+  seen.length = 1;
 
   // The everyday profile in a session, or a session profile outside one, never reaches the engine.
   const wrong = submitRun(w, { requestId: "r2", goal: "Hi", profile: "assistant", conversationId: session.id }).run;

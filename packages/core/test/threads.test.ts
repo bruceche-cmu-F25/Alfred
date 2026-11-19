@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  answerRequest, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, listConversations, listEvents, listNotices,
-  openWorld, recordDomainEvent, requestCancel, RunError, submitRun, updateConversation, updateSettings,
+  answerRequest, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, heartbeatRun, listConversations, listEvents, listNotices,
+  openWorld, recordDomainEvent, requestCancel, RunError, submitRun, sweepRuns, updateConversation, updateSettings,
   type EnginePort, type RunProfile, type RunTool, type World,
 } from "../src/index.ts";
 
@@ -139,6 +139,30 @@ test("an irreversible tool runs only after the user allows that one call", async
   await done;
   assert.deepEqual(toys(w), ["ball"]);
   assert.match(getRun(w, run.id).run.outcome!.reply!, /dropped \/ The user did not allow this/);
+});
+
+test("a run waiting on the user outlasts its lease (the machine slept) and goes on when they answer", async () => {
+  const w = world();
+  w.db.prepare("INSERT INTO toys (id) VALUES ('kite')").run();
+  const { run } = submitRun(w, { requestId: "r1", goal: "throw the kite away", profile: "tasks" });
+  const engine: EnginePort = { submit: async (request) => ({ reply: await tool(request, "toy_drop").execute({ name: "kite" }, new AbortController().signal) }) };
+  // No heartbeat in this test: the answer comes before the executor's first one after waking.
+  const done = createRunDrain(w, engine, { owner: "home", profiles: profiles(w), heartbeatMs: 1e9 }).kick();
+  await tick();
+  assert.equal(getRun(w, run.id).run.state, "waiting_permission");
+  // The lid was closed for an hour: nothing ran, and the lease is long past.
+  w.db.prepare("UPDATE core_runs SET lease_until = ?").run(new Date(Date.now() - 3_600_000).toISOString());
+  sweepRuns(w);
+  const waiting = getRun(w, run.id).run;
+  assert.equal(waiting.state, "waiting_permission", "still asking");
+  assert.equal(listNotices(w).some((notice) => notice.kind === "run_interrupted"), false);
+  assert.deepEqual(heartbeatRun(w, run.id, "home"), { cancelRequested: false }, "its executor still holds it");
+  w.db.prepare("UPDATE core_runs SET lease_until = ?").run(new Date(Date.now() - 3_600_000).toISOString());
+
+  answerRequest(w, run.id, { requestId: waiting.request!.id, answer: "allow" });
+  await done;
+  assert.equal(getRun(w, run.id).run.state, "completed");
+  assert.deepEqual(toys(w), [], "what the answer allowed was done");
 });
 
 test("cancelling a run that waits on the user stops it without an answer", async () => {

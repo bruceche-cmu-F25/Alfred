@@ -241,15 +241,17 @@ export function assistantTools(world: World, modules: readonly AlfredModule[]): 
         "(deleting, several changes at once, anything you are unsure they want), or when they asked you to suggest rather than do.",
         "The user sees your title and summary in their inbox, with the exact steps, and can accept, decline or ask for a change;",
         "accepting runs exactly these steps, once. Do not also make these changes yourself. After proposing you can finish and say what you proposed.",
-        `Tools you can propose: ${proposable.map((tool) => tool.name).join(", ")} (with the same parameters as calling them).`,
+        `Each call names one of these tools with its parameters, as \`calls\` describes them: ${proposable.map((tool) => tool.name).join(", ")}.`,
       ].join(" "),
       parameters: Type.Object({
         title: Type.String({ maxLength: 120, description: "The decision as a short question in the user's language, e.g. 删掉 3 条逾期很久的待办？" }),
         summary: Type.String({ maxLength: 1200, description: "What will change and why, briefly, in the user's language" }),
-        calls: Type.Array(Type.Object({
-          tool: Type.Union(proposable.map((tool) => Type.Literal(tool.name))),
-          params: Type.Record(Type.String(), Type.Unknown(), { description: "The tool's parameters" }),
-        }), { minItems: 1, maxItems: 20 }),
+        // One shape per tool, with that tool's own parameters and what it does: a run is never offered some of them
+        // directly (anything `external`), so this is the only place it learns how to call them.
+        calls: Type.Array(Type.Union(proposable.map((tool) => Type.Object({
+          tool: Type.Literal(tool.name),
+          params: tool.parameters,
+        }, { description: tool.description }))), { minItems: 1, maxItems: 20 }),
       }) as unknown as Record<string, unknown>,
       describe: (params) => String(params.title ?? "").slice(0, 120),
       execute(params) {

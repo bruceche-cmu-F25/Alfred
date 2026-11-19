@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  acceptProposal, CORE_MIGRATIONS, declineProposal, getProposal, listEvents, listNotices, listOpenProposals, openProposal, openWorld,
+  acceptProposal, CORE_MIGRATIONS, declineProposal, expireProposals, getProposal, listEvents, listNotices, listOpenProposals, openProposal, openWorld,
   ProposalStateError, PROPOSAL_TTL_MS, recordDomainEvent, runCommand, supersedeProposal, withCoreContext, type ProposalStep, type World,
   getSettings, SettingsError, updateSettings, userLocale,
 } from "../src/index.ts";
@@ -83,6 +83,22 @@ test("declined, superseded and expired proposals leave the inbox", () => {
   assert.equal(acceptProposal(w, c.id, removeToy(w), later).state, "expired");
   assert.deepEqual(toys(w), ["ball"]);
   assert.equal(getProposal(w, b.id).decidedAt !== null, true);
+});
+
+test("a proposal nobody decided in a week expires by itself, and its notice goes with it", () => {
+  const w = world();
+  addToy(w, "ball");
+  const proposal = propose(w, ["ball"]);
+  const made = Date.parse(proposal.createdAt);
+  assert.equal(expireProposals(w, made + PROPOSAL_TTL_MS - 1), 0);
+  assert.ok(listNotices(w).some((notice) => notice.kind === "proposal"));
+  assert.equal(expireProposals(w, made + PROPOSAL_TTL_MS + 1), 1);
+  assert.equal(getProposal(w, proposal.id).state, "expired");
+  assert.equal(listNotices(w).some((notice) => notice.kind === "proposal"), false);
+  const expired = listEvents(w).events.find((event) => event.kind === "proposal.expired")!;
+  assert.equal(expired.actor, "system");
+  assert.equal(expireProposals(w, made + PROPOSAL_TTL_MS + 2), 0, "once");
+  assert.deepEqual(toys(w), ["ball"]);
 });
 
 test("settings: the language is set once, audited, and checked", () => {

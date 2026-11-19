@@ -65,7 +65,8 @@ function expire(db: DatabaseSync, now: number): void {
     WHERE state IN ('pending', 'claimed') AND expires_at IS NOT NULL AND expires_at <= ?`).run(iso(now), iso(now));
 }
 
-/** Undelivered notices, oldest first. A lapsed claim counts as pending again. */
+/** Undelivered notices, oldest first. When there are more than `limit`, the newest ones: old notices nobody
+ * dismissed must not keep a new one from being told. A lapsed claim counts as pending again. */
 export function listNotices(world: World, options: { states?: NoticeState[]; limit?: number; now?: number } = {}): Notice[] {
   const now = options.now ?? Date.now();
   const states = options.states ?? ["pending", "claimed"];
@@ -74,7 +75,7 @@ export function listNotices(world: World, options: { states?: NoticeState[]; lim
   return world.tx((db) => {
     expire(db, now);
     return db.prepare(`SELECT * FROM core_notices WHERE state IN (SELECT value FROM json_each(?))
-      ORDER BY created_at, rowid LIMIT ?`).all(JSON.stringify(states), limit).map(toNotice);
+      ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(JSON.stringify(states), limit).map(toNotice).reverse();
   });
 }
 

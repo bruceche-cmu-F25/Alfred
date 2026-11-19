@@ -6,8 +6,8 @@ import { EventEmitter } from "node:events";
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CORE_MIGRATIONS, createRunDrain, interruptOutbound, listOutbound, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
-  type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type World,
+  CORE_MIGRATIONS, createRunDrain, expireProposals, interruptOutbound, listOutbound, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
+  type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type SessionMode, type World,
 } from "@alfred/core";
 import { assistantTools, moduleMigrations, runTools, type AlfredModule, type ModuleServices } from "@alfred/module-kit";
 
@@ -18,7 +18,7 @@ export const DEVELOPER_PROFILE = "developer";
 export const AUTOMATION_PROFILE = "automation";
 /** Not for an automation's own runs: asking (nobody answers), and making or changing automations (only the user does). */
 const UNATTENDED_EXCLUDED = new Set(["ask_user", "automation_add", "automation_update"]);
-/** How often the home node's clock looks for automations that are due. */
+/** How often the home node's clock looks for automations that are due and proposals past their time. */
 const CLOCK_MS = 30_000;
 
 const PERSONA = `You are Alfred, the user's personal assistant, carrying out one request in a conversation.
@@ -32,11 +32,18 @@ Reply in one to three short sentences, in the language of the request.`;
 
 const DEVELOPER = `You are Alfred, the user's personal assistant, working with them on code in a development session in
 one of their projects (a folder on their computer; its name and path are below). You can read, search (grep, find)
-and list its files freely; files outside it need the user's yes each time. You cannot change files or run commands in
-this session yet: when a change is needed, say exactly what you would change and where. Answer from the code you
-read, cite files as path:line, and say so when you have not checked something. If a wrong guess would matter, ask
-with ask_user. Never claim a change you did not make with a tool. Reply in the language of the request, as long as
-the answer needs and no longer.`;
+and list its files freely; files outside it need the user's yes each time. You cannot run commands. Whether you may
+change files depends on the session's mode, given below. Answer from the code you read, cite files as path:line, and
+say so when you have not checked something. If a wrong guess would matter, ask with ask_user. Never claim a change
+you did not make with a tool. Reply in the language of the request, as long as the answer needs and no longer.`;
+
+/** What each permission mode lets a session's run do in its folder (core projects.ts SESSION_MODES), as the run is
+ * told. The engine enforces it; this only keeps the run's words in step with what its tools will do. */
+const SESSION_MODE: Record<SessionMode, string> = {
+  plan: "This session is in plan mode: you can read but not change files. When a change is needed, say exactly what you would change and where.",
+  ask: "This session is in ask mode: you can change files with your file tools. The user is shown each change as a diff and allows it first; if they decline, accept it and do not try another way.",
+  edits: "This session is in edits mode: you can change files inside the project with your file tools without asking; a change outside it asks the user first. Make only the changes the request needs, and say which files you changed.",
+};
 
 const UNATTENDED = `This run was started by one of the user's automations, on its schedule: nobody is watching
 and nobody can answer a question. Read, and make only changes that are easy to undo. For anything else (deleting,
@@ -126,6 +133,7 @@ export function profiles(world: World, modules: readonly AlfredModule[]): Record
       // No page to open from a session: it is its own page.
       tools: [...runTools(world, modules), ...assistantTools(world, modules).filter((tool) => tool.name !== "show_view")],
       workspace: true,
+      modes: SESSION_MODE,
     },
     [AUTOMATION_PROFILE]: {
       instructions: [PERSONA, UNATTENDED, guidance].filter(Boolean).join("\n\n"),
@@ -165,6 +173,7 @@ export function openHome(options: HomeOptions): Home {
     current = drain.kick().catch((error) => options.log?.(`drain stopped: ${error instanceof Error ? error.message : String(error)}`));
   };
   ensureTemplates(world);
+  expireProposals(world);
   const tickAutomations = (now?: number): Run[] => {
     const fired = fireDueAutomations(world, { profile: AUTOMATION_PROFILE, now });
     if (fired.length) {
@@ -175,12 +184,16 @@ export function openHome(options: HomeOptions): Home {
   };
   const clock = setInterval(() => {
     try { tickAutomations(); } catch (error) { options.log?.(`automations: ${error instanceof Error ? error.message : String(error)}`); }
+    try { expireProposals(world); } catch (error) { options.log?.(`proposals: ${error instanceof Error ? error.message : String(error)}`); }
   }, CLOCK_MS);
   clock.unref();
 
   // Modules that mirror an outside service (calendar, mail) refresh on their own schedule, one pass at a time each.
   const stopping = new AbortController();
   const syncing = new Map<string, Promise<void>>();
+  /** Modules asked to deliver while a pass was under way; each gets one more pass right after it. */
+  const again = new Set<string>();
+  const queued = (id: string) => listOutbound(world, { module: id, states: ["queued"] }).length > 0;
   const syncModule = (id: string): Promise<void> => {
     const module = options.modules.find((candidate) => candidate.id === id);
     if (!module?.sync) return Promise.reject(new Error(`No module ${id} to sync`));
@@ -188,7 +201,12 @@ export function openHome(options: HomeOptions): Home {
     if (running) return running;
     const pass = module.sync.run(world, options.services?.() ?? {}, stopping.signal)
       .catch((error) => { if (!stopping.signal.aborted) options.log?.(`sync ${id}: ${error instanceof Error ? error.message : String(error)}`); })
-      .finally(() => syncing.delete(id));
+      .finally(() => {
+        syncing.delete(id);
+        // A pass delivers first, then reads: a change accepted during it came too late for it, and must not wait
+        // for the next scheduled one.
+        if (again.delete(id) && !stopping.signal.aborted && queued(id)) void syncModule(id);
+      });
     syncing.set(id, pass);
     return pass;
   };
@@ -212,7 +230,11 @@ export function openHome(options: HomeOptions): Home {
     syncModule,
     deliver: () => {
       const waiting = new Set(listOutbound(world, { states: ["queued"] }).map((outbound) => outbound.module));
-      for (const module of options.modules) if (module.sync && waiting.has(module.id)) void syncModule(module.id);
+      for (const module of options.modules) {
+        if (!module.sync || !waiting.has(module.id)) continue;
+        if (syncing.has(module.id)) again.add(module.id);
+        else void syncModule(module.id);
+      }
     },
     idle: () => current,
     close() {

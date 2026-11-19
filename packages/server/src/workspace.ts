@@ -1,6 +1,7 @@
 /** A development session's folder as git sees it: the snapshot it started from, what has changed since, and one
- * file's diff (docs/design/dev-mode.md 4.5). Read-only towards the user's repository: `git stash create` makes a
- * commit object of the working tree without touching the tree, the index's contents or any ref.
+ * file's diff (docs/design/dev-mode.md 4.5). Towards the user's repository it only adds: `git stash create` makes a
+ * commit object of the working tree without touching the tree, the index's contents, a branch or the stash, and one
+ * ref under `refs/alfred/snapshots/` points at that commit, because git deletes a commit nothing points at.
  * A folder that is not a git repository has no snapshot; its changes are the session's own receipts.
  */
 import { execFile } from "node:child_process";
@@ -25,13 +26,20 @@ function git(root: string, args: string[]): Promise<{ ok: boolean; out: string }
   });
 }
 
+/** Where the snapshots of working trees are kept from git's garbage collection. */
+export const SNAPSHOT_REFS = "refs/alfred/snapshots/";
+
 /** The snapshot a session's changes are measured against: the working tree as it is now, or HEAD when it is clean.
  * Null when the folder is not in a git repository (or has no commit yet). */
 export async function snapshot(root: string): Promise<string | null> {
   if (!(await git(root, ["rev-parse", "--is-inside-work-tree"])).ok) return null;
   const stash = await git(root, ["stash", "create"]);
   const id = stash.ok ? stash.out.trim() : "";
-  if (/^[0-9a-f]{7,64}$/.test(id)) return id;
+  if (/^[0-9a-f]{7,64}$/.test(id)) {
+    // Nothing points at this commit, so `git gc` would delete it and the session would lose what it started from.
+    await git(root, ["update-ref", `${SNAPSHOT_REFS}${id}`, id]);
+    return id;
+  }
   const head = await git(root, ["rev-parse", "HEAD"]);
   return head.ok && /^[0-9a-f]{7,64}$/.test(head.out.trim()) ? head.out.trim() : null;
 }

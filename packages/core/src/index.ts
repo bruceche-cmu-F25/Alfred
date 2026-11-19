@@ -34,7 +34,7 @@ export {
   type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext, type Workspace, type FileChange,
 } from "./executor.ts";
 export {
-  openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, ProposalStateError, PROPOSAL_TTL_MS,
+  openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, expireProposals, ProposalStateError, PROPOSAL_TTL_MS,
   type Proposal, type ProposalState, type ProposalStep,
 } from "./proposals.ts";
 export { getSettings, updateSettings, userLocale, localeOf, LOCALES, SettingsError, type Locale, type UserSettings } from "./settings.ts";

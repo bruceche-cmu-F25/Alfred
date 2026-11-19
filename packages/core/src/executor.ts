@@ -48,6 +48,9 @@ export interface RunProfile {
   /** For development sessions only: the run works in its project's folder, as the session's mode allows.
    * Set exactly when the conversation is in a project. */
   workspace?: boolean;
+  /** For a workspace profile: what the session's mode lets the run do in its folder, added to the instructions.
+   * The mode is the conversation's and can change between runs, so it is said when a run starts. */
+  modes?: Readonly<Record<SessionMode, string>>;
 }
 /** The folder a development session works in, for the engine. */
 export interface Workspace {
@@ -255,7 +258,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     thread: run.conversationId,
     goal: run.goal,
     ...(run.context ? { context: run.context } : {}),
-    instructions: profile.instructions,
+    instructions: workspace && profile.modes ? `${profile.instructions}\n\n${profile.modes[workspace.mode]}` : profile.instructions,
     history: conversationBefore(world, run),
     tools,
     today: localDate(),

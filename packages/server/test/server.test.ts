@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { EnginePort } from "@alfred/core";
+import { claimOutbound, enqueueOutbound, finishOutbound, listOutbound, withCoreContext, type EnginePort } from "@alfred/core";
+import { defineModule } from "@alfred/module-kit";
 import { todoModule, type TodoSnapshot } from "@alfred/module-todo";
 import type { ConversationDetail, CoreEvent, RunDetail, SessionChanges, StateResponse, SubmitRunResponse } from "@alfred/protocol";
 import { AUTOMATION_PROFILE, ASSISTANT_PROFILE, createHttpServer, openHome, profiles, type Home } from "../src/index.ts";
@@ -401,8 +402,8 @@ test("Alfred can list, make and change automations when asked; an automation's o
 });
 
 test("a development session: add and trust a folder, start a session, and its runs read that folder", async () => {
-  const seen: Array<{ workspace?: unknown; context?: unknown; tools: string[] }> = [];
-  const coder: EnginePort = { async submit(request) { seen.push({ workspace: request.workspace, context: request.context, tools: request.tools.map((tool) => tool.name) }); return { reply: "It is in src/" }; } };
+  const seen: Array<{ workspace?: unknown; context?: unknown; tools: string[]; instructions: string }> = [];
+  const coder: EnginePort = { async submit(request) { seen.push({ workspace: request.workspace, context: request.context, tools: request.tools.map((tool) => tool.name), instructions: request.instructions }); return { reply: "It is in src/" }; } };
   const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: coder, modules: [todoModule] });
   const { server, base } = await start(home);
   try {
@@ -425,6 +426,8 @@ test("a development session: add and trust a folder, start a session, and its ru
     assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask" });
     assert.equal(seen[0].context, undefined, "a session is not asked from a page");
     assert.ok(!seen[0].tools.includes("show_view"));
+    assert.match(seen[0].instructions, /ask mode: you can change files/, "the run is told what its mode lets it do");
+    assert.doesNotMatch(seen[0].instructions, /cannot change files/);
 
     const state = await (await fetch(`${base}/api/state`)).json() as StateResponse;
     assert.deepEqual(state.projects.map((candidate) => candidate.name), ["Shop"]);
@@ -511,10 +514,15 @@ test("a session that edits: changes since its snapshot, one file's diff, and 'do
   const { server, base } = await start(home);
   try {
     const project = await (await post(base, "/api/projects", { path: folder })).json() as { id: string };
+    assert.equal((await post(base, "/api/conversations", { projectId: project.id, title: "Add a line" })).status, 409);
+    assert.equal(String(sh("for-each-ref", "refs/alfred")), "", "nothing is done in a folder before it is trusted");
     await post(base, `/api/projects/${project.id}/trust`, {});
     const session = await (await post(base, "/api/conversations", { projectId: project.id, title: "Add a line", mode: "ask" })).json() as { id: string; mode: string; base: string | null };
     assert.equal(session.mode, "ask");
     assert.match(String(session.base), /^[0-9a-f]{40}$/);
+    // The snapshot is a commit on no branch: a ref of Alfred's keeps git from collecting it.
+    assert.match(String(sh("for-each-ref", "refs/alfred/snapshots")), new RegExp(`^${session.base} `));
+    sh("gc", "-q", "--prune=now");
     const { run } = await (await post(base, "/api/runs", { requestId: "edit-1", goal: "Add a line", conversationId: session.id })).json() as SubmitRunResponse;
 
     let detail: ConversationDetail;
@@ -546,6 +554,35 @@ test("a session that edits: changes since its snapshot, one file's diff, and 'do
     assert.equal(((await (await fetch(`${base}/api/conversations/${session.id}/diff?path=../b.txt`)).json()) as { diff: unknown }).diff, null);
   } finally {
     server.close();
+    home.close();
+  }
+});
+
+test("a change accepted while its module is syncing goes out right after that pass, not at the next one", async () => {
+  let finishReading!: () => void;
+  const reading = new Promise<void>((resolve) => { finishReading = resolve; });
+  let passes = 0;
+  const outbox = defineModule({
+    id: "outbox", title: "Outbox", migrations: [], ops: [], tools: [],
+    sync: { everyMs: 3_600_000, async run(world) {
+      passes++;
+      for (let next = claimOutbound(world, "outbox"); next; next = claimOutbound(world, "outbox")) finishOutbound(world, next.id, { state: "done" });
+      if (passes === 1) await reading; // the first pass is past its delivery step, reading the service
+    } },
+  });
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [outbox] });
+  try {
+    const first = home.syncModule("outbox");
+    await new Promise((resolve) => setImmediate(resolve));
+    withCoreContext({ actor: "user" }, () => enqueueOutbound(home.world, { module: "outbox", action: "send", payload: {}, preview: "An email", idempotent: false }));
+    home.deliver(); // as after a proposal is accepted
+    assert.equal(listOutbound(home.world)[0].state, "queued");
+    finishReading();
+    await first;
+    for (let i = 0; i < 50 && listOutbound(home.world)[0].state !== "done"; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(listOutbound(home.world)[0].state, "done");
+    assert.equal(passes, 2, "one more pass, right away");
+  } finally {
     home.close();
   }
 });
@@ -588,6 +625,9 @@ test("calendar and mail changes over HTTP: proposed by a run, delivered right af
     const all = profiles(home.world, [todoModule, calendarModule, mailModule]);
     for (const profile of Object.values(all)) {
       assert.ok(!profile.tools.some((tool) => ["calendar_add", "calendar_move", "calendar_respond", "mail_send"].includes(tool.name)), "no profile calls them directly");
+      // They are reached only through `propose`, so that is where a run reads their parameters.
+      const calls = JSON.stringify(profile.tools.find((tool) => tool.name === "propose")!.parameters);
+      for (const name of ["reply_to", "end_date", "response"]) assert.ok(calls.includes(`"${name}"`), `propose says how to call them (${name})`);
     }
     await post(base, "/api/runs", { requestId: "w-1", goal: "Hold tomorrow for the plan and tell Ana" });
     await new Promise((resolve) => setTimeout(resolve, 50));

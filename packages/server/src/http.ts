@@ -17,7 +17,7 @@ import {
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
   deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
-  addProject, getProject, listProjects, removeProject, startSession, trustProject,
+  addProject, getProject, listProjects, ProjectError, removeProject, startSession, trustProject,
 } from "@alfred/core";
 import { applyStep, invokeOp, runQuery } from "@alfred/module-kit";
 import type {
@@ -337,8 +337,11 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     const body = await readJson<StartSessionRequest>(req);
     if (typeof body.projectId !== "string" || typeof body.title !== "string" || !body.title.trim()) throw new HttpError(400, "projectId and title are required");
     if (body.mode !== undefined && !["plan", "ask", "edits"].includes(body.mode)) throw new HttpError(400, "mode is plan, ask or edits");
+    // Nothing runs in a folder, not even git, before the user has trusted it.
+    const folder = getProject(home.world, body.projectId);
+    if (!folder.trustedAt) throw new ProjectError("untrusted");
     // The snapshot its changes are measured against, taken before it can change anything.
-    const base = await snapshot(getProject(home.world, body.projectId).path);
+    const base = await snapshot(folder.path);
     return send(res, 201, startSession(home.world, { projectId: body.projectId, title: body.title, mode: body.mode, base }));
   }
   // Projects: only from the home node's own machine (dispatch refuses other devices).

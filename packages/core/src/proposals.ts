@@ -7,7 +7,7 @@
  * never a run's.
  */
 import type { DatabaseSync } from "node:sqlite";
-import { coreContext, withCoreContext } from "./context.ts";
+import { coreContext, withCoreContext, withDefaultActor } from "./context.ts";
 import { latestEventSeq, recordDomainEvent, toEvent, type CoreEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { createNotice } from "./notices.ts";
@@ -95,6 +95,23 @@ function event(world: World, proposal: Proposal, kind: string, payload: Record<s
   return recordDomainEvent(world, { kind, subject: `proposal:${proposal.id}`, payload: { proposalId: proposal.id, title: proposal.title, ...payload }, now });
 }
 
+/** Past its week: it runs nothing, and leaves the inbox. */
+function expire(world: World, db: DatabaseSync, proposal: Proposal, now: number): void {
+  setState(db, proposal.id, "expired", now);
+  event(world, proposal, "proposal.expired", {}, now);
+  closeNotices(db, proposal.id, now);
+}
+
+/** For the home node's clock: open proposals nobody decided in time expire by themselves, so they and their notices
+ * do not wait forever. Returns how many did. */
+export function expireProposals(world: World, now: number = Date.now()): number {
+  return withDefaultActor("system", () => world.tx((db) => {
+    const rows = db.prepare("SELECT id FROM core_proposals WHERE state = 'open' AND expires_at <= ? ORDER BY created_at, rowid").all(iso(now));
+    for (const row of rows) expire(world, db, load(db, row.id as string), now);
+    return rows.length;
+  }));
+}
+
 /** Opens a proposal; under a run, it belongs to the run's conversation. A notice tells the user. */
 export function openProposal(world: World, input: {
   title: string; summary: string; steps: ProposalStep[]; subjects?: string[]; conversationId?: string | null; now?: number;
@@ -143,9 +160,7 @@ export function acceptProposal(world: World, id: string, apply: (step: ProposalS
     const proposal = load(db, id);
     if (proposal.state !== "open") throw new ProposalStateError(proposal.state);
     if (Date.parse(proposal.expiresAt) <= now) {
-      setState(db, id, "expired", now);
-      event(world, proposal, "proposal.expired", {}, now);
-      closeNotices(db, id, now);
+      expire(world, db, proposal, now);
       return load(db, id);
     }
     if (changedSince(db, proposal.subjects, proposal.openedSeq)) {

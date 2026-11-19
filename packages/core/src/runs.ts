@@ -108,6 +108,10 @@ const WAITING: readonly RunState[] = ["waiting_input", "waiting_permission"];
 /** Held by an executor: working, waiting on the user, or stopping. */
 const LEASED: readonly RunState[] = ["running", "cancelling", ...WAITING];
 const LEASED_SQL = LEASED.map((state) => `'${state}'`).join(", ");
+/** Working, with something in flight: only these lose their run when the lease runs out. A run waiting on the user
+ * has nothing in flight, so time alone (the machine slept, nobody was there for a day) does not take it from its
+ * executor; it ends when the user answers or cancels, or when the home node restarts (interruptOrphanedRuns). */
+const LAPSING_SQL = LEASED.filter((state) => !WAITING.includes(state)).map((state) => `'${state}'`).join(", ");
 export const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const OWNER = /^[A-Za-z0-9._:-]{1,80}$/;
 const PROFILE = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -211,13 +215,14 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
   });
 }
 
-/** A run whose executor stopped heartbeating (crash, sleep) becomes
+/** A working run whose executor stopped heartbeating (crash, sleep) becomes
  * interrupted. It is never re-run automatically: that could repeat its actions.
+ * A run waiting on the user is left waiting (see LAPSING_SQL).
  */
 export function sweepRuns(world: World, options: { now?: number } = {}): void {
   const now = options.now ?? Date.now();
   world.tx((db) => {
-    for (const row of db.prepare(`SELECT * FROM core_runs WHERE state IN (${LEASED_SQL}) AND lease_until <= ?`).all(iso(now))) {
+    for (const row of db.prepare(`SELECT * FROM core_runs WHERE state IN (${LAPSING_SQL}) AND lease_until <= ?`).all(iso(now))) {
       interrupt(db, toRun(row), now);
     }
   });
@@ -256,7 +261,9 @@ export function claimNextRun(world: World, owner: string, options: { leaseMs?: n
 
 function owned(db: DatabaseSync, id: string, owner: string, now: number): Run {
   const run = load(db, id);
-  if (run.leaseOwner !== owner || !LEASED.includes(run.state) || Date.parse(run.leaseUntil!) <= now) throw new RunError("lease");
+  // A waiting run stays its executor's past the lease's time (see LAPSING_SQL); its next heartbeat renews it.
+  const lapsed = Date.parse(run.leaseUntil!) <= now && !WAITING.includes(run.state);
+  if (run.leaseOwner !== owner || !LEASED.includes(run.state) || lapsed) throw new RunError("lease");
   return run;
 }
 
@@ -381,7 +388,10 @@ export function answerRequest(world: World, id: string, input: { requestId: stri
     if (run.request.id !== input.requestId) throw new RunError("conflict", "That question was already answered or replaced");
     if (run.request.kind === "permission" && !run.request.options.includes(answer)) throw new RunError("state", "Answer allow or deny");
     if (!answer) throw new RunError("state", "An answer is needed");
-    setState(db, run, "running", now, { request: null });
+    // The run works again from here. If it waited past its lease (the machine slept), the answer starts the lease
+    // anew, so what the answer allows is not refused before the executor's next heartbeat.
+    const lapsed = Date.parse(run.leaseUntil!) <= now;
+    setState(db, run, "running", now, { request: null, ...(lapsed ? { lease_until: iso(now + RUN_LEASE_MS) } : {}) });
     closeRequestNotices(db, id, now);
     appendEvent(db, {
       kind: "run.answered", subject: `run:${id}`, runId: id, actor: "user", now,

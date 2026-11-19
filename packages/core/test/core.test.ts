@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  acknowledgeNotice, claimNotice, CommandConflictError, CORE_MIGRATIONS, createRunDrain, executeNextRun, getRun,
+  acknowledgeNotice, claimNotice, CommandConflictError, CORE_MIGRATIONS, createNotice, createRunDrain, executeNextRun, getRun,
   interruptOrphanedRuns, listEvents, listNotices, NoticeStateError, openWorld, presentNotice, recordDomainEvent,
   requestCancel, resumeRun, runCommand, RunError, RunLeaseLostError, submitRun, withCoreContext,
   type EnginePort, type RunProfile, type World,
@@ -154,6 +154,23 @@ test("only the claiming device presents a notice, and never twice", async () => 
   assert.throws(() => claimNotice(w, notice.id, "phone"), NoticeStateError);
   assert.equal(acknowledgeNotice(w, notice.id).state, "acknowledged");
   assert.deepEqual(listNotices(w), []);
+});
+
+test("notices nobody dismissed do not keep a new one from being listed", () => {
+  const w = world();
+  const tell = (now: number) => w.tx((db) => {
+    const event = recordDomainEvent(w, { kind: "toy.added", payload: {}, now });
+    return createNotice(db, { eventSeq: event.seq, kind: "run_result", payload: {}, now });
+  });
+  const start = Date.now() - 60_000;
+  const old = Array.from({ length: 60 }, (_, i) => tell(start + i));
+  // Shown once, never clicked: they stay in the inbox.
+  for (const notice of old) { claimNotice(w, notice.id, "mac"); presentNotice(w, notice.id, "mac"); }
+  const fresh = tell(Date.now());
+  const listed = listNotices(w, { states: ["pending", "claimed", "presented"] });
+  assert.equal(listed.length, 50);
+  assert.equal(listed.at(-1)!.id, fresh.id, "the newest is there, last");
+  assert.equal(listed[0].id, old[11].id, "the oldest are the ones left out");
 });
 
 test("a command runs once per request id and rolls back with its change", () => {
