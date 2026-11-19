@@ -11,8 +11,16 @@ import json
 import sys
 import time
 
+import dataclasses
+
 import mlx_whisper
+import mlx_whisper.load_models as load_models
 from opencc import OpenCC
+
+# Some converted checkpoints (BELLE's Chinese fine-tune) carry config keys mlx-whisper does not know; drop them.
+_Dims = load_models.whisper.ModelDimensions
+_known = {field.name for field in dataclasses.fields(_Dims)}
+load_models.whisper.ModelDimensions = lambda **config: _Dims(**{k: v for k, v in config.items() if k in _known})
 
 
 def report_stats() -> None:

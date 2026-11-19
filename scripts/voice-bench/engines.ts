@@ -81,15 +81,40 @@ function qwen(size: "0.6B" | "1.7B"): Engine {
   };
 }
 
-const whisper: Engine = {
-  name: "whisper-large-v3-turbo",
-  context: true,
+function whisperEngine(name: string, repo: string, note: string): Engine {
+  return {
+    name,
+    context: true,
+    usdPerHour: 0,
+    note: `本机 MLX，mlx-whisper 0.4.3，${repo}；language=zh；繁体转简体后打分；词表放在 initial_prompt；${note}`,
+    unavailable: async () => (await which("uv")) ? null : "没有 uv（brew install uv）",
+    run: (jobs, each) => lines("uv", ["run", "--no-project", "--python", "3.12", "--with", "mlx-whisper==0.4.3",
+      "--with", "opencc-python-reimplemented==0.1.7", "python", "-I", "engines/local_whisper.py", repo], jobs, each),
+  };
+}
+
+const whisper = whisperEngine("whisper-large-v3-turbo", "mlx-community/whisper-large-v3-turbo", "首次运行会下载模型（约 1.6GB）");
+/** BELLE's Chinese fine-tune of Whisper turbo; Superwhisper ships a "Whisper Large v3 Turbo (Chinese)" model.
+ * This conversion is in mlx-audio's format, not mlx-whisper's. */
+const whisperZh: Engine = {
+  name: "whisper-turbo-zh-belle",
+  context: false,
   usdPerHour: 0,
-  note: "本机 MLX，mlx-whisper 0.4.3，mlx-community/whisper-large-v3-turbo；language=zh；繁体转简体后打分；词表放在 initial_prompt；首次运行会下载模型（约 1.6GB）",
+  note: "本机 MLX，mlx-audio 0.6.6，mlx-community/belle-whisper-large-v3-turbo-zh-fp16（BELLE 的中文微调版）；language=zh；繁体转简体后打分；这条路不给词表；首次运行会下载模型（约 1.6GB）",
   unavailable: async () => (await which("uv")) ? null : "没有 uv（brew install uv）",
-  run: (jobs, each) => lines("uv", ["run", "--no-project", "--python", "3.12", "--with", "mlx-whisper==0.4.3",
-    "--with", "opencc-python-reimplemented==0.1.7", "python", "-I", "engines/local_whisper.py",
-    "mlx-community/whisper-large-v3-turbo"], jobs, each),
+  run: (jobs, each) => lines("uv", ["run", "--no-project", "--python", "3.12", "--with", "mlx-audio==0.6.6",
+    "--with", "opencc-python-reimplemented==0.1.7", "python", "-I", "engines/local_mlx_audio.py",
+    "mlx-community/belle-whisper-large-v3-turbo-zh-fp16", "zh"], jobs, each),
+};
+
+const cohere: Engine = {
+  name: "cohere-transcribe",
+  context: false,
+  usdPerHour: 0,
+  note: "本机 MLX，mlx-speech 0.5.6，appautomaton/cohere-asr-mlx int8（Cohere Transcribe 03-2026，2B 参数，Apache-2.0）；language=zh（一次只能指定一种语言）；不能给词表；首次运行会下载模型（约 2GB）",
+  unavailable: async () => (await which("uv")) ? null : "没有 uv（brew install uv）",
+  run: (jobs, each) => lines("uv", ["run", "--no-project", "--python", "3.13", "--with", "mlx-speech==0.5.6",
+    "python", "-I", "engines/local_cohere.py", "appautomaton/cohere-asr-mlx:mlx-int8", "zh"], jobs, each),
 };
 
 const APPLE_BIN = join(HERE, "bin", "apple");
@@ -239,4 +264,4 @@ const doubao: Engine = {
   }),
 };
 
-export const ENGINES: Engine[] = [qwen("0.6B"), qwen("1.7B"), whisper, apple, soniox, assemblyai, openai, doubao];
+export const ENGINES: Engine[] = [qwen("0.6B"), qwen("1.7B"), whisper, whisperZh, cohere, apple, soniox, assemblyai, openai, doubao];

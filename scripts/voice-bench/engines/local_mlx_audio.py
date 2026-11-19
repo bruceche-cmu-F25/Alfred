@@ -1,8 +1,9 @@
-"""Speech models run through mlx-audio (used here for Cohere Transcribe). Same job format and output as local_mlx.py.
+"""Speech models packaged for mlx-audio (used for BELLE's Chinese Whisper turbo). Same job format and output as local_mlx.py.
 
-    uv run --no-project --with mlx-audio==0.6.6 python engines/local_mlx_audio.py <hf-repo> <language> <jobs.json>
+    uv run --no-project --python 3.12 --with mlx-audio==0.6.6 --with opencc-python-reimplemented==0.1.7 \
+        python engines/local_mlx_audio.py <hf-repo> <language> <jobs.json>
 
-Cohere Transcribe takes one language per request and no vocabulary, so there is no context.
+No vocabulary. Traditional characters are converted to simplified (the raw output is kept as "raw").
 """
 import json
 import sys
@@ -20,18 +21,21 @@ def report_stats() -> None:
 
 def main() -> None:
     from mlx_audio.stt import load
+    from opencc import OpenCC
 
     repo, language, jobs_path = sys.argv[1], sys.argv[2], sys.argv[3]
     with open(jobs_path, encoding="utf-8") as f:
         jobs = json.load(f)
     model = load(repo)
+    t2s = OpenCC("t2s")
     run = lambda wav: model.generate(wav, language=language).text.strip()
     if jobs:
         run(jobs[0]["wav"])  # warm-up
     for job in jobs:
         start = time.perf_counter()
         try:
-            out = {"id": job["id"], "text": run(job["wav"])}
+            raw = run(job["wav"])
+            out = {"id": job["id"], "text": t2s.convert(raw), "raw": raw}
         except Exception as error:  # report and keep going
             out = {"id": job["id"], "error": f"{type(error).__name__}: {error}"}
         out["ms"] = round((time.perf_counter() - start) * 1000)

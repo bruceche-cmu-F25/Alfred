@@ -24,6 +24,7 @@ node scripts/voice-bench/server.ts
 
 - **Qwen3-ASR 0.6B / 1.7B**：要 `uv`（已装）。第一次运行会自动下载 `mlx-qwen3-asr` 和模型（0.6B 约 1.2GB，1.7B 约 3.4GB），存在 `~/.cache/huggingface/`。
 - **Whisper large-v3-turbo**（mlx-whisper）：同样用 `uv`，第一次下载约 1.6GB。指定按中文识别；它有时出繁体，打分前转成简体（原文留在结果的 `raw` 里）；词表放进 initial prompt。
+- **Whisper turbo 中文版**（BELLE 微调，mlx-audio 加载）和 **Cohere Transcribe**（int8，mlx-speech 加载，要 Python 3.13，uv 会自动装）：各约 1.6GB 和 2GB，都不能给词表。
 - **Apple SpeechTranscriber**：要 macOS 26 SDK。这台 Mac 现在是 Command Line Tools 16.4（SDK 15.5），编不了。要测它，先装新版：
 
   ```bash
@@ -95,6 +96,8 @@ uv run --no-project --with pyarrow python -I scripts/voice-bench/import_ascend.p
 | `engines.ts` | 各家的调用方式 |
 | `engines/local_mlx.py` | Qwen3-ASR 本机进程（模型常驻，预热后计时） |
 | `engines/local_whisper.py` | Whisper 本机进程（同上） |
+| `engines/local_mlx_audio.py` | 用 mlx-audio 加载的模型（中文版 Whisper） |
+| `engines/local_cohere.py` | Cohere Transcribe 本机进程 |
 | `engines/apple.swift` | Apple SpeechTranscriber 本机程序 |
 | `score.ts` | 打分 |
 | `import_ascend.py` | 从 ASCEND 公开数据集抽真人录音 |
