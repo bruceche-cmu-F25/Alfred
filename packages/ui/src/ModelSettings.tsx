@@ -113,9 +113,10 @@ export function ModelSettings() {
   };
 
   const piSub = new Set(data?.piSubscriptions.map((item) => item.id) ?? []);
-  const statusOf = (provider: ModelProvider) => {
+  const statusOf = (provider: ModelProvider, kind: "subscription" | "key") => {
     const { status } = provider;
-    if (!status.configured) return piSub.has(provider.id) ? <span className="set-status need">{t("models.status.pi")}</span> : null;
+    // "Signed in in Pi" is about the subscription, so only its row says so.
+    if (!status.configured) return kind === "subscription" && piSub.has(provider.id) ? <span className="set-status need">{t("models.status.pi")}</span> : null;
     if (status.source === "environment") return <span className="set-status on">{t("models.status.env")}</span>;
     return <span className="set-status on">{t(status.method === "oauth" ? "models.status.oauth" : "models.status.key")}</span>;
   };
@@ -196,7 +197,7 @@ export function ModelSettings() {
           <span className="set-name">{provider.name}</span>
           <span className="set-note">{kind === "subscription" ? provider.oauth?.label : t("models.provider.models", { n: provider.models })}</span>
           <span className="set-end">
-            {statusOf(provider)}
+            {statusOf(provider, kind)}
             {kind === "subscription" ? (
               oauthOn
                 ? <button type="button" className="set-button ghost" onClick={() => logout(provider)}>{t("models.signOut")}</button>
