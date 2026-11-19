@@ -1,0 +1,16 @@
+{
+  "name": "@alfred/module-calendar",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Calendar module: the user's Google Calendar, mirrored for reading.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts"
+  },
+  "dependencies": {
+    "@alfred/core": "*",
+    "@alfred/module-kit": "*"
+  }
+}

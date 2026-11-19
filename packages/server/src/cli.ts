@@ -8,6 +8,10 @@ import { parseArgs } from "node:util";
 import { join } from "node:path";
 import { createPiEngine } from "@alfred/engine-pi";
 import { compareTodos, importTodos, readRobinTodos, robinDataDir, todoModule } from "@alfred/module-todo";
+import { calendarModule } from "@alfred/module-calendar";
+import { mailModule } from "@alfred/module-mail";
+import type { ModuleServices } from "@alfred/module-kit";
+import { googleService } from "./google-service.ts";
 import { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 import { openHome } from "./home.ts";
 import { createHttpServer, createIngressServer } from "./http.ts";
@@ -17,7 +21,7 @@ import { cliRunner, findTailscale, Tailscale } from "./tailscale.ts";
 import { GoogleConnections } from "./google.ts";
 import { defaultSecretStore } from "./secrets.ts";
 
-const MODULES = [todoModule];
+const MODULES = [todoModule, calendarModule, mailModule];
 const log = (message: string) => console.log(`[alfred] ${message}`);
 
 const { values, positionals } = parseArgs({
@@ -43,8 +47,9 @@ if (command === "serve") {
   const awayMinutes = Number(process.env.ALFRED_AWAY_MINUTES);
   const presence = Number.isFinite(awayMinutes) && awayMinutes > 0 ? { awayReturnMs: awayMinutes * 60_000 } : {};
   let home: ReturnType<typeof openHome>;
+  let services: ModuleServices = {};
   try {
-    home = openHome({ dataDir, engine, modules: MODULES, presence, log });
+    home = openHome({ dataDir, engine, modules: MODULES, presence, log, services: () => services });
   } catch (error) {
     if (!(error instanceof Error && error.name === "AlreadyRunningError")) throw error;
     console.error(`[alfred] ${error.message}. Stop it first, or use another --data-dir.`);
@@ -52,6 +57,8 @@ if (command === "serve") {
   }
   // Google accounts: tokens in the keychain, Alfred's own OAuth client from the data directory (or the default one).
   const google = new GoogleConnections({ dataDir, secrets: defaultSecretStore(dataDir), world: home.world, clientDirs: [...new Set([dataDir, defaultDataDir()])], log });
+  // The calendar and mail modules read the connected accounts through it.
+  services = { google: googleService(google) };
   // Other devices: Tailscale Serve forwards to the ingress port, where every request needs a paired device.
   const ingressPort = Number(values["ingress-port"] ?? process.env.ALFRED_INGRESS_PORT ?? port + 10);
   const tailscaleBinary = findTailscale();

@@ -13,17 +13,21 @@ export const ALF = { min: 300, max: 640, def: 400, pageMin: 420 };
 /** Below this width the workspace is a phone: one column, a dock, Alfred as a sheet. The Mac window never gets this narrow. */
 export const PHONE = "(max-width: 700px)";
 const KEY = "alfred.layout";
+/** Raised when a default changes for every device once: 2 = Alfred's panel starts closed (2026-11-18). */
+const VERSION = 2;
 
 function load(): Layout {
-  const fallback: Layout = { nav: window.innerWidth < 1200 ? "rail" : "full", navW: NAV.def, alfW: ALF.def, alfred: "open" };
+  // Alfred starts closed: the page has the room, and the figure waits in the top right corner.
+  const fallback: Layout = { nav: window.innerWidth < 1200 ? "rail" : "full", navW: NAV.def, alfW: ALF.def, alfred: "closed" };
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<Layout> | null;
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as (Partial<Layout> & { v?: number }) | null;
     if (!saved) return fallback;
     return {
       nav: saved.nav === "rail" || saved.nav === "full" ? saved.nav : fallback.nav,
       navW: typeof saved.navW === "number" ? Math.min(NAV.max, Math.max(NAV.min, saved.navW)) : NAV.def,
       alfW: typeof saved.alfW === "number" ? Math.min(ALF.max, Math.max(ALF.min, saved.alfW)) : ALF.def,
-      alfred: saved.alfred === "open" || saved.alfred === "wide" || saved.alfred === "closed" ? saved.alfred : "open",
+      alfred: (saved.v ?? 1) < VERSION ? fallback.alfred
+        : saved.alfred === "open" || saved.alfred === "wide" || saved.alfred === "closed" ? saved.alfred : fallback.alfred,
     };
   } catch {
     return fallback;
@@ -44,7 +48,7 @@ export function useMedia(query: string): boolean {
 export function useLayout(): [Layout, (patch: Partial<Layout>) => void] {
   const [layout, setLayout] = useState(load);
   useEffect(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(layout)); } catch { /* not remembered; fine */ }
+    try { localStorage.setItem(KEY, JSON.stringify({ ...layout, v: VERSION })); } catch { /* not remembered; fine */ }
   }, [layout]);
   const update = useCallback((patch: Partial<Layout>) => setLayout((current) => ({ ...current, ...patch })), []);
   return [layout, update];

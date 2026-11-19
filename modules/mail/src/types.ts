@@ -1,0 +1,43 @@
+/** What devices get from the mail module (StateResponse.modules.mail). Bodies are not here: a device reads one
+ * message at a time through the `mail.message` query. */
+export type MailCategory = "primary" | "promotions" | "social" | "updates" | "forums";
+
+export interface MailMessage {
+  id: string;
+  account: string;
+  threadId: string;
+  /** The sender's name, or their address when there is no name. */
+  from: string;
+  fromEmail: string;
+  subject: string;
+  snippet: string;
+  receivedAt: string;
+  unread: boolean;
+  important: boolean;
+  starred: boolean;
+  category: MailCategory;
+  /** The message in Gmail. */
+  link: string;
+}
+
+export interface MailDetail extends MailMessage {
+  to: string;
+  /** Plain text: text/plain when there is one, else HTML stripped of markup. Attachments are never read. */
+  body: string;
+  attachments: string[];
+  /** Some of the body could not be read (encrypted, or only an attachment). */
+  bodyIncomplete: boolean;
+}
+
+export interface MailSource {
+  account: string;
+  syncedAt: string | null;
+  error: string | null;
+  reconnect: boolean;
+}
+
+export interface MailSnapshot {
+  /** The inbox's last two weeks, newest first (at most 100 per account). */
+  messages: MailMessage[];
+  sources: MailSource[];
+}

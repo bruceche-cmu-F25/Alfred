@@ -433,3 +433,51 @@ test("a development session: add and trust a folder, start a session, and its ru
     home.close();
   }
 });
+
+test("calendar and mail over HTTP: a refresh reads Google, the state carries the mirror, a body is a query", async () => {
+  const { calendarModule } = await import("@alfred/module-calendar");
+  const { mailModule } = await import("@alfred/module-mail");
+  const today = new Date();
+  const at = (hours: number) => new Date(today.getFullYear(), today.getMonth(), today.getDate(), hours).toISOString();
+  const google = {
+    accounts: () => [{ email: "me@example.com", capabilities: ["calRead", "mailRead"] }],
+    async session() {
+      return {
+        async get(url: string): Promise<Record<string, unknown>> {
+          if (url.includes("/calendarList")) return { items: [{ id: "primary", summary: "Me", primary: true }] };
+          if (url.includes("/events")) return { items: [{ id: "e1", summary: "Design review", start: { dateTime: at(15) }, end: { dateTime: at(16) } }] };
+          if (/\/messages\?/.test(url)) return { messages: [{ id: "m1" }] };
+          return { id: "m1", threadId: "t1", labelIds: ["INBOX", "UNREAD"], internalDate: String(Date.now()), snippet: "Can you sign?",
+            payload: { mimeType: "text/plain", headers: [{ name: "From", value: "Leo <leo@example.com>" }, { name: "Subject", value: "Contract" }], body: { data: Buffer.from("Please sign by Friday.").toString("base64url") } } };
+        },
+      };
+    },
+  };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [todoModule, calendarModule, mailModule], services: () => ({ google }) });
+  const { server, base } = await start(home);
+  try {
+    assert.equal((await post(base, "/api/modules/calendar/sync", {})).status, 200);
+    assert.equal((await post(base, "/api/modules/mail/sync", {})).status, 200);
+    assert.equal((await post(base, "/api/modules/todo/sync", {})).status, 404, "todos mirror nothing");
+    const state = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
+    const calendar = state.modules.calendar as { events: Array<{ title: string }> };
+    const mail = state.modules.mail as { messages: Array<{ subject: string; unread: boolean }> };
+    assert.deepEqual(calendar.events.map((event) => event.title), ["Design review"]);
+    assert.deepEqual(mail.messages.map((message) => [message.subject, message.unread]), [["Contract", true]]);
+    assert.deepEqual(state.views.calendar, [{ id: "week", title: "Calendar" }]);
+
+    const query = await post(base, "/api/queries/mail.message", { input: { id: "m1" } });
+    assert.equal(((await query.json()) as { result: { body: string } }).result.body, "Please sign by Friday.");
+    assert.equal((await post(base, "/api/queries/mail.nothing", { input: {} })).status, 404);
+    assert.equal((await post(base, "/api/queries/mail.message", { input: { id: 7 } })).status, 400);
+
+    const all = profiles(home.world, [todoModule, calendarModule, mailModule]);
+    for (const profile of [ASSISTANT_PROFILE, AUTOMATION_PROFILE]) {
+      const names = all[profile].tools.map((tool) => tool.name);
+      assert.ok(["calendar_list", "mail_list", "mail_read"].every((name) => names.includes(name)), `${profile} can read the calendar and mail`);
+    }
+  } finally {
+    server.close(); server.closeAllConnections();
+    home.close();
+  }
+});

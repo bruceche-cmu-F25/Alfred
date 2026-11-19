@@ -95,6 +95,10 @@ export const api = {
   revise: (id: string, text: string) => post<ProposalResponse>(`/api/proposals/${id}/revise`, { requestId: newRequestId(), text }),
   /** The user's preferences that are not secrets, shared by every device (for now, the language). */
   settings: (patch: Partial<UserSettings>) => post<UserSettings>("/api/settings", { requestId: newRequestId(), patch }),
+  /** A module's read that is too big for the state (one mail's body). */
+  query: <T>(name: string, input: unknown) => post<{ result: T }>(`/api/queries/${name}`, { input }).then((response) => response.result),
+  /** Refresh a module's mirror of an outside service now; resolves when it has been read. */
+  syncModule: (id: string) => post<Record<string, never>>(`/api/modules/${id}/sync`, {}),
   /** Remote access and devices: on this machine the switch and the list, on another device just itself. */
   remote: () => call<RemoteResponse>("/api/remote"),
   setRemote: (enabled: boolean) => post<RemoteResponse>("/api/remote", { enabled }),

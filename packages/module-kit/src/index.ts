@@ -64,6 +64,8 @@ export interface AlfredModule {
   title: string;
   migrations: readonly Migration[];
   ops: readonly ModuleOp[];
+  /** Reads a device makes that are too big for the snapshot (one mail's body). Not commands: nothing is recorded. */
+  queries?: readonly ModuleQuery[];
   tools: readonly ModuleTool[];
   /** Views devices know how to draw from the snapshot. */
   views?: readonly ModuleView[];
@@ -71,6 +73,47 @@ export interface AlfredModule {
   guidance?: string;
   /** What a device needs to draw this module right now. JSON. */
   snapshot?(world: World): unknown;
+  /** For a module that mirrors an outside service (a calendar, a mailbox): the home node calls `run` now and then,
+   * and when a device asks for fresh data. It reads through `services` and writes its own tables; a failure is the
+   * module's to record (say, per account) so its page can say what went wrong. Never called concurrently. */
+  sync?: { everyMs: number; run(world: World, services: ModuleServices, signal: AbortSignal): Promise<void> };
+}
+
+/** The outside services the user has connected, as the home node hands them to modules' syncs. */
+export interface ModuleServices {
+  google?: GoogleService;
+}
+
+/** Google, for reading: the accounts the user connected (ones that need reconnecting are left out), and a session
+ * per account that makes authorised GETs. One session per pass: getting it may refresh the account's token. */
+export interface GoogleService {
+  accounts(): Array<{ email: string; capabilities: readonly string[] }>;
+  session(email: string): Promise<{ get(url: string, signal?: AbortSignal): Promise<Record<string, unknown>> }>;
+}
+
+/** Why an outside service could not be read: `reconnect` (the user must sign in again in Settings) or `unavailable`. */
+export class ServiceError extends Error {
+  override name = "ServiceError";
+  readonly code: "reconnect" | "unavailable";
+  constructor(code: "reconnect" | "unavailable", message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** A read a device makes on demand (POST /api/queries/<name>): `<module>.<noun>`, synchronous, changes nothing. */
+export interface ModuleQuery<P extends TSchema = TSchema> {
+  name: string;
+  input: P;
+  run(world: World, input: Static<P>): unknown;
+}
+export const defineQuery = <P extends TSchema>(query: ModuleQuery<P>): ModuleQuery => query as unknown as ModuleQuery;
+
+/** Answers a device's query; the input is checked like an op's. */
+export function runQuery(modules: readonly AlfredModule[], world: World, name: string, input: unknown): unknown {
+  const query = modules.flatMap((module) => module.queries ?? []).find((candidate) => candidate.name === name);
+  if (!query) throw new UnknownOpError(name);
+  return query.run(world, checked(query.input, input ?? {}, `input for ${query.name}`));
 }
 
 /** Keeps each op's and tool's parameter types while building a module. */
@@ -84,6 +127,9 @@ export function defineModule(module: AlfredModule): AlfredModule {
   }
   for (const op of module.ops) {
     if (!op.name.startsWith(`${module.id}.`)) throw new Error(`Op ${op.name} must be named ${module.id}.<verb>`);
+  }
+  for (const query of module.queries ?? []) {
+    if (!query.name.startsWith(`${module.id}.`)) throw new Error(`Query ${query.name} must be named ${module.id}.<noun>`);
   }
   for (const tool of module.tools) {
     if (!tool.name.startsWith(`${module.id}_`)) throw new Error(`Tool ${tool.name} must be named ${module.id}_<verb>`);

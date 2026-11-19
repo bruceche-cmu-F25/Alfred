@@ -9,7 +9,7 @@ import {
   CORE_MIGRATIONS, createRunDrain, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
   type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type World,
 } from "@alfred/core";
-import { assistantTools, moduleMigrations, runTools, type AlfredModule } from "@alfred/module-kit";
+import { assistantTools, moduleMigrations, runTools, type AlfredModule, type ModuleServices } from "@alfred/module-kit";
 
 export const ASSISTANT_PROFILE = "assistant";
 /** A development session's runs: the assistant's tools, plus reading its project's files (docs/design/dev-mode.md). */
@@ -51,6 +51,8 @@ export interface HomeOptions {
   presence?: PresenceOptions;
   /** For the operator's log. */
   log?: (message: string) => void;
+  /** The outside services the user has connected, for modules that mirror one (read when each sync runs). */
+  services?: () => ModuleServices;
 }
 
 export interface Home {
@@ -66,6 +68,8 @@ export interface Home {
   steer(runId: string, text: string): Promise<boolean>;
   /** The models the engine can run, for choosing one per conversation. */
   models(): Promise<EngineModel[]>;
+  /** Refreshes a module's mirror of an outside service now (a device asked); resolves when done. */
+  syncModule(id: string): Promise<void>;
   /** Starts the runs of automations that are due now (the clock calls it; tests call it with a time). */
   tickAutomations(now?: number): Run[];
   /** Waits for the current drain (tests). */
@@ -168,6 +172,28 @@ export function openHome(options: HomeOptions): Home {
     try { tickAutomations(); } catch (error) { options.log?.(`automations: ${error instanceof Error ? error.message : String(error)}`); }
   }, CLOCK_MS);
   clock.unref();
+
+  // Modules that mirror an outside service (calendar, mail) refresh on their own schedule, one pass at a time each.
+  const stopping = new AbortController();
+  const syncing = new Map<string, Promise<void>>();
+  const syncModule = (id: string): Promise<void> => {
+    const module = options.modules.find((candidate) => candidate.id === id);
+    if (!module?.sync) return Promise.reject(new Error(`No module ${id} to sync`));
+    const running = syncing.get(id);
+    if (running) return running;
+    const pass = module.sync.run(world, options.services?.() ?? {}, stopping.signal)
+      .catch((error) => { if (!stopping.signal.aborted) options.log?.(`sync ${id}: ${error instanceof Error ? error.message : String(error)}`); })
+      .finally(() => syncing.delete(id));
+    syncing.set(id, pass);
+    return pass;
+  };
+  const syncTimers = options.modules.filter((module) => module.sync).flatMap((module) => {
+    const first = setTimeout(() => void syncModule(module.id), 2_000);
+    const every = setInterval(() => void syncModule(module.id), module.sync!.everyMs);
+    first.unref();
+    every.unref();
+    return [first, every];
+  });
   return {
     world,
     modules: options.modules,
@@ -178,9 +204,12 @@ export function openHome(options: HomeOptions): Home {
     steer: (runId, text) => drain.steer(runId, text),
     models: () => options.engine.models?.() ?? Promise.resolve([]),
     tickAutomations,
+    syncModule,
     idle: () => current,
     close() {
       clearInterval(clock);
+      for (const timer of syncTimers) clearTimeout(timer);
+      stopping.abort();
       world.close();
       unlock();
     },

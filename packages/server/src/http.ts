@@ -19,7 +19,7 @@ import {
   deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
   addProject, getProject, listProjects, removeProject, startSession, trustProject,
 } from "@alfred/core";
-import { applyStep, invokeOp } from "@alfred/module-kit";
+import { applyStep, invokeOp, runQuery } from "@alfred/module-kit";
 import type {
   AddProjectRequest, ConversationDetail, CoreEvent, ErrorResponse, StartSessionRequest, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
   RemoteResponse, RespondRequest, ReviseRequest, NewAutomationRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
@@ -381,6 +381,22 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     const body = await readJson<OpRequest>(req);
     if (typeof body.requestId !== "string") throw new HttpError(400, "requestId is required");
     return send(res, 200, invokeOp(home.world, home.modules, { op: op[1], requestId: body.requestId, input: body.input }));
+  }
+
+  // A module's read that is too big for the state (one mail's body). Changes nothing, so it is not a command.
+  const query = /^\/api\/queries\/([a-z][a-z0-9]*\.[a-z][a-z_]*)$/.exec(path);
+  if (query && method === "POST") {
+    const body = await readJson<{ input?: unknown }>(req);
+    return send(res, 200, { result: runQuery(home.modules, home.world, query[1], body.input) });
+  }
+
+  // Refresh a module's mirror of an outside service now (the calendar, the inbox); answers when it is done.
+  const sync = /^\/api\/modules\/([a-z][a-z0-9]*)\/sync$/.exec(path);
+  if (sync && method === "POST") {
+    await readJson(req);
+    if (!home.modules.some((module) => module.id === sync[1] && module.sync)) throw new HttpError(404, "Not found");
+    await home.syncModule(sync[1]);
+    return send(res, 200, {});
   }
 
   if (method === "POST" && path === "/api/presence") {

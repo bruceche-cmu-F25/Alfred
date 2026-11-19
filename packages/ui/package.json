@@ -17,6 +17,8 @@
     "uqr": "0.1.3"
   },
   "devDependencies": {
+    "@alfred/module-calendar": "*",
+    "@alfred/module-mail": "*",
     "@alfred/module-todo": "*",
     "@alfred/protocol": "*",
     "@types/react": "19.3.0",

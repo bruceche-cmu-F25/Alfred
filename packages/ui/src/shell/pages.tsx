@@ -4,8 +4,12 @@
  */
 import type { ReactNode } from "react";
 import type { Area, StateResponse, ViewContext } from "@alfred/protocol";
+import type { CalendarSnapshot } from "@alfred/module-calendar/types";
+import type { MailSnapshot } from "@alfred/module-mail/types";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
 import { Automations } from "../Automations.tsx";
+import { Calendar } from "../Calendar.tsx";
+import { Mail } from "../Mail.tsx";
 import { automationTitle, whenText } from "../automationText.ts";
 import { Dev, sessionsOf, type DevProps } from "../Dev.tsx";
 import { Inbox } from "../Inbox.tsx";
@@ -53,6 +57,29 @@ export interface PageDef {
 }
 
 /** The automation that fires next, if any is on. */
+/** Today's calendar as the page's lines need it: what is left today, tomorrow's count, and this week's. */
+function calendarCounts(snapshot: unknown, now: number = Date.now()) {
+  const { today = "", events = [], sources = [] } = (snapshot as CalendarSnapshot | undefined) ?? {};
+  const [y, m, d] = (today || "1970-01-01").split("-").map(Number);
+  const day = (offset: number) => { const date = new Date(y, m - 1, d + offset); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
+  const sinceMonday = (new Date(y, m - 1, d).getDay() + 6) % 7;
+  const monday = day(-sinceMonday), sunday = day(6 - sinceMonday);
+  const mine = events.filter((event) => event.response !== "declined");
+  const todays = mine.filter((event) => event.startDate <= today && event.endDate >= today);
+  const left = todays.filter((event) => event.start && event.startDate === today && Date.parse(event.end ?? event.start) > now).sort((a, b) => a.start!.localeCompare(b.start!));
+  return {
+    sources, today: todays.length, left, broken: sources.some((source) => source.error),
+    tomorrow: mine.filter((event) => event.startDate <= day(1) && event.endDate >= day(1)).length,
+    week: mine.filter((event) => event.endDate >= monday && event.startDate <= sunday).length,
+  };
+}
+
+/** The primary inbox's unread mail, newest first. */
+function unreadMail(snapshot: unknown) {
+  const { messages = [], sources = [] } = (snapshot as MailSnapshot | undefined) ?? {};
+  return { sources, all: messages.length, unread: messages.filter((message) => message.unread && message.category === "primary"), broken: sources.some((source) => source.error) };
+}
+
 function soonest(state: StateResponse) {
   return (state.automations ?? []).filter((automation) => automation.enabled && automation.nextAt).sort((a, b) => a.nextAt!.localeCompare(b.nextAt!))[0];
 }
@@ -90,6 +117,23 @@ const PAGES: PageDef[] = [
     render: ({ state, focus, onFocused, openConversation }) => <Inbox state={state} focus={focus} onFocused={onFocused} onOpenConversation={openConversation} />,
   },
   {
+    key: "calendar.week", get title() { return t("page.calendar"); }, icon: "cal", k: "now", group: "work",
+    summary: (snapshot) => {
+      const counts = calendarCounts(snapshot);
+      return counts.sources.length ? t("cal.sum", { today: counts.today, week: counts.week }) : t("src.notConnected.cal");
+    },
+    headline: (snapshot) => {
+      const counts = calendarCounts(snapshot);
+      if (!counts.sources.length) return t("head.cal.connect");
+      if (counts.broken) return t("head.cal.error");
+      const next = counts.left[0];
+      if (next) return t("head.cal.next", { at: new Date(next.start!).toTimeString().slice(0, 5), title: next.title, n: counts.left.length - 1 });
+      return t(counts.today ? "head.cal.doneToday" : "head.cal.free", { n: counts.tomorrow });
+    },
+    suggestions: (snapshot) => calendarCounts(snapshot).sources.length ? ["sug.cal.afternoon", "sug.cal.freeDay", "sug.cal.tomorrow"] : [],
+    render: ({ snapshot }) => <Calendar snapshot={snapshot as CalendarSnapshot | undefined} />,
+  },
+  {
     key: "todo.list", get title() { return t("page.todos"); }, icon: "todo", k: "blue", group: "work",
     badge: (snapshot) => (snapshot as TodoSnapshot | undefined)?.todos.filter((todo) => !todo.done).length,
     summary: (snapshot) => {
@@ -108,6 +152,23 @@ const PAGES: PageDef[] = [
       return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
     render: ({ snapshot, fresh, areas }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} />,
+  },
+  {
+    key: "mail.inbox", get title() { return t("page.mail"); }, icon: "mail", k: "teal", group: "modules",
+    badge: (snapshot) => unreadMail(snapshot).unread.length || undefined,
+    summary: (snapshot) => {
+      const mail = unreadMail(snapshot);
+      return mail.sources.length ? t("mail.sum", { unread: mail.unread.length, n: mail.all }) : t("src.notConnected.mail");
+    },
+    headline: (snapshot) => {
+      const mail = unreadMail(snapshot);
+      if (!mail.sources.length) return t("head.mail.connect");
+      if (mail.broken) return t("head.mail.error");
+      const latest = mail.unread[0];
+      return latest ? t("head.mail.unread", { n: mail.unread.length, from: latest.from, subject: latest.subject }) : t("head.mail.clear");
+    },
+    suggestions: (snapshot) => unreadMail(snapshot).sources.length ? ["sug.mail.reply", "sug.mail.today", "sug.mail.important"] : [],
+    render: ({ snapshot }) => <Mail snapshot={snapshot as MailSnapshot | undefined} />,
   },
   {
     key: "core.automations", get title() { return t("page.automations"); }, icon: "clock", k: "green", group: "modules",
