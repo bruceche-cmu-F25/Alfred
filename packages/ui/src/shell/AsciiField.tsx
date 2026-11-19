@@ -1,12 +1,18 @@
 /** The Code page's backdrop: a slow field of characters, so the place where code is written does not look like the
- * everyday pages. Drawn on a canvas about ten times a second, which is also what makes it read as text and not as
- * video. Still when the user asks for less motion, stopped while the window is hidden. Decoration only: it takes no
- * input and is hidden from assistive tech. Its colours come from CSS (`color`, and `outline-color` for Alfred's).
+ * everyday pages. Two canvases, one over the other: a new frame is drawn four times a second into the one that is out
+ * of sight, and the browser fades from the old one to it. The fading is the browser's own, at the screen's rate, so the
+ * field flows and no character pops; the page's script only runs for the four frames. Still when the user asks for
+ * less motion; stopped while the window is hidden or not the one in use. Decoration only: it takes no input and is
+ * hidden from assistive tech. Its colours come from CSS (`color`, and `outline-color` for Alfred's).
  */
 import { useEffect, useRef } from "react";
 
 const CELL_W = 11, CELL_H = 20;
-const FRAME_MS = 100;
+/** A new frame this often, and how long the fade from one frame to the next takes. */
+const STEP_MS = 250;
+/** The canvases are made a little larger than the page and only ever grow, so a panel sliding open, or the window being
+ * dragged wider, does not make them anew at every step of the way. */
+const SLACK = 128;
 /** From almost nothing to dense. Light marks only: it is a texture, not a picture. */
 const RAMP = "..::-=+*";
 /** Now and then, where the field is densest, something that looks like code. */
@@ -26,25 +32,34 @@ function density(x: number, y: number, t: number, cols: number, rows: number): n
 }
 
 export function AsciiField() {
-  const ref = useRef<HTMLCanvasElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const canvas = ref.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
-    let width = 0, height = 0, frame = 0, last = 0, ink = "", alfred = "", read = 0;
+    const box = ref.current;
+    const layers = box ? [...box.querySelectorAll("canvas")] : [];
+    const contexts = layers.map((layer) => layer.getContext("2d"));
+    if (!box || layers.length !== 2 || !contexts[0] || !contexts[1]) return;
+    /** The page's size, the canvases' size (in CSS pixels), and the pixel ratio they were made for. */
+    let width = 0, height = 0, madeW = 0, madeH = 0, madeRatio = 0;
+    /** The field's own clock, in seconds: it only moves while the field does, so nothing jumps after a pause. */
+    let clock = 0;
+    let front = 0, timer = 0;
+    /** The moment each canvas shows. */
+    const at = [0, 0];
     const still = matchMedia("(prefers-reduced-motion: reduce)");
 
-    const draw = (now: number) => {
-      // The scheme can change under it: look the colours up again once a second.
-      if (now - read > 1000 || !ink) { const style = getComputedStyle(canvas); ink = style.color; alfred = style.outlineColor; read = now; }
-      const t = now / 1000;
+    const draw = (which: number) => {
+      const context = contexts[which]!;
+      const style = getComputedStyle(box);
+      const ink = style.color, alfred = style.outlineColor;
+      const t = at[which];
       const cols = Math.ceil(width / CELL_W), rows = Math.ceil(height / CELL_H);
-      const beat = Math.floor(t / 2.5);
-      context.clearRect(0, 0, width, height);
+      context.clearRect(0, 0, madeW, madeH);
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
           const level = (density(x, y, t, cols, rows) - FLOOR) / (1 - FLOOR);
           if (level <= 0) continue;
+          // Each cell changes its bit of code at its own moment, not all of them on one beat.
+          const beat = level > .45 ? Math.floor(t / 2.5 + chance(x, y, 0)) : 0;
           const code = level > .45 && chance(x, y, beat) > .93;
           context.fillStyle = code ? alfred : ink;
           context.globalAlpha = code ? .85 : .3 + level * .5;
@@ -53,28 +68,45 @@ export function AsciiField() {
         }
       }
     };
-    const tick = (now: number) => {
-      frame = requestAnimationFrame(tick);
-      if (now - last < FRAME_MS) return;
-      last = now;
-      draw(now);
+    const show = (which: number) => { front = which; layers[which].style.opacity = "1"; layers[1 - which].style.opacity = "0"; };
+    /** The next frame goes on the canvas that has just faded out, and the fade turns round. */
+    const step = () => { const next = 1 - front; clock += STEP_MS / 1000; at[next] = clock; draw(next); show(next); };
+    const start = () => {
+      clearInterval(timer); timer = 0;
+      if (!still.matches && !document.hidden && document.hasFocus()) timer = window.setInterval(step, STEP_MS);
     };
-    const start = () => { cancelAnimationFrame(frame); if (still.matches || document.hidden) draw(performance.now()); else frame = requestAnimationFrame(tick); };
     const size = () => {
+      width = box.clientWidth; height = box.clientHeight;
       const ratio = Math.min(2, devicePixelRatio || 1);
-      width = canvas.clientWidth; height = canvas.clientHeight;
-      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      context.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-      context.textAlign = "center"; context.textBaseline = "middle";
-      draw(performance.now());
+      if (width <= madeW && height <= madeH && ratio === madeRatio) {
+        // Room enough already. A moving field fills a part that came into view with its next frame; a still one has no next frame.
+        if (!timer) draw(front);
+        return;
+      }
+      madeW = Math.max(madeW, Math.ceil(width / SLACK) * SLACK); madeH = Math.max(madeH, Math.ceil(height / SLACK) * SLACK); madeRatio = ratio;
+      layers.forEach((layer, which) => {
+        const context = contexts[which]!;
+        layer.width = Math.round(madeW * ratio); layer.height = Math.round(madeH * ratio);
+        layer.style.width = `${madeW}px`; layer.style.height = `${madeH}px`;
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+        context.textAlign = "center"; context.textBaseline = "middle";
+        draw(which);
+      });
     };
+    for (const layer of layers) layer.style.transitionDuration = `${STEP_MS}ms`;
     const sizes = new ResizeObserver(size);
-    sizes.observe(canvas);
+    sizes.observe(box);
+    show(0);
     still.addEventListener("change", start);
     document.addEventListener("visibilitychange", start);
+    window.addEventListener("focus", start);
+    window.addEventListener("blur", start);
     start();
-    return () => { cancelAnimationFrame(frame); sizes.disconnect(); still.removeEventListener("change", start); document.removeEventListener("visibilitychange", start); };
+    return () => {
+      clearInterval(timer); sizes.disconnect(); still.removeEventListener("change", start); document.removeEventListener("visibilitychange", start);
+      window.removeEventListener("focus", start); window.removeEventListener("blur", start);
+    };
   }, []);
-  return <canvas ref={ref} className="ascii" aria-hidden="true" />;
+  return <div ref={ref} className="ascii" aria-hidden="true"><canvas /><canvas /></div>;
 }

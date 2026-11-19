@@ -496,8 +496,13 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
 /* Code's backdrop (shell/AsciiField.tsx): characters drifting behind the page, faint, and gone where there is
    something to read: the middle of the new-session screen, the column a session is read in. */
 .dev-stage { flex: 1; min-height: 0; min-width: 0; display: flex; position: relative; isolation: isolate; }
-.dev-stage > .ascii { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; pointer-events: none; color: var(--muted); outline-color: var(--alf); opacity: .65;
+.dev-stage > .ascii { position: absolute; inset: 0; z-index: -1; overflow: hidden; isolation: isolate; pointer-events: none; color: var(--muted); outline-color: var(--alf); opacity: .65;
   --clear: radial-gradient(ellipse max(42%, 470px) 58% at 50% 36%, transparent 72%, #000 100%); -webkit-mask-image: var(--clear); mask-image: var(--clear); }
+/* Its two frames: the one coming in is added to the one going out, so a mark that is in both keeps its strength all
+ * through the fade (laid over in the usual way it would dim halfway). The script sets how long the fade takes. */
+.ascii canvas { position: absolute; top: 0; left: 0; opacity: 0; transition: opacity linear; }
+.ascii canvas + canvas { mix-blend-mode: plus-lighter; }
+@media (prefers-reduced-motion: reduce) { .ascii canvas { transition: none; } }
 /* In a session: beside the column where there is room, and a band behind the bar at the top. */
 .dev-stage[data-in="session"] > .ascii { opacity: .45; --clear: linear-gradient(to right, #000, transparent 22%, transparent 78%, #000), linear-gradient(to bottom, #000, transparent 58px); }
 [data-scheme="dark"] .dev-stage > .ascii { opacity: .5; }
