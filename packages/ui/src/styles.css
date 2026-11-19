@@ -2,14 +2,12 @@
    Its neutrals (--bg, --paper, --raise, --wash, --line, --ink, --copy, --muted) and --warm are used as they are. */
 @import "./tokens.css";
 :root {
-  --accent: var(--alf); --accent-soft: var(--alf-soft); --accent-ink: var(--raise); --bad: var(--now);
+  --accent: var(--alf); --accent-soft: var(--alf-soft); --accent-solid: var(--alf-solid); --accent-ink: var(--on-alf); --bad: var(--now);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   --serif: Georgia, "Songti SC", STSong, serif;
   --mono: "SFMono-Regular", ui-monospace, Consolas, monospace;
   --ease: cubic-bezier(.23, 1, .32, 1);
 }
-/* In dark, Alfred's colour is light, so text on it is dark. */
-[data-scheme="dark"] { --accent-ink: var(--bg); }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -21,6 +19,9 @@ button:disabled { cursor: default; opacity: .5; }
 p, h2, h3, ul, ol { margin: 0; padding: 0; }
 ul, ol { list-style: none; }
 svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+/* Other companies' marks (brand/Logo.tsx): filled drawings, not line icons. One-colour marks take the text colour. */
+.logo { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; }
+.logo svg { width: 100%; height: 100%; fill: currentColor; stroke: none; }
 a { color: inherit; text-decoration-color: var(--line); text-underline-offset: 3px; }
 a:hover { text-decoration-color: var(--accent); }
 
@@ -141,7 +142,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Alfred: the figure, a line on what it is doing, and the conversation. */
 .alfred { grid-area: alf; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--raise); border-left: 1px solid var(--line-soft); }
 .workspace[data-alfred="wide"] .alfred { grid-column: page / alf; border-left: 0; }
-.alf-head { flex: none; display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px 12px 18px; border-bottom: 1px solid var(--line-soft); }
+/* Everything in the panel starts on one line, 20px in: the figure, the title, what is said, the chips, the composer. */
+.alf-head { flex: none; display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px 12px 20px; border-bottom: 1px solid var(--line-soft); }
 .alf-head .figure { flex: none; margin-top: 2px; }
 .alf-who { flex: 1; min-width: 0; }
 .alf-name { font-weight: 600; color: var(--ink); }
@@ -158,7 +160,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* A very narrow panel keeps the context ring; tokens and cost stay in its tooltip. */
 .alfred .conversation-head { container-type: inline-size; }
 @container (max-width: 300px) { .conv-stats > span:not(.ctx) { display: none; } }
-.alfred .composer { width: calc(100% - 28px); margin-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+.alfred .composer, .alfred .suggestions { width: calc(100% - 40px); }
+.alfred .composer { margin-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
 
 /* Alfred closed: the figure waits in the top right corner with its line beside it; what Alfred says comes out of it
    below (shell/Says.tsx). The page's header keeps clear of it. */
@@ -200,6 +203,7 @@ html.desktop .fab { -webkit-app-region: no-drag; }
 .said.added { opacity: .85; font-size: .875rem; }
 .run-meta { display: flex; flex-wrap: wrap; gap: 0 6px; padding-left: 4px; font: .6875rem var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); cursor: default; }
 .run-meta span + span::before { content: "·"; margin-right: 6px; opacity: .6; }
+.run-meta .logo { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1.5px; }
 
 /* Conversation */
 .conversation { --bubble: var(--raise); flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -213,7 +217,7 @@ html.desktop .fab { -webkit-app-region: no-drag; }
 .request[data-kind="permission"] { border-color: var(--bad); }
 .request-question { color: var(--ink); }
 .request-options { display: flex; flex-wrap: wrap; gap: 8px; }
-.request-options button { min-height: 34px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; }
+.request-options button { min-height: 34px; padding: 0 14px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; }
 .request-free input { width: 100%; min-height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); outline: none; }
 .turns { flex: 1; overflow-y: auto; padding: 28px max(16px, 6vw) 12px; display: flex; flex-direction: column; gap: 22px; }
 .turn { display: flex; flex-direction: column; gap: 8px; max-width: 720px; width: 100%; margin: 0 auto; border-radius: 14px; transition: background-color 600ms var(--ease); }
@@ -244,7 +248,7 @@ html.desktop .fab { -webkit-app-region: no-drag; }
 .receipts li::before { content: "✓ "; color: var(--accent); }
 .turn-actions { display: flex; gap: 8px; }
 .turn-actions button, .notice-actions button, .todo-add button {
-  min-height: 34px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem;
+  min-height: 34px; padding: 0 14px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem;
 }
 button.ghost, .notice-actions button.ghost { background: none; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
 
@@ -256,17 +260,26 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 .suggestion { flex: none; max-width: 100%; height: 28px; padding: 0 11px; border-radius: 999px; color: var(--copy); font-size: .8125rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; box-shadow: inset 0 0 0 1px var(--line); }
 .suggestion:hover { color: var(--ink); background: var(--wash); }
 .asked-on { align-self: center; color: var(--muted); font-size: .75rem; }
-.composer { display: flex; flex-direction: column; gap: 2px; max-width: 760px; width: calc(100% - 32px); margin: 8px auto calc(16px + env(safe-area-inset-bottom, 0px)); padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); }
-.composer:focus-within { border-color: var(--accent); }
+.composer { display: flex; flex-direction: column; gap: 2px; max-width: 760px; width: calc(100% - 32px); margin: 8px auto calc(16px + env(safe-area-inset-bottom, 0px)); padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: 18px; background: var(--field); box-shadow: 0 1px 2px oklch(0 0 0 / .04), 0 6px 20px oklch(0 0 0 / .05); transition: border-color .15s, box-shadow .15s; }
+/* Alfred's colour is on the composer only while you are in it, and on send once there is something to send. */
+.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--alf-soft); }
 .composer textarea { resize: none; border: 0; background: none; outline: none; padding: 4px 2px; line-height: 1.5; max-height: 40vh; }
 .composer textarea::placeholder { color: var(--muted); }
 /* Under the composer: what the next turn runs on (model, thinking), then send. */
 .composer-bar { display: flex; align-items: center; gap: 2px; min-width: 0; margin-left: -6px; }
 .composer-bar .grow { flex: 1; }
-.composer .send { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+.composer .send { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--accent-solid); color: var(--accent-ink); }
+.composer .send:disabled { opacity: 1; background: color-mix(in oklab, var(--field), var(--ink) 9%); color: var(--muted); }
+/* With nothing to choose under it (a new conversation), the composer is one row: the words, then send. */
+.composer:not(:has(.pick)) { flex-direction: row; align-items: flex-end; gap: 6px; }
+.composer:not(:has(.pick)) textarea { flex: 1; min-width: 0; padding: 6px 2px; }
+.composer:not(:has(.pick)) .composer-bar { margin-left: 0; }
+.composer:not(:has(.pick)) .grow { display: none; }
 .pick { position: relative; flex: 0 1 auto; min-width: 0; height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 8px; color: var(--copy); font-size: .75rem; }
 .pick:hover, .pick:focus-within { background: var(--wash); color: var(--ink); }
 .pick svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+.pick .logo { width: 14px; height: 14px; }
+.pick .logo svg { width: 100%; height: 100%; color: inherit; }
 .pick select { min-width: 0; max-width: 180px; appearance: none; border: 0; background: none; color: inherit; font: inherit; text-overflow: ellipsis; cursor: pointer; outline: none; }
 .pick:first-child { flex-shrink: 4; }
 .pick:has(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -344,7 +357,7 @@ select.area-pick[data-empty] { background: none; color: var(--muted); box-shadow
 .card-label { margin-bottom: 6px; color: var(--muted); font-size: .75rem; }
 .proposal-steps { list-style: decimal; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; color: var(--ink); font-size: .875rem; }
 .inbox-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.inbox-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; }
+.inbox-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; }
 .inbox-actions button.ghost { background: none; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
 .inbox-actions button.ghost:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--copy); }
 .revise { display: flex; flex-direction: column; gap: 8px; }
@@ -443,7 +456,7 @@ html.desktop .nav-top button, html.desktop .alf-head button { -webkit-app-region
 .day-pick { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 8px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); }
 .day-pick[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); box-shadow: none; }
 .auto-form-actions { display: flex; gap: 8px; }
-.auto-form-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; }
+.auto-form-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; }
 .auto-form-actions button.ghost { background: none; color: var(--copy); }
 .auto-form-actions button:disabled { opacity: .5; }
 /* Four columns need room. In a narrower page: what and when in one column, the switch and actions beside it;
@@ -477,27 +490,31 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
 .dev-session .conversation-head { padding: 8px max(16px, calc((100% - 760px) / 2)) 4px; }
 .dev-session .turns { padding: 20px max(16px, calc((100% - 760px) / 2)) 12px; }
 
-.dev-new { flex: 1; min-height: 0; overflow-y: auto; display: flex; align-items: flex-start; justify-content: center; padding: 56px 20px 48px; }
-.dev-new-in { width: min(620px, 100%); display: flex; flex-direction: column; gap: 14px; }
-.dev-new-head { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 6px; text-align: center; }
-.dev-new-head h2 { font: 600 1.375rem/1.3 var(--sans); color: var(--ink); }
-.dev-new-head p { max-width: 460px; font-size: .875rem; }
-.dev-box { border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); overflow: hidden; }
+/* Code's backdrop (shell/AsciiField.tsx): characters drifting behind the page, faint, and gone where there is
+   something to read: the middle of the new-session screen, the column a session is read in. */
+.dev-stage { flex: 1; min-height: 0; min-width: 0; display: flex; position: relative; isolation: isolate; }
+.dev-stage > .ascii { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; pointer-events: none; color: var(--muted); outline-color: var(--alf); opacity: .65;
+  --clear: radial-gradient(ellipse max(42%, 470px) 58% at 50% 36%, transparent 72%, #000 100%); -webkit-mask-image: var(--clear); mask-image: var(--clear); }
+/* In a session: beside the column where there is room, and a band behind the bar at the top. */
+.dev-stage[data-in="session"] > .ascii { opacity: .45; --clear: linear-gradient(to right, #000, transparent 22%, transparent 78%, #000), linear-gradient(to bottom, #000, transparent 58px); }
+[data-scheme="dark"] .dev-stage > .ascii { opacity: .5; }
+[data-scheme="dark"] .dev-stage[data-in="session"] > .ascii { opacity: .3; }
+
+/* A new session: the composer, with the project and the permission mode under it; then where you left off. */
+.dev-new { flex: 1; min-height: 0; overflow-y: auto; display: flex; align-items: flex-start; justify-content: center; padding: max(48px, 16vh) 20px 40px; }
+.dev-new-in { width: min(560px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.dev-new-head { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 10px; text-align: center; }
+.dev-new-head h2 { font: 600 1.25rem/1.3 var(--sans); color: var(--ink); }
+.dev-note { display: flex; gap: 8px; min-width: 0; padding: 0 15px; color: var(--muted); font-size: .75rem; }
+.dev-note .mono { min-width: 0; font: .6875rem/1.65 var(--mono); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dev-note .mono::after { content: "  ·"; white-space: pre; }
+.dev-note span:last-child { flex: none; }
+.dev-box { margin-top: 14px; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); overflow: hidden; }
 .dev-box-label { padding: 10px 14px 4px; color: var(--muted); font-size: .75rem; }
-.dev-project { width: 100%; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 0 10px; align-items: center; padding: 9px 14px; text-align: left; color: var(--copy); }
-.dev-project + .dev-project { border-top: 1px solid var(--line-soft); }
-.dev-project:hover { background: var(--wash); }
-.dev-project .tick { grid-row: span 2; color: var(--muted); display: grid; }
-.dev-project[aria-checked="true"] .tick { color: var(--accent); }
-.dev-project .tick svg { width: 16px; height: 16px; }
-.dev-project .n { color: var(--ink); font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dev-project.add .n { color: var(--copy); font-weight: 400; }
-.dev-project .meta { grid-row: span 2; color: var(--muted); font-size: .75rem; white-space: nowrap; }
-.dev-project .path { grid-column: 2; color: var(--muted); font: .6875rem var(--mono); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.dev-add { display: flex; gap: 8px; padding: 4px 14px 12px 44px; }
+.dev-add { display: flex; gap: 8px; }
 .dev-add input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); font: .8125rem var(--mono); outline: none; }
 .dev-add input:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
-.dev-add button, .dev-actions button { min-height: 32px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; }
+.dev-add button, .dev-actions button { min-height: 32px; padding: 0 14px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; }
 .dev-trust { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px; background: color-mix(in oklch, var(--warm) 14%, var(--raise)); color: var(--copy); font-size: .875rem; }
 .dev-trust b { color: var(--ink); }
 .dev-trust ul { font-size: .8125rem; }
@@ -550,8 +567,6 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
 .dev-modes button b { color: var(--ink); font-weight: 500; font-size: .8125rem; }
 .dev-modes button span { color: var(--muted); font-size: .75rem; }
 .dev-modes button[aria-checked="true"] { box-shadow: inset 0 0 0 1.5px var(--accent); background: var(--accent-soft); }
-.dev-modes.row { flex-direction: row; padding: 0 10px 10px; }
-.dev-modes.row button { flex: 1; min-width: 0; }
 .dev-files { display: flex; flex-direction: column; gap: 1px; }
 .dev-files button { width: 100%; display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin: 0 -6px; border-radius: 7px; text-align: left; font: .75rem var(--mono); color: var(--copy); }
 .dev-files button:hover, .dev-files button[aria-current] { background: var(--wash); }
@@ -566,12 +581,12 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
   .dev-layout[data-panel] { grid-template-columns: minmax(0, 1fr); }
   .dev-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; width: min(320px, 88%); box-shadow: -12px 0 32px #0000002e; }
 }
-@media (max-width: 760px) { .dev-modes.row { flex-direction: column; } }
 
 /* Calendar and mail (W6/W7): mirrors of Google. Where the data comes from, then the page. */
 .source-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--muted); font-size: .8125rem; }
 .source-bar[data-problem] { color: var(--bad); }
 .source-bar a { color: var(--accent); }
+.source-bar .logo { width: 16px; height: 16px; margin-right: -3px; }
 .source-bar .small { min-height: 26px; padding: 0 10px; border-radius: 999px; font-size: .75rem; }
 
 .calendar { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px 0 20px; }

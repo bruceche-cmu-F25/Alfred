@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EngineModel, ModelAccountsResponse, ModelAuthMethod, ModelProvider, ModelSignIn, StateResponse, ThinkingLevel } from "@alfred/protocol";
 import { api } from "./api.ts";
+import { Logo, providerMark } from "./brand/Logo.tsx";
 import { t } from "./i18n/index.ts";
 
 /** API-key providers shown before "show all": the ones most people have. Configured ones always show. */
@@ -190,10 +191,11 @@ export function ModelSettings() {
     const ours = provider.status.configured && provider.status.source === "alfred";
     const oauthOn = ours && provider.status.method === "oauth";
     const keyOn = ours && provider.status.method === "api_key";
+    const mark = providerMark(provider.id, kind);
     return (
       <div className="set-rows-item" key={provider.id}>
         <div className="set-row has-logo">
-          <span className="set-logo" data-k="gray">{provider.name.slice(0, 1).toUpperCase()}</span>
+          <span className="set-logo" data-k="gray">{mark ? <Logo name={mark} /> : provider.name.slice(0, 1).toUpperCase()}</span>
           <span className="set-name">{provider.name}</span>
           <span className="set-note">{kind === "subscription" ? provider.oauth?.label : t("models.provider.models", { n: provider.models })}</span>
           <span className="set-end">

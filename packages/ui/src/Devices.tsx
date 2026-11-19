@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { encode } from "uqr";
 import type { DeviceInfo, PairingCode, RemoteResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
+import { Logo } from "./brand/Logo.tsx";
 import { getLocale, t, type Key } from "./i18n/index.ts";
 import { disablePush, enablePush, pushSupport } from "./push.ts";
 
@@ -101,7 +102,8 @@ function Manage({ initial, onError }: { initial: Local; onError: (message: strin
   return (
     <>
       <div className="set-rows">
-        <div className="set-row">
+        <div className="set-row has-logo">
+          <span className="set-logo" data-k="gray"><Logo name="tailscale" /></span>
           <span className="set-name">{t("devices.remote")}</span>
           <span className="set-note">{t("devices.remote.note")} <DownloadLink /></span>
           <span className="set-end">

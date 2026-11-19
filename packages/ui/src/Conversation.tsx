@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, SessionMode, ThinkingLevel, ViewContext } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
+import { Logo, modelMark } from "./brand/Logo.tsx";
 import { t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
 import { Diff } from "./Diff.tsx";
@@ -127,6 +128,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
   const elapsed = working ? Math.max(0, now - Date.parse(run.createdAt)) : num(usage?.payload.durationMs) || Math.max(0, Date.parse(run.updatedAt) - Date.parse(run.createdAt));
 
   const model = typeof usage?.payload.model === "string" ? usage.payload.model : null;
+  const mark = modelMark(model);
   const total = usage ? spent([usage]) : null;
   const meta = !working && usage ? [
     ...(model ? [model.split("/").at(-1)!] : []),
@@ -177,7 +179,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
               </div>
             )}
           </div>
-          {meta.length > 0 && <p className="run-meta" title={metaTitle}>{meta.map((part) => <span key={part}>{part}</span>)}</p>}
+          {meta.length > 0 && <p className="run-meta" title={metaTitle}>{meta.map((part, index) => <span key={part}>{mark && index === 0 && <Logo name={mark} />}{part}</span>)}</p>}
           {error && <p className="problem small" role="alert">{error}</p>}
         </div>
       </div>
@@ -218,10 +220,11 @@ function ComposerBar({ conversation, onError }: { conversation: ConversationDeta
     api.updateConversation(conversation.id, patch).catch((reason: Error) => onError(reason.message));
   };
   const known = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  const mark = modelMark(conversation.model);
   return (
     <>
       <label className="pick" title={t("conv.model")}>
-        <Icon name="model" />
+        {mark ? <Logo name={mark} /> : <Icon name="model" />}
         <select aria-label={t("conv.model")} value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
           <option value="">{t("conv.defaultModel")}</option>
           {conversation.model && !known.has(conversation.model) && <option value={conversation.model}>{conversation.model.split("/").at(-1)}</option>}

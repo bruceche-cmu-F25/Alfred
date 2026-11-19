@@ -1,26 +1,28 @@
 import { useState } from "react";
 import { api } from "./api.ts";
+import { Logo } from "./brand/Logo.tsx";
 import { t } from "./i18n/index.ts";
 
 export interface Source { account: string; syncedAt: string | null; error: string | null; reconnect: boolean }
 
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
-/** Where a mirrored page's data comes from: not connected (go to Settings), can't be read (why), or when it was
- * read, with a button to read it again now. */
-export function SourceBar({ module, sources, notConnected }: { module: string; sources: Source[]; notConnected: string }) {
+/** Where a mirrored page's data comes from, under that service's mark: not connected (go to Settings), can't be
+ * read (why), or when it was read, with a button to read it again now. */
+export function SourceBar({ module, mark, sources, notConnected }: { module: string; mark: string; sources: Source[]; notConnected: string }) {
   const [busy, setBusy] = useState(false);
   const refresh = () => {
     setBusy(true);
     api.syncModule(module).catch(() => {}).finally(() => setBusy(false));
   };
   if (!sources.length) {
-    return <p className="source-bar"><span>{notConnected}</span><a href="#p=core.settings">{t("src.connect")}</a></p>;
+    return <p className="source-bar"><Logo name={mark} /><span>{notConnected}</span><a href="#p=core.settings">{t("src.connect")}</a></p>;
   }
   const broken = sources.find((source) => source.error);
   const read = sources.map((source) => source.syncedAt).filter((at): at is string => !!at).sort().at(-1);
   return (
     <p className="source-bar" data-problem={broken ? true : undefined}>
+      <Logo name={mark} />
       {broken
         ? broken.reconnect
           ? <><span>{t("src.reconnect")}</span><a href="#p=core.settings">{t("src.connect")}</a></>

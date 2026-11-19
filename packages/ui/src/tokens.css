@@ -29,12 +29,18 @@
   --wash: oklch(.93 calc(var(--c) * .5) var(--h));
   --line-soft: oklch(.925 calc(var(--c) * .5) var(--h));
   --line: oklch(.87 calc(var(--c) * .45) var(--h));
+  /* Where you write: the top surface, in the same greys as everything around it. In dark it sits one step above
+     the panel it is in, never below it. No tint of Alfred's colour: a cool grey beside the warm ones reads as off. */
+  --field: var(--raise);
   /* Text: ink 14:1, copy 7:1, muted ≥ 4.5:1 on bg and on the sidebar. Not pure black: firm, but easy on the eyes. Nearly neutral. */
   --muted: oklch(.535 calc(var(--c) * .4) var(--h));
   --copy: oklch(.44 calc(var(--c) * .35) var(--h));
   --ink: oklch(.27 calc(var(--c) * .3) var(--h));
   --alf: oklch(.54 var(--ac) var(--ah));
   --alf-soft: oklch(.54 var(--ac) var(--ah) / .09);
+  /* Alfred's colour as a filled control (a button), and what is written on it. */
+  --alf-solid: var(--alf);
+  --on-alf: var(--raise);
   --warm: oklch(.57 .12 70);
   --now: oklch(.6 .2 25);
   --ok: oklch(.58 .12 155);
@@ -54,11 +60,16 @@
   --wash: oklch(.275 calc(var(--c) * .5) var(--h));
   --line-soft: oklch(.285 calc(var(--c) * .5) var(--h));
   --line: oklch(.355 calc(var(--c) * .45) var(--h));
+  --field: color-mix(in oklab, var(--raise), var(--wash) 75%);
   --muted: oklch(.74 calc(var(--c) * .4) var(--h));
   --copy: oklch(.85 calc(var(--c) * .35) var(--h));
   --ink: oklch(.93 calc(var(--c) * .3) var(--h));
   --alf: oklch(.75 calc(var(--ac) * .75) var(--ah));
   --alf-soft: oklch(.75 calc(var(--ac) * .75) var(--ah) / .12);
+  /* --alf is light here, for text and lines; as a slab it is the brightest thing on the screen. A filled control
+     stays the mid indigo it is in light, with light text on it (4.5:1). */
+  --alf-solid: oklch(.56 calc(var(--ac) * .95) var(--ah));
+  --on-alf: oklch(.985 0 0);
   --warm: oklch(.79 .11 72);
   --now: oklch(.68 .18 25);
   --ok: oklch(.75 .12 155);

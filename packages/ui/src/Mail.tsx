@@ -59,7 +59,7 @@ export function Mail({ snapshot }: { snapshot: MailSnapshot | undefined }) {
 
   return (
     <section className="mail" aria-label={t("page.mail")}>
-      <SourceBar module="mail" sources={snapshot?.sources ?? []} notConnected={t("src.notConnected.mail")} />
+      <SourceBar module="mail" mark="gmail" sources={snapshot?.sources ?? []} notConnected={t("src.notConnected.mail")} />
       {(snapshot?.sources.length ?? 0) > 0 && (
         <>
           <div className="chips" role="group">

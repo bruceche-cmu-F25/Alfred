@@ -101,7 +101,7 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
 
   return (
     <section className="calendar" aria-label={t("page.calendar")}>
-      <SourceBar module="calendar" sources={sources} notConnected={t("src.notConnected.cal")} />
+      <SourceBar module="calendar" mark="google-calendar" sources={sources} notConnected={t("src.notConnected.cal")} />
       <div className="cal-bar">
         <div className="cal-nav">
           <button type="button" className="icon-btn" onClick={() => setWeek(addDays(week, -7))} aria-label={t("cal.prev")}>‹</button>

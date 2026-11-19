@@ -72,6 +72,18 @@ node scripts/voice-bench/run.ts
 - 词表不总是帮忙：用合成语音试跑时，Qwen3-ASR 0.6B 带上词表后，会把词表里没说过的词（tesseract）塞进转写。看 `details.md` 就能看到。
 - Whisper 的老毛病是「幻觉复读」：试跑时有一句不带词表转成了上百个「了」，错误率一下冲到几百%。看总表时留意是不是一两句拖垮了平均，去 `details.md` 对一下。
 
+## 没有自己的录音时
+
+`import_ascend.py` 能从 ASCEND 公开数据集（真人中英混说，CC BY-SA 4.0）抽 90 句，变成同样格式的 clips。先从 https://huggingface.co/datasets/CAiRE/ASCEND 下载 `main/test-*.parquet` 和 `main/validation-*.parquet`（共约 210MB）：
+
+```bash
+uv run --no-project --with pyarrow python -I scripts/voice-bench/import_ascend.py /some/dir/clips test.parquet validation.parquet
+```
+
+然后用 `VOICE_BENCH_CLIPS=/some/dir/clips VOICE_BENCH_RESULTS=/some/dir/results node scripts/voice-bench/run.ts` 跑，结果不会和你自己的录音混在一起。第一轮结果见 [voice-input.md 第 6.1 节](../../docs/research/voice-input.md)。
+
+注意内存：Qwen3-ASR 1.7B 峰值约 7.6GB，16GB 的 Mac 上会用到交换内存。
+
 ## 文件
 
 | 文件 | 做什么 |
@@ -85,3 +97,4 @@ node scripts/voice-bench/run.ts
 | `engines/local_whisper.py` | Whisper 本机进程（同上） |
 | `engines/apple.swift` | Apple SpeechTranscriber 本机程序 |
 | `score.ts` | 打分 |
+| `import_ascend.py` | 从 ASCEND 公开数据集抽真人录音 |

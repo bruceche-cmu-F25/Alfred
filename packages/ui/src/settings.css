@@ -12,14 +12,18 @@
 .set-row.has-logo .set-name, .set-row.has-logo .set-note { grid-column: 2; }
 .set-row.has-logo .set-end { grid-column: 3; }
 .set-row.sub { padding-left: 46px; }
-.set-logo { grid-column: 1; grid-row: 1 / 3; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--k-fill); color: var(--k-text); font-size: .8125rem; font-weight: 650; }
+/* A sub row with a small mark: the mark sits in the column of the logo above it. */
+.set-row.sub.has-logo { padding-left: 2px; grid-template-columns: 32px minmax(0, 1fr) auto; }
+.set-row.sub > .logo { grid-column: 1; grid-row: 1 / 3; justify-self: center; }
+.set-logo { flex: none; grid-column: 1; grid-row: 1 / 3; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--k-fill); color: var(--k-text); font-size: .8125rem; font-weight: 650; }
+.set-logo .logo { width: 20px; height: 20px; }
 .set-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
 .set-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .set-status.on { color: var(--ok); }
 .set-status.on::before { background: var(--ok); }
 .set-status.need { color: var(--warm); }
 .set-status.need::before { background: var(--warm); }
-.set-button { min-height: 32px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: .8125rem; text-decoration: none; }
+.set-button { min-height: 32px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; text-decoration: none; }
 .set-button.ghost { background: none; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
 .set-button.ghost:hover { color: var(--ink); }
 .set-button:disabled { opacity: .45; cursor: default; }
@@ -60,7 +64,7 @@
 @container page (max-width: 600px) {
   .settings { padding: 0 16px 32px; }
   .dev-pair { flex-direction: column; align-items: center; }
-  .set-row.sub { padding-left: 0; }
+  .set-row.sub:not(.has-logo) { padding-left: 0; }
 }
 
 /* Settings → Models (ModelSettings.tsx). */

@@ -1,8 +1,9 @@
 /** The Code page: development sessions in the user's projects (docs/design/dev-mode.md).
  *
- * With no session open it is the new-session screen: pick a project (adding and trusting a folder happen here, on
- * the home node's machine only), write the first message, and the session opens. With one open it is that session,
- * full page: the same conversation component as everyday ones, without a page to ask from.
+ * With no session open it is the new-session screen: one composer, with the project and the permission mode chosen
+ * under it (adding and trusting a folder happen here, on the home node's machine only); the first message opens the
+ * session. With one open it is that session, full page: the same conversation component as everyday ones, without a
+ * page to ask from. Behind both moves a field of characters (shell/AsciiField.tsx): this is where code is written.
  */
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Conversation as ConversationRow, CoreEvent, Project, SessionChanges, SessionMode, StateResponse } from "@alfred/protocol";
@@ -11,6 +12,7 @@ import { Conversation } from "./Conversation.tsx";
 import { desktop } from "./desktop.ts";
 import { Diff } from "./Diff.tsx";
 import { t, type Key } from "./i18n/index.ts";
+import { AsciiField } from "./shell/AsciiField.tsx";
 import { Figure } from "./shell/Figure.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { when } from "./shell/Nav.tsx";
@@ -34,13 +36,19 @@ export const sessionsOf = (state: StateResponse, projectId?: string) =>
 export function Dev(props: DevProps) {
   const { state, session } = props;
   const open = session ? state.conversations.find((conversation) => conversation.id === session) : undefined;
-  if (session) return <Session {...props} id={session} conversation={open} />;
-  return <NewSession state={state} onSession={props.onSession} />;
+  return (
+    <div className="dev-stage" data-in={session ? "session" : "new"}>
+      <AsciiField />
+      {session ? <Session {...props} id={session} conversation={open} /> : <NewSession state={state} onSession={props.onSession} />}
+    </div>
+  );
 }
 
 const noView = () => {};
 
 const MODES: SessionMode[] = ["plan", "ask", "edits"];
+/** The project picker's last choice: not a project, but adding one. */
+const ADD = "+";
 const PANEL_KEY = "alfred.devPanel";
 
 function Session({ id, conversation, state, onSession, live, highlighted, onEvent, pageTitle, automationTitle }: DevProps & { id: string; conversation?: ConversationRow }) {
@@ -169,40 +177,51 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) start(event);
   };
-  const recent = sessionsOf(state).slice(0, 8);
+  const recent = sessionsOf(state).slice(0, 5);
   const nameOf = (projectId: string | null) => projects.find((candidate) => candidate.id === projectId)?.name ?? "";
 
   return (
     <div className="dev-new">
       <div className="dev-new-in">
         <header className="dev-new-head">
-          <Figure state="hello" size={56} />
+          <Figure state="hello" size={40} />
           <h2>{t("dev.new")}</h2>
-          <p className="quiet">{t("dev.newHint")}</p>
         </header>
 
-        <div className="dev-box" role="radiogroup" aria-label={t("dev.projects")}>
-          <p className="dev-box-label">{t("dev.projects")}</p>
-          {projects.map((candidate) => (
-            <button type="button" key={candidate.id} className="dev-project" role="radio" aria-checked={candidate.id === chosen} onClick={() => setChosen(candidate.id)}>
-              <span className="tick" aria-hidden="true"><Icon name={candidate.id === chosen ? "check" : "folder"} /></span>
-              <span className="n">{candidate.name}</span>
-              <span className="meta">{candidate.trustedAt ? t("dev.sessions", { n: sessionsOf(state, candidate.id).length }) : t("dev.untrusted")}</span>
-              <span className="path">{candidate.path}</span>
+        <form className="composer dev-composer" onSubmit={start}>
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKey}
+            rows={Math.min(6, Math.max(2, draft.split("\n").length))} maxLength={8000} aria-label={t("composer.label")}
+            placeholder={project?.trustedAt ? t("dev.ask", { name: project.name }) : t("dev.pick")} disabled={!project?.trustedAt} />
+          <div className="composer-bar">
+            <label className="pick" title={project?.path ?? t("dev.projects")}>
+              <Icon name="folder" />
+              <select aria-label={t("dev.projects")} value={chosen ?? ""} onChange={(event) => { if (event.target.value === ADD) pick(); else setChosen(event.target.value); }}>
+                {!project && <option value="" disabled>{t("dev.projects")}</option>}
+                {projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.trustedAt ? "" : ` · ${t("dev.untrusted")}`}</option>)}
+                <option value={ADD}>{t("dev.add")}</option>
+              </select>
+            </label>
+            <label className="pick mode" data-mode={mode} title={t("mode.title")}>
+              <Icon name="shield" />
+              <select aria-label={t("mode.title")} value={mode} onChange={(event) => setMode(event.target.value as SessionMode)}>
+                {MODES.map((candidate) => <option key={candidate} value={candidate}>{t(`mode.${candidate}` as Key)}</option>)}
+              </select>
+            </label>
+            <span className="grow" />
+            <button type="submit" className="send" disabled={!draft.trim() || !project?.trustedAt || busy} aria-label={t("composer.send")}>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
             </button>
-          ))}
-          <button type="button" className="dev-project add" onClick={pick}>
-            <span className="tick" aria-hidden="true"><Icon name="plus" /></span>
-            <span className="n">{t("dev.add")}</span>
-            <span className="path">{desktop?.pickFolder ? t("dev.addMac") : t("dev.addLocal")}</span>
-          </button>
-          {adding && (
-            <form className="dev-add" onSubmit={(event) => { event.preventDefault(); void add(path); }}>
-              <input value={path} onChange={(event) => setPath(event.target.value)} placeholder={t("dev.addPath")} aria-label={t("dev.addPath")} autoFocus spellCheck={false} />
-              <button type="submit" disabled={!path.trim()}>{t("dev.addButton")}</button>
-            </form>
-          )}
-        </div>
+          </div>
+        </form>
+        {/* What the two choices under the composer mean, in one line. */}
+        <p className="dev-note">{project && <span className="mono" title={project.path}>{project.path}</span>}<span>{t(`mode.${mode}.hint` as Key)}</span></p>
+        {adding && (
+          <form className="dev-add" onSubmit={(event) => { event.preventDefault(); void add(path); }}>
+            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder={t("dev.addPath")} aria-label={t("dev.addPath")} autoFocus spellCheck={false} />
+            <button type="submit" disabled={!path.trim()}>{t("dev.addButton")}</button>
+          </form>
+        )}
+        {error && <p className="problem small" role="alert">{error}</p>}
 
         {project && !project.trustedAt && (
           <div className="dev-trust" role="group" aria-label={t("dev.trustTitle", { name: project.name })}>
@@ -214,30 +233,6 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
             </div>
           </div>
         )}
-
-        <div className="dev-box dev-mode-pick">
-          <p className="dev-box-label">{t("mode.title")}</p>
-          <div className="dev-modes row" role="radiogroup" aria-label={t("mode.title")}>
-            {MODES.map((candidate) => (
-              <button type="button" key={candidate} role="radio" aria-checked={mode === candidate} data-mode={candidate} onClick={() => setMode(candidate)}>
-                <b>{t(`mode.${candidate}` as Key)}</b><span>{t(`mode.${candidate}.hint` as Key)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <form className="composer dev-composer" onSubmit={start}>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKey}
-            rows={Math.min(6, Math.max(2, draft.split("\n").length))} maxLength={8000} aria-label={t("composer.label")}
-            placeholder={project?.trustedAt ? t("dev.ask", { name: project.name }) : t("dev.pick")} disabled={!project?.trustedAt} />
-          <div className="composer-bar">
-            <span className="grow" />
-            <button type="submit" className="send" disabled={!draft.trim() || !project?.trustedAt || busy} aria-label={t("composer.send")}>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
-            </button>
-          </div>
-        </form>
-        {error && <p className="problem small" role="alert">{error}</p>}
 
         {recent.length > 0 && (
           <div className="dev-box">

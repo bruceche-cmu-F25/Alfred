@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnectFlow, ConnectStart, ConnectionsResponse, GoogleAccount, GoogleCapability, GoogleCheck as Check, RemoteResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
+import { Logo } from "./brand/Logo.tsx";
 import { Devices } from "./Devices.tsx";
 import { ModelSettings } from "./ModelSettings.tsx";
 import { setLocale, t, useLocale, type Key, type Locale } from "./i18n/index.ts";
@@ -184,7 +185,7 @@ export function Settings() {
         {google?.accounts.map((item) => (
           <div className="set-rows" key={item.email}>
             <div className="set-row has-logo">
-              <span className="set-logo" data-k="blue">G</span>
+              <span className="set-logo" data-k="gray"><Logo name="google" /></span>
               <span className="set-name">{item.email}</span>
               <span className="set-note">{t("settings.googleAccount")}</span>
               <span className="set-end">
@@ -211,7 +212,8 @@ export function Settings() {
             {CAPS.map((cap) => {
               const on = item.capabilities.includes(cap);
               return (
-                <div className="set-row sub" key={cap}>
+                <div className="set-row sub has-logo" key={cap}>
+                  <Logo name={cap.startsWith("cal") ? "google-calendar" : "gmail"} />
                   <span className="set-name">{capName(cap)}</span>
                   <span className="set-note">{capNote(cap)}</span>
                   <span className="set-end">
@@ -226,7 +228,7 @@ export function Settings() {
 
         <div className="set-hero">
           <div className="set-hero-head">
-            <span className="set-logo" data-k="blue">G</span>
+            <span className="set-logo" data-k="gray"><Logo name="google" /></span>
             <div>
               <b>{google?.accounts.length ? t("settings.google.another") : "Google"}</b>
               <p className="quiet small">{t("settings.google.blurb")}</p>
