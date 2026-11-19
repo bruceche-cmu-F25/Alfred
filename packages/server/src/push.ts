@@ -1,6 +1,8 @@
 /** Web Push to paired devices (docs/research/remote-access.md). A notice goes to the phone only when no device took
- * it: a window in use or the Mac (when someone is using it) claims a notice within a moment; one still pending after
- * PUSH_GRACE_MS is pushed to every subscribed device and claimed as `push`, so the Mac does not show it again later.
+ * it: a window in use or the Mac (when someone is using it) claims a notice within a moment; one still pending when
+ * the attention table (core attention.ts) says it is the phone's turn is pushed to every subscribed device and
+ * claimed as `push`, so the Mac does not show it again later. Which notices are pushed, and how long they wait first,
+ * are that table's to say, not this file's.
  * A push service accepting it is not proof the user saw it, so it is claimed, not presented.
  *
  * Lessons carried over from Robin: Apple refuses a VAPID subject that is not a valid URL; urgency `high`, or an idle
@@ -10,7 +12,7 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import webpush from "web-push";
-import { claimNotice, listDevices, userLocale, type World } from "@alfred/core";
+import { ATTENTION, claimNotice, decide, listDevices, noticeClass, userLocale, type AttentionPolicy, type Decision, type Outlet, type World } from "@alfred/core";
 import { translate, type Key } from "@alfred/ui/i18n";
 import type { SecretStore } from "./secrets.ts";
 
@@ -32,14 +34,12 @@ type Subscriptions = Record<string, PushSubscriptionJson & { at: string }>;
 /** Sends one payload; rejects with an error carrying `statusCode` when the push service refuses. */
 export type PushSender = (subscription: PushSubscriptionJson, payload: string, keys: VapidKeys) => Promise<void>;
 
-export const PUSH_GRACE_MS = 20_000;
 /** How long a pushed notice stays claimed before the Mac may show it after all. */
 const PUSH_CLAIM_MS = 12 * 3600_000;
-/** Notices older than this when first seen (say, after a restart) are not pushed. */
-const FRESH_MS = 10 * 60_000;
-const PUSH_KINDS = ["run_result", "run_interrupted", "run_request", "proposal"];
 const SECRET = "push:vapid";
 export const PUSH_CLIENT = "push";
+/** The phones' push notifications, as the attention table sees them: one outlet, which nobody is ever looking at. */
+const PUSH_OUTLET: Outlet = { id: PUSH_CLIENT, kind: "push", attending: false };
 /** Push services of the browsers people use. Anything else is refused, so a device cannot make the node call elsewhere. */
 const PUSH_HOSTS = [/(^|\.)push\.apple\.com$/, /^fcm\.googleapis\.com$/, /(^|\.)push\.services\.mozilla\.com$/, /(^|\.)notify\.windows\.com$/];
 
@@ -86,6 +86,16 @@ export function noticeMessage(notice: { id: string; kind: string; payload: Recor
     return { ...base, title, body: cut(String(notice.payload.question ?? goal), 200), url: at, ack: false };
   }
   if (notice.kind === "run_interrupted") return { ...base, title: say("mac.interrupted.title"), body: say("mac.interrupted.body", { goal }), url: at, ack: true };
+  if (notice.kind === "outbound") {
+    // A change outside Alfred (an event, an email) after the user's yes: it is told on the phone when it did not go
+    // through, or may not have. That stays in the inbox until they have looked.
+    const preview = cut(String(notice.payload.preview ?? ""), 120);
+    const error = notice.payload.error ? cut(String(notice.payload.error), 100) : "";
+    const inbox = "/#p=core.inbox";
+    if (notice.payload.state === "failed") return { ...base, title: say("mac.outbound.failed"), body: error ? say("mac.outbound.failedBody", { preview, error }) : preview, url: inbox, ack: false };
+    if (notice.payload.state === "unknown") return { ...base, title: say("mac.outbound.unknown"), body: say("mac.outbound.unknownBody", { preview }), url: inbox, ack: false };
+    return { ...base, title: say("mac.outbound.done"), body: preview, url: inbox, ack: true };
+  }
   const status = notice.payload.status;
   if (status === "failed") return { ...base, title: say("mac.failed.title"), body: say("mac.goal", { goal }), url: at, ack: true };
   if (status === "cancelled") return { ...base, title: say("mac.cancelled.title"), body: say("mac.goal", { goal }), url: at, ack: true };
@@ -98,6 +108,7 @@ export interface PushOptions {
   world: World;
   secrets: SecretStore;
   send?: PushSender;
+  /** Instead of the table's wait before a notice nobody took goes to the phone (tests). */
   graceMs?: number;
   log?: (message: string) => void;
 }
@@ -112,6 +123,8 @@ export class PushService {
   readonly #seen = new Set<string>();
   readonly #timers = new Set<NodeJS.Timeout>();
   #unsubscribe: (() => void) | null = null;
+  /** Closed: a scan or a push already on its way must not touch the world, which may be closed too. */
+  #closed = false;
 
   constructor(options: PushOptions) {
     this.#options = options;
@@ -179,6 +192,7 @@ export class PushService {
   }
 
   close(): void {
+    this.#closed = true;
     this.#unsubscribe?.();
     for (const timer of this.#timers) clearTimeout(timer);
     this.#timers.clear();
@@ -186,33 +200,41 @@ export class PushService {
 
   /** Read-only, so it can run after every commit without causing one. */
   #pending(id?: string): Array<{ id: string; kind: string; created_at: string; payload: string }> {
-    const kinds = JSON.stringify(PUSH_KINDS);
-    const sql = `SELECT id, kind, created_at, payload FROM core_notices WHERE state = 'pending' AND kind IN (SELECT value FROM json_each(?))${id ? " AND id = ?" : ""}`;
-    const rows = id ? this.#options.world.db.prepare(sql).all(kinds, id) : this.#options.world.db.prepare(sql).all(kinds);
+    const sql = `SELECT id, kind, created_at, payload FROM core_notices WHERE state = 'pending'${id ? " AND id = ?" : ""}`;
+    const rows = id ? this.#options.world.db.prepare(sql).all(id) : this.#options.world.db.prepare(sql).all();
     return rows as Array<{ id: string; kind: string; created_at: string; payload: string }>;
   }
 
+  /** What the attention table says about a notice nobody has taken, with push as the only outlet left to ask. */
+  #decide(row: { kind: string; created_at: string; payload: string }, now: number): Decision {
+    const policy: AttentionPolicy = this.#options.graceMs === undefined ? ATTENTION : { ...ATTENTION, pushAfterMs: this.#options.graceMs };
+    const payload = JSON.parse(row.payload) as Record<string, unknown>;
+    return decide({ kind: row.kind, class: noticeClass(row.kind, payload), createdAt: row.created_at }, [PUSH_OUTLET], now, { policy });
+  }
+
   #scan(): void {
-    if (!Object.keys(this.#subscriptions).length) return;
+    if (this.#closed || !Object.keys(this.#subscriptions).length) return;
     const now = Date.now();
-    const grace = this.#options.graceMs ?? PUSH_GRACE_MS;
     for (const row of this.#pending()) {
       if (this.#seen.has(row.id)) continue;
       this.#seen.add(row.id);
-      const age = now - Date.parse(row.created_at);
-      if (age > FRESH_MS) continue;
-      const timer = setTimeout(() => { this.#timers.delete(timer); void this.#fire(row.id); }, Math.max(0, grace - age));
+      const decision = this.#decide(row, now);
+      // Not the phone's (a greeting, a kind that is not pushed, one too old to be news): it waits for the user.
+      if (decision.do === "nothing" || (decision.do === "wait" && decision.until === "return")) continue;
+      const timer = setTimeout(() => { this.#timers.delete(timer); void this.#fire(row.id); }, decision.do === "wait" ? Math.max(0, Number(decision.until) - now) : 0);
       this.#timers.add(timer);
     }
   }
 
   async #fire(id: string): Promise<void> {
+    if (this.#closed) return;
     const [row] = this.#pending(id);
     if (!row) return; // a device took it
+    if (this.#decide(row, Date.now()).do !== "tell") return; // no longer the phone's turn
     const notice = { id: row.id, kind: row.kind, payload: JSON.parse(row.payload) as Record<string, unknown> };
     try {
       const result = await this.sendTo(noticeMessage(notice, userLocale(this.#options.world)));
-      if (result.accepted) {
+      if (result.accepted && !this.#closed) {
         try { claimNotice(this.#options.world, id, PUSH_CLIENT, { ttlMs: PUSH_CLAIM_MS }); } catch { /* a device took it meanwhile */ }
       }
     } catch (error) {

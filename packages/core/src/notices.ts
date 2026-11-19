@@ -3,6 +3,7 @@
  * marks it delivered. A notice is information, never an instruction.
  */
 import type { DatabaseSync } from "node:sqlite";
+import { noticeClass, type NoticeClass } from "./attention.ts";
 import { appendEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { NOTICE_STATES } from "./schema.ts";
@@ -20,6 +21,8 @@ export interface Notice {
   claimUntil: string | null;
   expiresAt: string | null;
   payload: Record<string, unknown>;
+  /** What it is to the user (attention.ts). Read from its kind and payload each time, not stored. */
+  class: NoticeClass;
 }
 
 export class NoticeStateError extends Error {
@@ -38,10 +41,12 @@ function client(value: string): string {
 }
 
 function toNotice(row: Record<string, unknown>): Notice {
+  const payload = JSON.parse(row.payload as string) as Record<string, unknown>;
   return {
     id: row.id as string, eventSeq: row.event_seq as number, kind: row.kind as string, state: row.state as NoticeState,
     createdAt: row.created_at as string, updatedAt: row.updated_at as string, claimedBy: row.claimed_by as string | null,
-    claimUntil: row.claim_until as string | null, expiresAt: row.expires_at as string | null, payload: JSON.parse(row.payload as string),
+    claimUntil: row.claim_until as string | null, expiresAt: row.expires_at as string | null, payload,
+    class: noticeClass(row.kind as string, payload),
   };
 }
 

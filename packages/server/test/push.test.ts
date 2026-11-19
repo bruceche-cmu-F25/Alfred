@@ -82,6 +82,25 @@ test("a notice nobody takes within the grace period goes to the phone once, and 
   } finally { push.close(); world.close(); }
 });
 
+test("a change outside that failed or may not have happened reaches the phone; one that went through does not", async () => {
+  const sent: Array<{ title: string; body: string; url: string; ack: boolean }> = [];
+  const { world, push, phone } = setUp(async (_subscription, payload) => { sent.push(JSON.parse(payload)); });
+  try {
+    push.subscribe(phone.id, APPLE);
+    push.watch();
+    notice(world, "outbound", { state: "done", preview: "Add “Dentist” to Me: Fri 15:00" });
+    notice(world, "outbound", { state: "unknown", preview: "Email ana@example.com: Plan" });
+    notice(world, "outbound", { state: "failed", preview: "Reply to leo@example.com: Contract", error: "Gmail answered 400" });
+    await wait(150);
+    assert.deepEqual(sent.map((message) => message.title).sort(), ["Not sure it went through", "That didn't go through"]);
+    const unsure = sent.find((message) => message.title === "Not sure it went through")!;
+    assert.match(unsure.body, /^Email ana@example.com: Plan\. Google didn't confirm it/);
+    assert.deepEqual([unsure.url, unsure.ack], ["/#p=core.inbox", false], "it opens the inbox, and stays there until looked at");
+    assert.equal(sent.find((message) => message.title === "That didn't go through")!.body, "Reply to leo@example.com: Contract: Gmail answered 400");
+    assert.deepEqual(listNotices(world, { states: ["pending", "claimed"] }).map((item) => [item.payload.state, item.claimedBy]).sort(), [["done", null], ["failed", "push"], ["unknown", "push"]]);
+  } finally { push.close(); world.close(); }
+});
+
 test("nothing is claimed when no push went out, and a gone subscription is dropped", async () => {
   const { world, push, phone } = setUp(async () => { throw Object.assign(new Error("Gone"), { statusCode: 410 }); });
   try {

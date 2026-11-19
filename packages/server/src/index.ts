@@ -3,4 +3,4 @@ export { createHttpServer, createIngressServer, type ServeOptions } from "./http
 export { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 export { RemoteAccess, PairingError, DEFAULT_SERVE_PORT, DEVICE_COOKIE, type RemoteOptions } from "./remote.ts";
 export { Tailscale, cliRunner, findTailscale, type Runner } from "./tailscale.ts";
-export { PushService, noticeMessage, checkSubscription, PUSH_GRACE_MS, PUSH_CLIENT, type PushSender, type PushMessage } from "./push.ts";
+export { PushService, noticeMessage, checkSubscription, PUSH_CLIENT, type PushSender, type PushMessage } from "./push.ts";

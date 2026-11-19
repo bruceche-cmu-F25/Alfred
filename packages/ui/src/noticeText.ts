@@ -14,9 +14,6 @@ export interface NoticeLines {
   action: string;
 }
 
-/** Notice kinds the Mac app tells the user about (besides the welcome). */
-export const SPOKEN = new Set(["run_result", "run_interrupted", "run_request", "proposal", "outbound"]);
-
 /** In `locale` (default: the current one). Shared by the figure and the Mac app's fallback notifications. */
 export function noticeLines(notice: Notice, locale: Locale = getLocale()): NoticeLines {
   const say = (key: Parameters<typeof translate>[1], vars?: Record<string, string | number>) => translate(locale, key, vars);

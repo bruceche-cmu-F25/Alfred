@@ -25,6 +25,7 @@ export {
   type Notice, type NoticeState,
 } from "./notices.ts";
 export { runCommand, commandReplay, CommandConflictError } from "./commands.ts";
+export { decide, noticeClass, ATTENTION, NOTICE_CLASSES, type AttentionPolicy, type Decision, type NoticeClass, type Outlet } from "./attention.ts";
 export {
   reportPresence, isReturn, PRESENCE_KINDS, RETURN_AFTER_MS, AWAY_RETURN_MS, HEARTBEAT_MS,
   type AwayDigest, type PresenceKind, type PresenceOptions, type PresenceResult,

@@ -167,10 +167,15 @@ export interface RespondRequest { requestId: string; answer: string }
 
 export type NoticeState = "pending" | "claimed" | "presented" | "acknowledged" | "expired";
 
+/** What a notice is to the user: it waits on them; it is news; or it is the welcome when they come back. */
+export type NoticeClass = "needs_you" | "tells_you" | "greeting";
+
 export interface Notice {
   id: string;
   eventSeq: number;
   kind: string;
+  /** Which of the three it is, as the home node sees it. Absent from a home node older than this field. */
+  class?: NoticeClass;
   state: NoticeState;
   createdAt: string;
   updatedAt: string;

@@ -15,7 +15,7 @@ import {
 } from "electron";
 import type { AwayDigest, Notice, PresenceResponse, StateResponse } from "@alfred/protocol";
 import { detectLocale, translate, type Key, type Locale } from "@alfred/ui/i18n";
-import { noticeLines, SPOKEN } from "@alfred/ui/notice";
+import { noticeLines } from "@alfred/ui/notice";
 import { welcomeLines } from "@alfred/ui/welcome";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
@@ -325,7 +325,7 @@ async function handleNotices(state: StateResponse): Promise<void> {
       if (notice.state === "pending" || (notice.state === "claimed" && notice.claimedBy === DEVICE)) await greet(notice);
       continue;
     }
-    if (!SPOKEN.has(notice.kind)) continue;
+    // Which notices there are to say is the home node's list (core attention.ts): whatever it sends is said.
     if (notice.state !== "pending" || mainAttending || !atMac) continue;
     const age = now - Date.parse(notice.createdAt);
     if (age < NOTIFY_GRACE_MS) {
