@@ -18,6 +18,8 @@ import { welcomeLines } from "./welcome.ts";
 
 if (desktop) document.documentElement.classList.add("desktop");
 
+const DEV_PAGE = "core.dev";
+
 /** True while the user is looking at this window: visible and focused. In the
  * Mac app the app says so; a page alone cannot tell a hidden window apart.
  */
@@ -39,11 +41,12 @@ function useAttention(): boolean {
   return attending;
 }
 
-/** The open page and conversation live in the address (#p=todo.list&c=<id>), so a reload keeps both. */
-function useRoute(): { page: string | null; selected: string | null; go(patch: { page?: string | null; selected?: string | null }): void } {
-  const read = () => {
+/** The open page, conversation and development session live in the address (#p=todo.list&c=<id>&s=<id>), so a reload keeps them. */
+type Route = { page: string | null; selected: string | null; session: string | null };
+function useRoute(): Route & { go(patch: Partial<Route>): void } {
+  const read = (): Route => {
     const params = new URLSearchParams(location.hash.slice(1));
-    return { page: params.get("p"), selected: params.get("c") };
+    return { page: params.get("p"), selected: params.get("c"), session: params.get("s") };
   };
   const [route, setRoute] = useState(read);
   useEffect(() => {
@@ -51,12 +54,13 @@ function useRoute(): { page: string | null; selected: string | null; go(patch: {
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
   }, []);
-  const go = useCallback((patch: { page?: string | null; selected?: string | null }) => {
+  const go = useCallback((patch: Partial<Route>) => {
     setRoute((current) => {
       const next = { ...current, ...patch };
       const params = new URLSearchParams();
       if (next.page) params.set("p", next.page);
       if (next.selected) params.set("c", next.selected);
+      if (next.session) params.set("s", next.session);
       const hash = params.toString();
       history.replaceState(null, "", hash ? `#${hash}` : location.pathname);
       return next;
@@ -188,10 +192,18 @@ export function App() {
     else if (layout.alfred === "closed") setLayout({ alfred: "open" });
   }, [phone, layout.alfred, setLayout]);
 
+  /** Opens a development session on the Code page. */
+  const openSession = useCallback((id: string | null) => {
+    route.go({ page: DEV_PAGE, session: id });
+    setSheet(null);
+  }, [route]);
+
   const select = useCallback((id: string | null) => {
+    // A development session opens on the Code page, not in Alfred's panel.
+    if (id && state?.conversations.find((conversation) => conversation.id === id)?.projectId) { openSession(id); return; }
     route.go({ selected: id });
     showAlfred();
-  }, [route, showAlfred]);
+  }, [route, showAlfred, state?.conversations, openSession]);
 
   const showProposal = useCallback((proposalId: string) => {
     route.go({ page: "core.inbox" });
@@ -286,7 +298,9 @@ export function App() {
     );
   }
 
-  const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : layout.alfred;
+  // A bare page (Code) takes the room Alfred's panel would; on a phone the panel is a sheet anyway.
+  const bare = !!current?.bare;
+  const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : bare ? "closed" : layout.alfred;
   const size = widths(layout, viewport);
 
   // Sidebar divider: drag to resize; drag past the fold point to fold it to icons (keeping the width it had).
@@ -307,21 +321,25 @@ export function App() {
     <div className="workspace" data-nav={phone ? undefined : layout.nav} data-alfred={alfredMode} data-phone={phone || undefined}
       data-sheet={sheet ?? undefined} style={{ "--nav-px": `${size.nav}px`, "--alf-px": `${size.alf}px` } as CSSProperties}>
       {(!phone || sheet === "nav") && (
-        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : layout.nav} selected={selected} connection={connection}
+        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "full" : layout.nav} selected={selected} session={bare ? route.session : null}
+          onSession={openSession} connection={connection}
           onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onFold={phone ? () => setSheet(null) : toggleNav}
           onPalette={() => { setSheet(null); setPalette(true); }} onConversations={showAlfred} sheet={phone} onLanguage={switchLanguage} />
       )}
       {phone && sheet === "nav" && <div className="scrim" onClick={() => setSheet(null)} />}
 
-      <main className="page" data-k={current?.k}>
+      <main className="page" data-k={current?.k} data-bare={bare || undefined}>
         {current ? (
           <>
-            <header className="page-head">
-              <h1><Icon name={current.icon} />{current.title}</h1>
-              {current.summary && <p className="page-sub">{current.summary(state.modules[moduleOf(current)], state)}</p>}
-            </header>
+            {!bare && (
+              <header className="page-head">
+                <h1><Icon name={current.icon} />{current.title}</h1>
+                {current.summary && <p className="page-sub">{current.summary(state.modules[moduleOf(current)], state)}</p>}
+              </header>
+            )}
             <div className="page-body">{current.render({
               snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, focus: inboxFocus, onFocused, openConversation,
+              dev: { session: route.session, onSession: openSession, live, highlighted, onEvent, pageTitle, automationTitle: automationOf },
             })}</div>
           </>
         ) : (
@@ -341,7 +359,7 @@ export function App() {
         </>
       )}
 
-      {!phone && alfredMode === "closed" && (
+      {!phone && alfredMode === "closed" && !bare && (
         <button type="button" className="fab" onClick={showAlfred} title={t("fab.open", { key: `${MOD}.` })}>
           <Figure state={figure} size={30} /><span>{statusLine(state, selected, view?.headline)}</span>
         </button>

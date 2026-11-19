@@ -10,6 +10,7 @@
  *   GET  /api/events?after=<seq>            text/event-stream: `core` events (data: CoreEvent, with ids, replayed
  *                                           after a drop) and `live` updates (data: LiveUpdate, never replayed)
  *   GET  /api/conversations/:id             ConversationDetail
+ *   POST /api/conversations                 StartSessionRequest -> Conversation (a development session in a trusted project)
  *   POST /api/conversations/:id             UpdateConversationRequest -> Conversation
  *   POST /api/runs                          SubmitRunRequest -> SubmitRunResponse (202); no conversationId starts one
  *   GET  /api/runs/:id                      RunDetail
@@ -24,6 +25,8 @@
  *   POST /api/proposals/:id/revise          ReviseRequest -> ProposalResponse (supersedes it; a new run in its conversation revises it)
  *   POST /api/settings                      SettingsRequest -> UserSettings (preferences that are not secrets; replays by request id)
  *   POST /api/presence                      PresenceRequest -> PresenceResponse
+ *   POST /api/projects                      AddProjectRequest -> Project (only on the home node's machine)
+ *   POST /api/projects/:id/(trust|remove)   -> Project / {} (only on the home node's machine)
  *   (devices and pairing: see RemoteResponse below)
  */
 export const PROTOCOL_VERSION = 1;
@@ -102,7 +105,21 @@ export interface Conversation {
   /** Runs that need the user: a question waiting, or interrupted. */
   attention: number;
   lastGoal: string | null;
+  /** The project it works in (a development session); null for an everyday conversation. Fixed at creation. */
+  projectId: string | null;
 }
+
+/** A folder on the home node Alfred may work in. Sessions start only once the user trusts it. */
+export interface Project {
+  id: string;
+  name: string;
+  /** Absolute, on the home node. */
+  path: string;
+  createdAt: string;
+  trustedAt: string | null;
+}
+export interface AddProjectRequest { path: string; name?: string }
+export interface StartSessionRequest { projectId: string; title: string }
 
 export interface ConversationDetail {
   conversation: Conversation;
@@ -203,6 +220,8 @@ export interface StateResponse {
   settings: UserSettings;
   /** The user's automations (the morning brief among them), with when each fires next. */
   automations: Automation[];
+  /** Folders Alfred may work in, most recently added first. */
+  projects: Project[];
 }
 
 export interface SubmitRunRequest { requestId: string; goal: string; conversationId?: string; context?: ViewContext }

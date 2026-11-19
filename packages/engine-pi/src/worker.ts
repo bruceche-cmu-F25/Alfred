@@ -12,26 +12,32 @@
  * - MCP servers from Alfred's own `<config>/mcp.json` (same format as Pi's and
  *   Claude Desktop's), reached directly, through `tool_search` or `codemode`.
  * - Skills from `<config>/skills/`, and the `read` tool to load them.
+ * - In a development session (a job with a workspace): the session works in the
+ *   project's folder, with `read`, `grep`, `find` and `ls`, and the project's
+ *   AGENTS.md / CLAUDE.md as context. Its `.pi/` settings, extensions and MCP
+ *   servers are not loaded.
  * Nothing else: no shell, no writing or editing files, none of the user's own
- * Pi extensions, packages or context files.
+ * Pi extensions or packages.
  *
  * A gate checks every call to a tool Alfred did not define. MCP tools their
- * server marks read-only, and reading Alfred's skills, run freely; anything
- * else asks the user first, through the home node, once per call. A permitted
- * call that may have changed something outside Alfred is kept as a receipt.
+ * server marks read-only, reading Alfred's skills, and reading, searching or
+ * listing inside a session's project folder run freely; anything else asks the
+ * user first, through the home node, once per call. A permitted call that may
+ * have changed something outside Alfred is kept as a receipt.
  * Credentials and the default model come from the user's Pi setup.
  *
  *   worker.ts --cwd <dir> --sessions <dir> --config <dir> [--agent-dir <dir>]
  */
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, DefaultResourceLoader,
-  ModelRuntime, SessionManager, SettingsManager,
+  loadProjectContextFiles, ModelRuntime, SessionManager, SettingsManager,
   type AgentSession, type ExtensionFactory, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { LOOKERS, look, real } from "./looking.ts";
 import { loadAlfredMcpConfig } from "./mcp-config.ts";
 import type { ExternalStep, ModelInfo, RunJob, ToParent, ToWorker } from "./protocol.ts";
 
@@ -87,13 +93,8 @@ function describeTool(name: string): { label: string; server?: string; tool: str
   return match ? { label: `${match[1]} · ${match[2]}`, server: match[1], tool: match[2] } : { label: name, tool: name };
 }
 
-function inside(dir: string, path: string): boolean {
-  const rel = relative(dir, path);
-  return !!rel && !rel.startsWith("..") && !rel.startsWith(sep);
-}
-
-/** The gate: every call to a tool Alfred did not define passes here first. */
-function gate(state: { run: string | null }, ours: ReadonlySet<string>): ExtensionFactory {
+/** The gate: every call to a tool Alfred did not define passes here first. `root` is a development session's project folder. */
+function gate(state: { run: string | null }, ours: ReadonlySet<string>, root: string | null): ExtensionFactory {
   return (pi) => {
     const open = new Map<string, { step: ExternalStep; changes: boolean; run: string }>();
     pi.on("tool_call", async (event) => {
@@ -105,12 +106,13 @@ function gate(state: { run: string | null }, ours: ReadonlySet<string>): Extensi
       const step: ExternalStep = { id: next(), tool: name, label: describeTool(name).label, about: about(input), status: "started" };
       let question: string | null;
       let changes: boolean;
-      if (name === "read") {
-        const path = resolve(cwd, String(input.path ?? ""));
-        step.label = "Read file";
-        step.about = path;
-        // Alfred's own skills are instructions; any other file is the user's and needs a yes.
-        question = inside(skillsDir, path) ? null : `允许 Alfred 读取这个文件吗？\n${path}`;
+      if (Object.hasOwn(LOOKERS, name)) {
+        // Alfred's own skills are instructions, and a session's project is the user's to read in it;
+        // any other file is the user's and needs a yes.
+        const seen = look(name, input, { root, cwd, skills: skillsDir });
+        step.label = seen.label;
+        step.about = seen.about;
+        question = seen.free ? null : `允许 Alfred ${name === "read" ? "读取这个文件" : "查看这个位置"}吗？\n${seen.path}`;
         changes = false;
       } else {
         const hints = pi.getAllTools().find((tool) => tool.name === name)?.annotations;
@@ -176,7 +178,7 @@ async function close(thread: string): Promise<void> {
 }
 
 async function open(job: RunJob): Promise<Warm> {
-  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools })).digest("hex");
+  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: job.workspace ?? null })).digest("hex");
   const existing = warm.get(job.thread);
   if (existing && existing.shape === shape) return existing;
   if (existing) await close(job.thread);
@@ -185,16 +187,20 @@ async function open(job: RunJob): Promise<Warm> {
   mkdirSync(dir, { recursive: true });
   const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null };
   const definitions = alfredTools(state, job);
+  const root = job.workspace ? real(job.workspace.root) : null;
   const loader = new DefaultResourceLoader({
+    // Resources are discovered in Alfred's own folder, never the project's: its .pi/ settings and extensions stay out.
     cwd,
     agentDir: resourcesDir,
     additionalSkillPaths: [skillsDir],
     noContextFiles: true,
+    // A development session reads the project's AGENTS.md / CLAUDE.md (and its parents'), as Pi would there.
+    ...(root ? { agentsFilesOverride: () => ({ agentsFiles: loadProjectContextFiles({ cwd: root, agentDir: resourcesDir }) }) } : {}),
     noPromptTemplates: true,
     noThemes: true,
-    systemPrompt: job.instructions,
+    systemPrompt: job.workspace ? `${job.instructions}\n\nProject: ${job.workspace.name}\nFolder: ${root}` : job.instructions,
     extensionFactories: [
-      { name: "alfred-gate", factory: gate(state, new Set(definitions.map((tool) => tool.name))), hidden: true },
+      { name: "alfred-gate", factory: gate(state, new Set(definitions.map((tool) => tool.name)), root), hidden: true },
       createCodemodeExtension(),
       createToolSearchExtension(),
       // Alfred's own servers, not the user's Pi configuration.
@@ -207,14 +213,17 @@ async function open(job: RunJob): Promise<Warm> {
   });
   await loader.reload();
   const { session } = await createAgentSession({
-    cwd,
+    // Where the file tools work: the project in a development session.
+    cwd: root ?? cwd,
     ...(agentDir ? { agentDir } : {}),
     resourceLoader: loader,
     // The conversation's own session: continued if it exists, created if not.
-    sessionManager: SessionManager.continueRecent(cwd, dir),
+    sessionManager: SessionManager.continueRecent(root ?? cwd, dir),
     settingsManager: SettingsManager.create(cwd, agentDir),
     customTools: definitions,
-    // Of Pi's built-in tools only `read` (for skills; other files ask first). No shell, no writing.
+    // Of Pi's built-in tools: `read` (skills; other files ask first), and in a development session also
+    // grep, find and ls. No shell, no writing.
+    ...(root ? { tools: ["+grep", "+find", "+ls"] } : {}),
     excludeTools: ["bash", "edit", "write", "powershell"],
   });
   state.session = session;
@@ -239,6 +248,21 @@ async function choose(session: AgentSession, job: RunJob): Promise<void> {
     }
   }
   if (job.thinking && session.thinkingLevel !== job.thinking) session.setThinkingLevel(job.thinking as never);
+}
+
+/** What this turn's model calls cost: tokens in and out, cache reads and writes, and dollars, summed over its replies. */
+function spent(messages: readonly unknown[]): { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number } {
+  const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  for (const message of messages as Array<{ role?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } }>) {
+    if (message.role !== "assistant" || !message.usage) continue;
+    const usage = message.usage;
+    total.input += usage.input ?? 0;
+    total.output += usage.output ?? 0;
+    total.cacheRead += usage.cacheRead ?? 0;
+    total.cacheWrite += usage.cacheWrite ?? 0;
+    total.cost += usage.cost?.total ?? 0;
+  }
+  return total;
 }
 
 async function runTurn(run: string, job: RunJob): Promise<string> {
@@ -266,6 +290,8 @@ async function runTurn(run: string, job: RunJob): Promise<string> {
   try {
     // A conversation that is older than its session gets its earlier turns once, as context.
     const fresh = session.messages.length === 0;
+    const before = session.messages.length;
+    const started = Date.now();
     await session.prompt(fresh && job.history ? `${job.history}\n\n---\n\n${job.prompt}` : job.prompt);
     if (aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
     const usage = session.getContextUsage();
@@ -275,6 +301,8 @@ async function runTurn(run: string, job: RunJob): Promise<string> {
       usage: {
         ...(model ? { model: `${model.provider}/${model.id}` } : {}),
         thinking: session.thinkingLevel,
+        ...spent(session.messages.slice(before)),
+        durationMs: Date.now() - started,
         ...(usage ? { tokens: usage.tokens ?? undefined, contextWindow: usage.contextWindow, percent: usage.percent ?? undefined } : {}),
       },
     });

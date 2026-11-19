@@ -25,6 +25,9 @@ export interface NavProps {
   page: string;
   mode: NavMode;
   selected: string | null;
+  /** The development session open on the Code page, if any. */
+  session: string | null;
+  onSession(id: string | null): void;
   connection: Connection;
   onPage(key: string): void;
   onSelect(id: string | null): void;
@@ -39,7 +42,7 @@ export interface NavProps {
 }
 
 /** The sidebar: the workspace's pages, then the conversations, like a session list. Folds to a rail of icons. */
-export function Nav({ state, pages, page, mode, selected, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet, onLanguage }: NavProps) {
+export function Nav({ state, pages, page, mode, selected, session, onSession, connection, onPage, onSelect, onFold, onPalette, onConversations, sheet, onLanguage }: NavProps) {
   const rename = (conversation: Conversation) => {
     const title = window.prompt(t("nav.rename"), conversation.title);
     if (title && title.trim() && title.trim() !== conversation.title) api.updateConversation(conversation.id, { title }).catch(() => {});
@@ -47,10 +50,15 @@ export function Nav({ state, pages, page, mode, selected, connection, onPage, on
   const archive = (conversation: Conversation) => {
     api.updateConversation(conversation.id, { archived: true }).then(() => { if (selected === conversation.id) onSelect(null); }).catch(() => {});
   };
-  const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0);
+  // Everyday conversations here; development sessions are listed under their projects in the Code group.
+  const daily = state.conversations.filter((conversation) => !conversation.projectId);
+  const waiting = daily.reduce((sum, conversation) => sum + conversation.attention, 0);
   const groups: Array<[string, PageDef[]]> = [
-    [t("nav.g.work"), pages.filter((item) => item.group === "work")], [t("nav.g.modules"), pages.filter((item) => item.group === "modules")], [t("nav.g.system"), pages.filter((item) => item.group === "system")],
+    [t("nav.g.work"), pages.filter((item) => item.group === "work")], [t("nav.g.modules"), pages.filter((item) => item.group === "modules")],
+    [t("nav.g.dev"), pages.filter((item) => item.group === "dev")], [t("nav.g.system"), pages.filter((item) => item.group === "system")],
   ];
+  const projects = (state.projects ?? []).filter((project) => project.trustedAt);
+  const sessionsIn = (projectId: string) => state.conversations.filter((conversation) => conversation.projectId === projectId).slice(0, 4);
 
   return (
     <nav className="nav" data-mode={mode} aria-label={t("nav.label")}>
@@ -80,6 +88,25 @@ export function Nav({ state, pages, page, mode, selected, connection, onPage, on
               </button>
             );
           })}
+          {items.some((item) => item.group === "dev") && mode === "full" && projects.map((project) => (
+            <div className="nav-project" key={project.id}>
+              <p className="nav-project-name" title={project.path}>{project.name}</p>
+              <ul className="conv-list">
+                {sessionsIn(project.id).map((conversation) => (
+                  <li key={conversation.id}>
+                    <button type="button" className="conv" aria-current={session === conversation.id ? "true" : undefined}
+                      onClick={() => onSession(conversation.id)} title={conversation.lastGoal ?? conversation.title}>
+                      <span className="st" aria-hidden="true">
+                        {conversation.attention > 0 ? <span className="mark" data-k="warm" /> : conversation.busy > 0 ? <span className="pulse" /> : <span className="mark dim" />}
+                      </span>
+                      <span className="ct">{conversation.title}</span>
+                      <span className="time">{when(conversation.updatedAt)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       ))}
 
@@ -90,8 +117,8 @@ export function Nav({ state, pages, page, mode, selected, connection, onPage, on
         <button type="button" className="icon-btn" aria-label={t("nav.newConversation")} title={t("nav.newConversation")} onClick={() => onSelect(null)}><Icon name="plus" /></button>
       </div>
       <ul className="conv-list">
-        {state.conversations.length === 0 && <li className="quiet small empty-list">{t("nav.noConversations")}</li>}
-        {state.conversations.map((conversation) => (
+        {daily.length === 0 && <li className="quiet small empty-list">{t("nav.noConversations")}</li>}
+        {daily.map((conversation) => (
           <li key={conversation.id}>
             <button type="button" className="conv" aria-current={selected === conversation.id ? "true" : undefined}
               onClick={() => onSelect(conversation.id)} onDoubleClick={() => rename(conversation)} title={conversation.lastGoal ?? conversation.title}>

@@ -170,4 +170,19 @@ CREATE TABLE core_automations (
 ) STRICT;
 ALTER TABLE core_runs ADD COLUMN automation_id TEXT CHECK (automation_id IS NULL OR length(automation_id) BETWEEN 1 AND 64);
 `,
+}, {
+  // Projects (projects.ts): folders Alfred may work in. A conversation in one is a development session, fixed at creation.
+  id: "core:9",
+  sql: `
+CREATE TABLE core_projects (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+  path TEXT NOT NULL CHECK (length(path) BETWEEN 1 AND 1024 AND substr(path, 1, 1) = '/'),
+  created_at TEXT NOT NULL,
+  trusted_at TEXT,
+  removed_at TEXT
+) STRICT;
+CREATE UNIQUE INDEX core_projects_path ON core_projects(path) WHERE removed_at IS NULL;
+ALTER TABLE core_conversations ADD COLUMN project_id TEXT CHECK (project_id IS NULL OR length(project_id) BETWEEN 1 AND 64);
+`,
 }];

@@ -178,6 +178,7 @@ export function createWorkerEngine(options: WorkerEngineOptions): WorkerEngine {
         tools: request.tools.map((tool) => ({ name: tool.name, label: tool.label, description: tool.description, parameters: tool.parameters })),
         ...(request.model ? { model: request.model } : {}),
         ...(request.thinking ? { thinking: request.thinking } : {}),
+        ...(request.workspace ? { workspace: request.workspace } : {}),
       };
       const worker = acquire(request.thread);
       running.set(request.thread, { worker, run });

@@ -6,6 +6,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { appendEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
+import { getProject, ProjectError } from "./projects.ts";
 import type { World } from "./world.ts";
 
 export interface Conversation {
@@ -24,6 +25,8 @@ export interface Conversation {
   attention: number;
   /** The newest request in it, for a list preview. */
   lastGoal: string | null;
+  /** The project it works in (a development session); null for an everyday conversation. Fixed at creation. */
+  projectId: string | null;
 }
 
 export class ConversationError extends Error {
@@ -58,16 +61,30 @@ function toConversation(row: Record<string, unknown>): Conversation {
     archivedAt: row.archived_at as string | null, model: row.model as string | null, thinking: row.thinking as ThinkingLevel | null,
     busy: row.busy as number, attention: row.attention as number,
     lastGoal: row.last_goal ? String(row.last_goal).slice(0, 120) : null,
+    projectId: (row.project_id as string | null) ?? null,
   };
 }
 
 /** Only inside a world transaction. */
-export function createConversation(db: DatabaseSync, input: { title: string; now: number }): string {
+export function createConversation(db: DatabaseSync, input: { title: string; now: number; projectId?: string }): string {
   const id = newId();
-  db.prepare("INSERT INTO core_conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)")
-    .run(id, input.title.slice(0, 200), iso(input.now), iso(input.now));
-  appendEvent(db, { kind: "conversation.created", subject: `conversation:${id}`, payload: { title: input.title.slice(0, 200) }, runId: null, now: input.now });
+  db.prepare("INSERT INTO core_conversations (id, title, created_at, updated_at, project_id) VALUES (?, ?, ?, ?, ?)")
+    .run(id, input.title.slice(0, 200), iso(input.now), iso(input.now), input.projectId ?? null);
+  appendEvent(db, {
+    kind: "conversation.created", subject: `conversation:${id}`, runId: null, now: input.now,
+    payload: { title: input.title.slice(0, 200), ...(input.projectId ? { projectId: input.projectId } : {}) },
+  });
   return id;
+}
+
+/** A development session in a trusted project, created before its first message (an everyday conversation is
+ * created by its first message instead). The title comes from what the user is about to ask. */
+export function startSession(world: World, input: { projectId: string; title: string; now?: number }): Conversation {
+  const now = input.now ?? Date.now();
+  const project = getProject(world, input.projectId);
+  if (!project.trustedAt) throw new ProjectError("untrusted");
+  const id = world.tx((db) => createConversation(db, { title: titleFrom(input.title), now, projectId: project.id }));
+  return getConversation(world, id);
 }
 
 /** Only inside a world transaction: the conversation exists and has just been active. */

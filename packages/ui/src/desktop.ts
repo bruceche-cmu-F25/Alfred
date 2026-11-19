@@ -21,6 +21,8 @@ export interface DesktopBridge {
   setInteractive(interactive: boolean): void;
   /** Presence window: the welcome bubble closed; `opened` when the user clicked through. */
   welcomeDone(noticeId: string, opened: boolean): void;
+  /** Main window: the system's folder picker; the chosen folder's path, or null. Absent in older app builds. */
+  pickFolder?(): Promise<string | null>;
 }
 
 declare global {

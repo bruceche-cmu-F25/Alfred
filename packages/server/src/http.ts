@@ -17,14 +17,15 @@ import {
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, requestCancel, resumeRun, submitRun, updateConversation,
   deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
+  addProject, getProject, listProjects, removeProject, startSession, trustProject,
 } from "@alfred/core";
 import { applyStep, invokeOp } from "@alfred/module-kit";
 import type {
-  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
+  AddProjectRequest, ConversationDetail, CoreEvent, ErrorResponse, StartSessionRequest, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalRequest, ProposalResponse, PushInfo, PushResult,
   RemoteResponse, RespondRequest, ReviseRequest, NewAutomationRequest, SettingsRequest, StateResponse, SteerRequest, SubmitRunRequest, UpdateConversationRequest,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
-import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, type Home } from "./home.ts";
+import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE, type Home } from "./home.ts";
 import { handleConnections } from "./connections-http.ts";
 import type { GoogleConnections } from "./google.ts";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
@@ -112,11 +113,12 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
   const message = error instanceof Error ? error.message : "Request failed";
   const code = (error as { code?: unknown }).code;
   if (name === "SettingsError") return { status: 400, body: { error: message } };
-  if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
   if (name === "AutomationError") return { status: code === "missing" ? 404 : 400, body: { error: message } };
+  if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
   if (name === "PairingError") return { status: 400, body: { error: message, code: String(code) } };
   if (name === "RemoteError") return { status: 409, body: { error: message } };
   if (name === "PushError") return { status: 400, body: { error: message } };
+  if (name === "ProjectError") return { status: code === "missing" ? 404 : code === "untrusted" ? 409 : 400, body: { error: message, code: String(code) } };
   if (name === "ProposalStateError") {
     const state = (error as { state?: string }).state;
     return { status: state === "missing" ? 404 : 409, body: { error: message, code: state ?? "state" } };
@@ -155,7 +157,18 @@ function state(home: Home): StateResponse {
     proposals: listOpenProposals(home.world),
     settings: getSettings(home.world),
     automations: listAutomations(home.world),
+    projects: listProjects(home.world),
   };
+}
+
+/** The profile a new run in this conversation gets: a development session's, or the assistant's. A session whose
+ * project was removed or is no longer trusted takes no new requests. */
+function profileFor(home: Home, conversationId: string | undefined | null): string {
+  if (!conversationId) return ASSISTANT_PROFILE;
+  const { projectId } = getConversation(home.world, conversationId);
+  if (!projectId) return ASSISTANT_PROFILE;
+  if (!getProject(home.world, projectId).trustedAt) throw new HttpError(409, "This project is not trusted", "untrusted");
+  return DEVELOPER_PROFILE;
 }
 
 function conversationDetail(home: Home, id: string): ConversationDetail {
@@ -302,9 +315,30 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   if (method === "POST" && path === "/api/runs") {
     const body = await readJson<SubmitRunRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.goal !== "string") throw new HttpError(400, "requestId and goal are required");
-    const result = submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile: ASSISTANT_PROFILE, conversationId: body.conversationId, context: body.context });
+    const profile = profileFor(home, body.conversationId);
+    // A session is its own page: what page the user had open is not its context.
+    const context = profile === DEVELOPER_PROFILE ? undefined : body.context;
+    const result = submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile, conversationId: body.conversationId, context });
     home.kick();
     return send(res, result.replayed ? 200 : 202, result);
+  }
+  if (method === "POST" && path === "/api/conversations") {
+    const body = await readJson<StartSessionRequest>(req);
+    if (typeof body.projectId !== "string" || typeof body.title !== "string" || !body.title.trim()) throw new HttpError(400, "projectId and title are required");
+    return send(res, 201, startSession(home.world, { projectId: body.projectId, title: body.title }));
+  }
+  // Projects: only from the home node's own machine (dispatch refuses other devices).
+  if (method === "POST" && path === "/api/projects") {
+    const body = await readJson<AddProjectRequest>(req);
+    if (typeof body.path !== "string") throw new HttpError(400, "path is required");
+    if (body.name !== undefined && typeof body.name !== "string") throw new HttpError(400, "name must be text");
+    return send(res, 200, addProject(home.world, { path: body.path, name: body.name }));
+  }
+  const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
+  if (project && method === "POST") {
+    if (project[2] === "trust") return send(res, 200, trustProject(home.world, project[1]));
+    removeProject(home.world, project[1]);
+    return send(res, 200, {});
   }
   const conversation = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})$/.exec(path);
   if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
@@ -420,7 +454,7 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
       const goal = userLocale(home.world) === "zh"
         ? `修改你之前的提议「${superseded.title}」：${body.text.trim()}\n原来的提议：${superseded.summary}\n步骤：${steps.join("；")}\n请按修改意见重新提议（用 propose），不要直接改。`
         : `Change your earlier proposal "${superseded.title}": ${body.text.trim()}\nThe proposal was: ${superseded.summary}\nSteps: ${steps.join("; ")}\nPropose again with the change (use propose); do not make the changes directly.`;
-      const { run } = submitRun(home.world, { requestId: `${body.requestId}.revise`, goal, profile: ASSISTANT_PROFILE, conversationId: superseded.conversationId ?? undefined });
+      const { run } = submitRun(home.world, { requestId: `${body.requestId}.revise`, goal, profile: profileFor(home, superseded.conversationId), conversationId: superseded.conversationId ?? undefined });
       return { proposal: superseded, run };
     }));
     if (decision === "revise") home.kick();
@@ -451,6 +485,8 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
     if (!peer.local) {
       if (!peer.device) throw new HttpError(401, "This device is not paired with Alfred yet", "unpaired");
       if (path.startsWith("/api/connections")) throw new HttpError(403, LOCAL_ONLY, "local_only");
+      // A folder path means something only on the home node's machine, and trusting one lets Alfred read it.
+      if (path.startsWith("/api/projects") && req.method === "POST") throw new HttpError(403, LOCAL_ONLY, "local_only");
       if (path === "/api/events" && options.remote) {
         // Revoking ends the device's stream at once; its reconnect is refused.
         const id = peer.device.id;

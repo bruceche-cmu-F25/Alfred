@@ -8,6 +8,7 @@
  */
 import { withCoreContext } from "./context.ts";
 import { getConversation, type ThinkingLevel } from "./conversations.ts";
+import { getProject } from "./projects.ts";
 import { appendEvent, recordDomainEvent } from "./events.ts";
 import { newId } from "./ids.ts";
 import {
@@ -43,6 +44,17 @@ export interface RunProfile {
   tools: readonly RunTool[];
   /** Nobody is there to answer (an automation's run): it can never stop to ask, and external tools that would ask are refused. */
   unattended?: boolean;
+  /** For development sessions only: what the run may do in its project's folder. Set exactly when the conversation is in a project. */
+  workspace?: WorkspaceAccess;
+}
+/** What a development session may do in its project's folder. `read`: read, search and list its files. */
+export type WorkspaceAccess = "read";
+/** The folder a development session works in, for the engine. */
+export interface Workspace {
+  /** Absolute, on the home node. */
+  root: string;
+  name: string;
+  access: WorkspaceAccess;
 }
 export interface EngineRequest {
   /** A stable key for the conversation, for engines that keep a session per conversation. */
@@ -63,6 +75,8 @@ export interface EngineRequest {
   /** The conversation's chosen model (`provider/model`) and thinking level; absent for the engine's default. */
   model?: string;
   thinking?: ThinkingLevel;
+  /** A development session's project folder; absent for everyday conversations. */
+  workspace?: Workspace;
   /** What the turn ran on and how full its context is, once it ends. Optional for engines. */
   onUsage?(usage: TurnUsage): void;
 }
@@ -73,6 +87,13 @@ export interface TurnUsage {
   tokens?: number;
   contextWindow?: number;
   percent?: number;
+  /** This turn alone: tokens in and out, cache reads and writes, cost in dollars, and how long the model took. */
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cost?: number;
+  durationMs?: number;
 }
 /** A model an engine can run, for choosing one per conversation. */
 export interface EngineModel { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }
@@ -123,6 +144,15 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   const leaseMs = options.leaseMs ?? RUN_LEASE_MS;
   const profile = Object.hasOwn(options.profiles, run.profile) ? options.profiles[run.profile] : undefined;
   if (!profile) return finishRun(world, run.id, options.owner, { status: "failed", error: "unknown_profile" });
+  const conversation = getConversation(world, run.conversationId);
+  // A development session runs only with a workspace profile, and only while its project is there and trusted.
+  if (!!profile.workspace !== !!conversation.projectId) return finishRun(world, run.id, options.owner, { status: "failed", error: "wrong_profile" });
+  let workspace: Workspace | undefined;
+  if (conversation.projectId) {
+    const project = (() => { try { return getProject(world, conversation.projectId!); } catch { return null; } })();
+    if (!project?.trustedAt) return finishRun(world, run.id, options.owner, { status: "failed", error: "project_unavailable" });
+    workspace = { root: project.path, name: project.name, access: profile.workspace! };
+  }
 
   const context = { actor: "alfred" as const, run: { id: run.id, owner: options.owner } };
   const controller = new AbortController();
@@ -194,8 +224,8 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
       }
     },
   }));
-  const conversation = getConversation(world, run.conversationId);
   const request: EngineRequest = {
+    ...(workspace ? { workspace } : {}),
     ...(conversation.model ? { model: conversation.model } : {}),
     ...(conversation.thinking ? { thinking: conversation.thinking } : {}),
     onUsage: (usage) => note("usage", { ...usage }),

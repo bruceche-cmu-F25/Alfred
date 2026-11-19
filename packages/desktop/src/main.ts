@@ -399,6 +399,12 @@ function wireIpc(): void {
   ipcMain.on("welcome-done", (event, noticeId: unknown) => {
     if (fromOurPages(event) && typeof noticeId === "string") acknowledge(noticeId);
   });
+  // Adding a project: the user picks the folder in the system's own dialog, so the path is one they chose.
+  ipcMain.handle("pick-folder", async (event) => {
+    if (!sameOrigin(event.senderFrame?.url ?? "") || !main || event.sender !== main.webContents) return null;
+    const picked = await dialog.showOpenDialog(main, { properties: ["openDirectory", "createDirectory"], message: say("mac.pickProject") });
+    return picked.canceled ? null : picked.filePaths[0] ?? null;
+  });
 }
 
 // ---- lifecycle -----------------------------------------------------------

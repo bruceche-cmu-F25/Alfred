@@ -163,7 +163,8 @@ test("a device pairs with a one-time code, then reaches everything but credentia
     assert.equal(self.local, false);
     assert.equal(self.device.name, "Bruce's iPhone");
     assert.equal(self.device.via, OWNER);
-    for (const [path, body] of [["/api/connections", undefined], ["/api/remote", { enabled: false }], ["/api/remote/pairing", {}], [`/api/devices/${self.device.id}/revoke`, {}]] as const) {
+    for (const [path, body] of [["/api/connections", undefined], ["/api/remote", { enabled: false }], ["/api/remote/pairing", {}], [`/api/devices/${self.device.id}/revoke`, {}],
+      ["/api/projects", { path: "/tmp" }], ["/api/projects/abc/trust", {}]] as const) {
       const reply = await ask(ingress, path, { headers: as, body });
       assert.equal(reply.status, 403, path);
       assert.equal(reply.body.code, "local_only", path);

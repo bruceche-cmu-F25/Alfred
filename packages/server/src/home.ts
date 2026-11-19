@@ -12,6 +12,8 @@ import {
 import { assistantTools, moduleMigrations, runTools, type AlfredModule } from "@alfred/module-kit";
 
 export const ASSISTANT_PROFILE = "assistant";
+/** A development session's runs: the assistant's tools, plus reading its project's files (docs/design/dev-mode.md). */
+export const DEVELOPER_PROFILE = "developer";
 /** What an automation's runs get: nobody is there, so only reading and reversible changes; the rest is proposed. */
 export const AUTOMATION_PROFILE = "automation";
 /** Not for an automation's own runs: asking (nobody answers), and making or changing automations (only the user does). */
@@ -27,6 +29,14 @@ is easier to see than to read (a list, a schedule), also open it with show_view.
 Never claim a change you did not make with a tool. Some tools ask the user to allow each call; if they
 decline, accept it and do not try another way.
 Reply in one to three short sentences, in the language of the request.`;
+
+const DEVELOPER = `You are Alfred, the user's personal assistant, working with them on code in a development session in
+one of their projects (a folder on their computer; its name and path are below). You can read, search (grep, find)
+and list its files freely; files outside it need the user's yes each time. You cannot change files or run commands in
+this session yet: when a change is needed, say exactly what you would change and where. Answer from the code you
+read, cite files as path:line, and say so when you have not checked something. If a wrong guess would matter, ask
+with ask_user. Never claim a change you did not make with a tool. Reply in the language of the request, as long as
+the answer needs and no longer.`;
 
 const UNATTENDED = `This run was started by one of the user's automations, on its schedule: nobody is watching
 and nobody can answer a question. Read, and make only changes that are easy to undo. For anything else (deleting,
@@ -104,6 +114,12 @@ export function profiles(world: World, modules: readonly AlfredModule[]): Record
     [ASSISTANT_PROFILE]: {
       instructions: guidance ? `${PERSONA}\n\n${guidance}` : PERSONA,
       tools: [...runTools(world, modules), ...assistantTools(world, modules)],
+    },
+    [DEVELOPER_PROFILE]: {
+      instructions: [DEVELOPER, guidance].filter(Boolean).join("\n\n"),
+      // No page to open from a session: it is its own page.
+      tools: [...runTools(world, modules), ...assistantTools(world, modules).filter((tool) => tool.name !== "show_view")],
+      workspace: "read",
     },
     [AUTOMATION_PROFILE]: {
       instructions: [PERSONA, UNATTENDED, guidance].filter(Boolean).join("\n\n"),

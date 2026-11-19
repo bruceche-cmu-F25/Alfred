@@ -399,3 +399,37 @@ test("Alfred can list, make and change automations when asked; an automation's o
     home.close();
   }
 });
+
+test("a development session: add and trust a folder, start a session, and its runs read that folder", async () => {
+  const seen: Array<{ workspace?: unknown; context?: unknown; tools: string[] }> = [];
+  const coder: EnginePort = { async submit(request) { seen.push({ workspace: request.workspace, context: request.context, tools: request.tools.map((tool) => tool.name) }); return { reply: "It is in src/" }; } };
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine: coder, modules: [todoModule] });
+  const { server, base } = await start(home);
+  try {
+    const folder = mkdtempSync(join(tmpdir(), "alfred-code-"));
+    const project = await (await post(base, "/api/projects", { path: folder, name: "Shop" })).json() as { id: string; trustedAt: string | null; path: string };
+    assert.equal(project.trustedAt, null);
+    // Untrusted: no session yet.
+    assert.equal((await post(base, "/api/conversations", { projectId: project.id, title: "Where is checkout?" })).status, 409);
+    assert.ok(((await (await post(base, `/api/projects/${project.id}/trust`, {})).json()) as { trustedAt: string }).trustedAt);
+    const created = await post(base, "/api/conversations", { projectId: project.id, title: "Where is checkout?" });
+    assert.equal(created.status, 201);
+    const session = await created.json() as { id: string; projectId: string };
+    assert.equal(session.projectId, project.id);
+
+    const submitted = await (await post(base, "/api/runs", { requestId: "dev-1", goal: "Where is checkout?", conversationId: session.id, context: { view: "todo.list" } })).json() as SubmitRunResponse;
+    assert.equal(submitted.run.profile, "developer");
+    await home.idle();
+    const detail = await (await fetch(`${base}/api/conversations/${session.id}`)).json() as ConversationDetail;
+    assert.equal(detail.runs[0].state, "completed");
+    assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", access: "read" });
+    assert.equal(seen[0].context, undefined, "a session is not asked from a page");
+    assert.ok(!seen[0].tools.includes("show_view"));
+
+    const state = await (await fetch(`${base}/api/state`)).json() as StateResponse;
+    assert.deepEqual(state.projects.map((candidate) => candidate.name), ["Shop"]);
+  } finally {
+    server.close();
+    home.close();
+  }
+});

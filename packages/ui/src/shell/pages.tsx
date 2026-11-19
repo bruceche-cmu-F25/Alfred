@@ -7,6 +7,7 @@ import type { Area, StateResponse, ViewContext } from "@alfred/protocol";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
 import { Automations } from "../Automations.tsx";
 import { automationTitle, whenText } from "../automationText.ts";
+import { Dev, sessionsOf, type DevProps } from "../Dev.tsx";
 import { Inbox } from "../Inbox.tsx";
 import { Settings } from "../Settings.tsx";
 import { Todos } from "../Todos.tsx";
@@ -25,6 +26,8 @@ export interface PageProps {
   focus: string | null;
   onFocused(): void;
   openConversation(conversationId: string, runId?: string): void;
+  /** The Code page: its open session and what a conversation needs. */
+  dev: Omit<DevProps, "state">;
 }
 
 export interface PageDef {
@@ -34,8 +37,10 @@ export interface PageDef {
   icon: IconName;
   /** Category colour slot (tokens.css `data-k`). */
   k: string;
-  /** Sidebar group: the daily workspace, the other modules, or the app itself (settings). */
-  group: "work" | "modules" | "system";
+  /** Sidebar group: the daily workspace, the other modules, coding, or the app itself (settings). */
+  group: "work" | "modules" | "dev" | "system";
+  /** The page draws its own top (no title and summary above it), and Alfred's panel steps aside for it. */
+  bare?: boolean;
   /** A number for the sidebar, or nothing. */
   badge?(snapshot: unknown, state: StateResponse): number | undefined;
   /** One plain line under the page title: the facts. It also tells Alfred what you were looking at when you ask. */
@@ -121,6 +126,12 @@ const PAGES: PageDef[] = [
       "sug.auto.weekly", "sug.auto.which",
     ],
     render: ({ state, openConversation }) => <Automations state={state} onOpenConversation={openConversation} />,
+  },
+  {
+    key: "core.dev", get title() { return t("page.dev"); }, icon: "code", k: "violet", group: "dev", bare: true,
+    badge: (_, state) => sessionsOf(state).reduce((sum, conversation) => sum + conversation.attention, 0) || undefined,
+    summary: (_, state) => state.projects?.length ? t("page.dev.summary", { n: state.projects.length }) : t("page.dev.none"),
+    render: ({ state, dev }) => <Dev state={state} {...dev} />,
   },
   {
     key: "core.settings", get title() { return t("page.settings"); }, icon: "gear", k: "gray", group: "system",

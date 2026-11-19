@@ -3,10 +3,58 @@ import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, Think
 import { ApiError, api } from "./api.ts";
 import { t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
+import { Icon } from "./shell/icons.tsx";
 
-const WORKING: Partial<Record<Run["state"], Key>> = {
-  queued: "run.queued", running: "run.running", cancelling: "run.cancelling",
-};
+const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
+
+const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+/** 950, 1.2k, 34k, 1.3M */
+const compact = (n: number) => n < 1000 ? String(Math.round(n)) : n < 10_000 ? `${(n / 1000).toFixed(1)}k` : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`;
+const dollars = (n: number) => n <= 0 ? null : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`;
+const took = (ms: number) => ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+
+interface Spent { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
+const spent = (events: CoreEvent[]): Spent => events.reduce((sum, event) => ({
+  input: sum.input + num(event.payload.input), output: sum.output + num(event.payload.output),
+  cacheRead: sum.cacheRead + num(event.payload.cacheRead), cacheWrite: sum.cacheWrite + num(event.payload.cacheWrite),
+  cost: sum.cost + num(event.payload.cost),
+}), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 });
+/** The lines of a usage tooltip: tokens in and out, cache, cost. */
+const spentLines = (total: Spent) => [
+  `${t("stats.in")} ${total.input.toLocaleString()}`, `${t("stats.out")} ${total.output.toLocaleString()}`,
+  ...(total.cacheRead > 0 ? [`${t("stats.cacheRead")} ${total.cacheRead.toLocaleString()}`] : []),
+  ...(total.cacheWrite > 0 ? [`${t("stats.cacheWrite")} ${total.cacheWrite.toLocaleString()}`] : []),
+  ...(total.cost > 0 ? [`${t("stats.cost")} $${total.cost.toFixed(4)}`] : []),
+];
+
+/** The current time, ticking each second while `on`. */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [on]);
+  return now;
+}
+
+/** Where a reply stands, shown by the dot beside it, and the one line on what it is doing while it works. */
+type Phase = "idle" | "busy" | "waiting" | "failed";
+function phase(run: Run, live: string | undefined, runSteps: Array<{ label: string; status: string }>): { dot: Phase; label: string | null } {
+  if (run.request) return { dot: "waiting", label: null };
+  switch (run.state) {
+    case "queued": return { dot: "busy", label: t("run.queued") };
+    case "cancelling": return { dot: "busy", label: t("run.cancelling") };
+    case "running": {
+      const step = runSteps.findLast((candidate) => candidate.status === "started");
+      if (step) return { dot: "busy", label: step.label };
+      return { dot: "busy", label: live ? null : t("run.thinking") };
+    }
+    case "failed": case "interrupted": return { dot: "failed", label: null };
+    default: return { dot: "idle", label: null };
+  }
+}
 
 /** Steps of a run, one line per tool call, at its latest status. */
 function steps(activity: CoreEvent[]): Array<{ id: string; label: string; about: string; status: string }> {
@@ -55,7 +103,7 @@ function Request({ run, request }: { run: Run; request: RunRequest }) {
   );
 }
 
-function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string }) {
+function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, latest }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string; latest: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = (action: () => Promise<unknown>) => {
@@ -63,49 +111,70 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy }
     setError(null);
     action().catch((reason: Error) => setError(reason.message)).finally(() => setBusy(false));
   };
-  const working = WORKING[run.state];
   const outcome = run.outcome;
   const runSteps = steps(activity);
   const answers = activity.filter((event) => event.kind === "run.answered");
   const added = activity.filter((event) => event.kind === "run.steered");
   const usage = activity.filter((event) => event.kind === "run.usage").at(-1);
+  const working = BUSY.has(run.state);
+  const now = useNow(working);
+  const { dot, label } = phase(run, live, runSteps);
+  const elapsed = working ? Math.max(0, now - Date.parse(run.createdAt)) : num(usage?.payload.durationMs) || Math.max(0, Date.parse(run.updatedAt) - Date.parse(run.createdAt));
+
+  const model = typeof usage?.payload.model === "string" ? usage.payload.model : null;
+  const total = usage ? spent([usage]) : null;
+  const meta = !working && usage ? [
+    ...(model ? [model.split("/").at(-1)!] : []),
+    took(elapsed),
+    ...(total && (total.input || total.output) ? [`↑${compact(total.input)} ↓${compact(total.output)}`] : []),
+    ...(total && dollars(total.cost) ? [dollars(total.cost)!] : []),
+  ] : [];
+  const metaTitle = usage ? [model, `${t("stats.time")} ${took(elapsed)}`, ...(total && (total.input || total.output) ? spentLines(total) : [])].filter(Boolean).join("\n") : undefined;
+
   return (
     <li className="turn" data-highlighted={highlighted || undefined} id={`run-${run.id}`}>
       {askedOn && <p className="asked-on">{t("conv.askedFrom", { page: askedOn })}</p>}
       {/* An automation's run: nobody said anything; say which automation started it, and when. */}
       {startedBy ? <p className="asked-on auto-from" title={run.goal}>{startedBy}</p> : <p className="said">{run.goal}</p>}
       {added.map((event) => <p className="said added" key={event.id}>{String(event.payload.text)}</p>)}
-      <div className="reply" data-state={run.state}>
-        {runSteps.length > 0 && (
-          <ol className="steps" aria-label={t("run.steps")}>
-            {runSteps.map((step) => (
-              <li key={step.id} data-status={step.status}><span aria-hidden="true">{STEP_MARK[step.status] ?? "·"}</span> {step.label}{step.about ? `：${step.about}` : ""}</li>
+      <div className="reply-row">
+        <span className="turn-dot" data-phase={dot} data-latest={latest || undefined} aria-hidden="true" />
+        <div className="reply-col">
+          <div className="reply" data-state={run.state}>
+            {runSteps.length > 0 && (
+              <ol className="steps" aria-label={t("run.steps")}>
+                {runSteps.map((step) => (
+                  <li key={step.id} data-status={step.status}><span aria-hidden="true">{STEP_MARK[step.status] ?? "·"}</span> {step.label}{step.about ? `：${step.about}` : ""}</li>
+                ))}
+              </ol>
+            )}
+            {answers.map((event) => (
+              <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? t(event.payload.answer === "allow" ? "run.allowed" : "run.denied") : String(event.payload.answer)}</p>
             ))}
-          </ol>
-        )}
-        {answers.map((event) => (
-          <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? t(event.payload.answer === "allow" ? "run.allowed" : "run.denied") : String(event.payload.answer)}</p>
-        ))}
-        {run.request && <Request run={run} request={run.request} />}
-        {working && !live && <p className="working"><span className="pulse" aria-hidden="true" />{t(working)}…</p>}
-        {live && !outcome && <p className="reply-text live">{live}</p>}
-        {outcome?.reply && <p className="reply-text">{outcome.reply}</p>}
-        {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
-        {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
-        {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}
-        {receipts.length > 0 && (
-          <ul className="receipts" aria-label={t("run.receipts")}>
-            {receipts.map((event) => <li key={event.id}>{describeReceipt(event)}</li>)}
-          </ul>
-        )}
-        {(run.state === "queued" || run.state === "running" || run.state === "interrupted" || run.request) && (
-          <div className="turn-actions">
-            {run.state === "interrupted" && <button type="button" disabled={busy} onClick={() => act(() => api.resume(run.id))}>{t("common.continue")}</button>}
-            <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.cancel(run.id))}>{t("common.cancel")}</button>
+            {run.request && <Request run={run} request={run.request} />}
+            {working && !run.request && (label || !live) && (
+              <p className="working" role="status"><span className="working-label">{label ?? t("run.writing")}</span><span className="elapsed">{took(elapsed).replace(/\.\d/, "")}</span></p>
+            )}
+            {live && !outcome && <p className="reply-text live">{live}</p>}
+            {outcome?.reply && <p className="reply-text">{outcome.reply}</p>}
+            {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
+            {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
+            {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}
+            {receipts.length > 0 && (
+              <ul className="receipts" aria-label={t("run.receipts")}>
+                {receipts.map((event) => <li key={event.id}>{describeReceipt(event)}</li>)}
+              </ul>
+            )}
+            {(run.state === "queued" || run.state === "running" || run.state === "interrupted" || run.request) && (
+              <div className="turn-actions">
+                {run.state === "interrupted" && <button type="button" disabled={busy} onClick={() => act(() => api.resume(run.id))}>{t("common.continue")}</button>}
+                <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.cancel(run.id))}>{t("common.cancel")}</button>
+              </div>
+            )}
           </div>
-        )}
-        {usage?.payload.model ? <p className="run-meta">{String(usage.payload.model)}</p> : null}
-        {error && <p className="problem small" role="alert">{error}</p>}
+          {meta.length > 0 && <p className="run-meta" title={metaTitle}>{meta.map((part) => <span key={part}>{part}</span>)}</p>}
+          {error && <p className="problem small" role="alert">{error}</p>}
+        </div>
       </div>
     </li>
   );
@@ -114,35 +183,79 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy }
 const THINKING: Array<[ThinkingLevel | "", Key]> = [["", "think.default"], ["off", "think.off"], ["low", "think.low"], ["medium", "think.medium"], ["high", "think.high"]];
 let modelList: Promise<EngineModel[]> | null = null;
 
-/** The conversation's model and thinking level, and how full its context is. Unset means Pi's defaults. */
-function Settings({ detail }: { detail: ConversationDetail }) {
+/** The top of a conversation: its title and how much it has used. Nothing to change here; that is under the composer. */
+function ConversationHead({ title, detail }: { title: string; detail: ConversationDetail | null }) {
+  const usages = detail ? Object.values(detail.activity).flat().filter((event) => event.kind === "run.usage").sort((a, b) => a.seq - b.seq) : [];
+  const usage = usages.at(-1);
+  const percent = typeof usage?.payload.percent === "number" ? Math.round(usage.payload.percent) : null;
+  return (
+    <header className="conversation-head">
+      <h1>{title}</h1>
+      <Stats total={spent(usages)} percent={percent} window={num(usage?.payload.contextWindow)} />
+    </header>
+  );
+}
+
+/** Under the composer: what the next turn runs on, the conversation's model and thinking level. Unset means Pi's
+ * defaults. A new conversation has none to set until its first message creates it. */
+function ComposerBar({ conversation, onError }: { conversation: ConversationDetail["conversation"] | undefined; onError(message: string | null): void }) {
   const [models, setModels] = useState<EngineModel[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const exists = !!conversation;
   useEffect(() => {
+    if (!exists) return;
     modelList ??= api.models().then((response) => response.models).catch(() => { modelList = null; return []; });
     void modelList.then(setModels);
-  }, []);
-  const { conversation } = detail;
+  }, [exists]);
+  if (!conversation) return null;
   const change = (patch: { model?: string | null; thinking?: ThinkingLevel | null }) => {
-    setError(null);
-    api.updateConversation(conversation.id, patch).catch((reason: Error) => setError(reason.message));
+    onError(null);
+    api.updateConversation(conversation.id, patch).catch((reason: Error) => onError(reason.message));
   };
-  const usage = Object.values(detail.activity).flat().filter((event) => event.kind === "run.usage").sort((a, b) => a.seq - b.seq).at(-1);
-  const percent = typeof usage?.payload.percent === "number" ? Math.round(usage.payload.percent) : null;
   const known = new Set(models.map((model) => `${model.provider}/${model.id}`));
   return (
-    <div className="conversation-settings">
-      <select aria-label={t("conv.model")} value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
-        <option value="">{t("conv.defaultModel")}</option>
-        {conversation.model && !known.has(conversation.model) && <option value={conversation.model}>{conversation.model}</option>}
-        {models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name} · {model.provider}</option>)}
-      </select>
-      <select aria-label={t("conv.thinking")} value={conversation.thinking ?? ""} onChange={(event) => change({ thinking: (event.target.value || null) as ThinkingLevel | null })}>
-        {THINKING.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
-      </select>
-      {percent !== null && <span className="context-usage" title={`${String(usage?.payload.tokens ?? "")} tokens`}>{t("conv.context", { n: percent })}</span>}
-      {error && <span className="problem small">{error}</span>}
-    </div>
+    <>
+      <label className="pick" title={t("conv.model")}>
+        <Icon name="model" />
+        <select aria-label={t("conv.model")} value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
+          <option value="">{t("conv.defaultModel")}</option>
+          {conversation.model && !known.has(conversation.model) && <option value={conversation.model}>{conversation.model.split("/").at(-1)}</option>}
+          {models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name} · {model.provider}</option>)}
+        </select>
+      </label>
+      <label className="pick" title={t("conv.thinking")}>
+        <Icon name="bulb" />
+        <select aria-label={t("conv.thinking")} value={conversation.thinking ?? ""} onChange={(event) => change({ thinking: (event.target.value || null) as ThinkingLevel | null })}>
+          {THINKING.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
+        </select>
+      </label>
+    </>
+  );
+}
+
+/** How much the conversation has used, after pi web: tokens in and out, cost, and how full the context is. */
+function Stats({ total, percent, window }: { total: Spent; percent: number | null; window: number }) {
+  if (!total.input && !total.output && percent === null) return null;
+  const cost = dollars(total.cost);
+  const level = percent === null ? undefined : percent > 90 ? "full" : percent > 70 ? "high" : undefined;
+  const title = [
+    ...(total.input || total.output ? spentLines(total) : []),
+    ...(percent !== null && window ? [t("stats.context", { n: percent, window: compact(window) })] : []),
+  ].join("\n");
+  return (
+    <span className="conv-stats" role="group" aria-label={t("stats.label")} title={title}>
+      {total.input > 0 && <span>↑{compact(total.input)}</span>}
+      {total.output > 0 && <span>↓{compact(total.output)}</span>}
+      {cost && <span>{cost}</span>}
+      {percent !== null && (
+        <span className="ctx" data-level={level}>
+          <svg viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="7" cy="7" r="5.5" />
+            <circle cx="7" cy="7" r="5.5" pathLength="100" strokeDasharray={`${Math.max(percent, 2)} 100`} transform="rotate(-90 7 7)" />
+          </svg>
+          {percent}%
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -233,10 +346,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
 
   return (
     <section className="conversation" aria-label={detail?.conversation.title ?? t("conv.new")}>
-      <header className="conversation-head">
-        <h1>{id ? detail?.conversation.title ?? "…" : t("conv.new")}</h1>
-        {detail && <Settings detail={detail} />}
-      </header>
+      <ConversationHead title={id ? detail?.conversation.title ?? "…" : t("conv.new")} detail={detail} />
       {!id || runs.length === 0 ? (
         <div className="empty">
           <p className="empty-title">{t("conv.emptyTitle")}</p>
@@ -246,7 +356,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         <ol className="turns" ref={list}>
           {runs.map((run, index) => (
             <Turn key={run.id} run={run} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
-              live={live[run.id]} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} />
+              live={live[run.id]} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />
           ))}
         </ol>
       )}
@@ -265,9 +375,13 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
           aria-label={t("composer.label")}
           maxLength={8000}
         />
-        <button type="submit" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
-        </button>
+        <div className="composer-bar">
+          <ComposerBar conversation={detail?.conversation} onError={setError} />
+          <span className="grow" />
+          <button type="submit" className="send" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
+          </button>
+        </div>
       </form>
       {error && <p className="problem small composer-error" role="alert">{error}</p>}
     </section>

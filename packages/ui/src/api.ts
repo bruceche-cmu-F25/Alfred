@@ -4,7 +4,7 @@
 import type {
   Automation, Schedule,
   Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
-  PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
+  Project, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
 import { t } from "./i18n/dict.ts";
@@ -76,6 +76,11 @@ export const api = {
   /** Words into the run now working; rejects with 409 when it is not. */
   steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),
   models: () => call<ModelsResponse>("/api/models"),
+  /** Only on the home node's machine. */
+  addProject: (path: string) => post<Project>("/api/projects", { path }),
+  trustProject: (id: string) => post<Project>(`/api/projects/${id}/trust`, {}),
+  /** A development session in a trusted project; its first message is then submitted to it. */
+  startSession: (projectId: string, title: string) => post<Conversation>("/api/conversations", { projectId, title }),
   respond: (runId: string, requestId: string, answer: string) => post<Run>(`/api/runs/${runId}/respond`, { requestId, answer }),
   run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
   cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, {}),

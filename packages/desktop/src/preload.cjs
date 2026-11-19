@@ -26,4 +26,6 @@ contextBridge.exposeInMainWorld("alfredDesktop", {
   openMain: (runId) => ipcRenderer.send("open-main", typeof runId === "string" ? runId : null),
   setInteractive: (interactive) => ipcRenderer.send("set-interactive", Boolean(interactive)),
   welcomeDone: (noticeId, opened) => ipcRenderer.send("welcome-done", String(noticeId), Boolean(opened)),
+  /** Main window: the system's folder picker; resolves with the chosen folder's path, or null. */
+  pickFolder: () => ipcRenderer.invoke("pick-folder"),
 });

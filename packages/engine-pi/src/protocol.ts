@@ -4,7 +4,7 @@
  * they write the world under the run's lease. So a tool call travels to the
  * home node and its result comes back. One worker handles one run at a time.
  */
-import type { EngineRequest } from "@alfred/core";
+import type { EngineRequest, Workspace } from "@alfred/core";
 
 /** A tool as the worker sees it: its description only. */
 export interface ToolSpec {
@@ -26,10 +26,16 @@ export interface RunJob {
   /** `provider/model` and thinking level for this conversation; absent for Pi's defaults. */
   model?: string;
   thinking?: string;
+  /** A development session's project folder: the session works there, with the file tools its access allows. */
+  workspace?: Workspace;
 }
 
 export interface ModelInfo { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }
-export interface UsageInfo { model?: string; thinking?: string; tokens?: number; contextWindow?: number; percent?: number }
+export interface UsageInfo {
+  model?: string; thinking?: string; tokens?: number; contextWindow?: number; percent?: number;
+  /** This turn alone: tokens in and out, cache reads and writes, cost in dollars, and how long it took. */
+  input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: number; durationMs?: number;
+}
 
 export type ExternalStep = { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined" };
 
