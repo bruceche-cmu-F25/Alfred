@@ -6,6 +6,7 @@ import { t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
 import { Diff } from "./Diff.tsx";
 import { Linked } from "./Linked.tsx";
+import { Markdown } from "./Markdown.tsx";
 import { Icon } from "./shell/icons.tsx";
 
 const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
@@ -163,8 +164,8 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
             {working && !run.request && (label || !live) && (
               <p className="working" role="status"><span className="working-label">{label ?? t("run.writing")}</span><span className="elapsed">{took(elapsed).replace(/\.\d/, "")}</span></p>
             )}
-            {live && !outcome && <p className="reply-text live">{live}</p>}
-            {outcome?.reply && <p className="reply-text"><Linked text={outcome.reply} /></p>}
+            {live && !outcome && <Markdown className="reply-text live" text={live} />}
+            {outcome?.reply && <Markdown className="reply-text" text={outcome.reply} />}
             {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
             {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
             {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}

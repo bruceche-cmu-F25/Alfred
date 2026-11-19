@@ -30,6 +30,7 @@
     "./welcome": "./src/welcome.ts",
     "./notice": "./src/noticeText.ts",
     "./figure": "./src/entity/tesseract.js",
-    "./i18n": "./src/i18n/dict.ts"
+    "./i18n": "./src/i18n/dict.ts",
+    "./markdown": "./src/markdown.ts"
   }
 }

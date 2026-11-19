@@ -7,6 +7,7 @@
  */
 import type { AwayDigest, Notice, Proposal, Run, StateResponse } from "@alfred/protocol";
 import { t, type Key } from "../i18n/index.ts";
+import { plainText } from "../markdown.ts";
 import { welcomeLines } from "../welcome.ts";
 
 export type InboxKind = "decide" | "result" | "away" | "remind";
@@ -49,7 +50,9 @@ export function inboxItems(state: StateResponse, userName: string | null = null)
       // A run that left a proposal is said by the proposal itself.
       if (runId && (state.proposals ?? []).some((proposal) => proposal.runId === runId)) continue;
       const status = notice.payload.status;
-      const summary = status === "failed" ? t("inbox.failed") : status === "cancelled" ? t("inbox.cancelled") : String(notice.payload.reply ?? t("inbox.done"));
+      // The notice carries the start of the reply, cut short: shown as plain text, since Markdown cut in the middle draws wrong.
+      const reply = typeof notice.payload.reply === "string" ? plainText(notice.payload.reply) : "";
+      const summary = status === "failed" ? t("inbox.failed") : status === "cancelled" ? t("inbox.cancelled") : reply || t("inbox.done");
       items.push({ id: `n:${notice.id}`, kind: "result", title: goal, summary, at: notice.createdAt, conversationId, runId, notice });
     } else if (notice.kind === "outbound") {
       // A change outside Alfred (an event, an email) after the user's yes: how it went. Unknown needs them to check.

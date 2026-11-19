@@ -234,15 +234,16 @@ html.desktop .fab { -webkit-app-region: no-drag; }
 .reply-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .reply { max-width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-radius: 5px 18px 18px 18px; background: var(--bubble); box-shadow: inset 0 0 0 1px var(--line-soft), 0 1px 2px #0000000a; color: var(--copy); }
 .reply[data-state="failed"], .reply[data-state="interrupted"] { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--now) 40%, transparent); }
-.reply-text { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
-.reply-text.live::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -3px; border-radius: 1px; background: var(--alf); animation: caret 1s steps(2, jump-none) infinite; }
+.reply-text { color: var(--ink); }
+/* The caret stands after the last words written so far: the end of the last paragraph, heading or list item. */
+:is(.reply-text.live > :is(p, .md-h):last-child, .reply-text.live > :is(ul, ol):last-child > li:last-child > :is(span, p):last-child)::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -3px; border-radius: 1px; background: var(--alf); animation: caret 1s steps(2, jump-none) infinite; }
 @keyframes caret { from { opacity: 1; } to { opacity: 0; } }
 /* While it works: what it is doing, in a slow shimmer, and for how long. */
 .working { display: flex; align-items: baseline; gap: 8px; color: var(--muted); font-size: .875rem; }
 .working-label { background: linear-gradient(90deg, var(--muted) 0 35%, var(--ink) 50%, var(--muted) 65% 100%) 0 0 / 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.2s linear infinite; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 .working .elapsed { font: .75rem var(--mono); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .working-label { animation: none; color: var(--copy); } .reply-text.live::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .working-label { animation: none; color: var(--copy); } .reply-text.live :is(p, .md-h, span)::after { animation: none; } }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: breathe 1.6s ease-in-out infinite; }
 .receipts { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; border-left: 2px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; font-size: .8125rem; color: var(--copy); }
 .receipts li::before { content: "✓ "; color: var(--accent); }

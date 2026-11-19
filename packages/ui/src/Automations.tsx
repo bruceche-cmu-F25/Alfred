@@ -3,6 +3,7 @@ import type { Automation, StateResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { automationTitle, scheduleText, whenText } from "./automationText.ts";
 import { Linked } from "./Linked.tsx";
+import { plainText } from "./markdown.ts";
 import { Icon } from "./shell/icons.tsx";
 import { t, type Key } from "./i18n/index.ts";
 
@@ -120,7 +121,7 @@ function AutomationRow({ automation, onOpenConversation }: { automation: Automat
         {automation.conversationId && automation.lastRun
           ? <button type="button" className="link" onClick={() => onOpenConversation(automation.conversationId!, automation.lastRun!.id)} aria-label={`${lastText(automation)} · ${t("auto.open")}`}>{lastText(automation)}</button>
           : <span>{lastText(automation)}</span>}
-        {automation.lastRun?.reply && <small><Linked text={automation.lastRun.reply} /></small>}
+        {automation.lastRun?.reply && <small><Linked text={plainText(automation.lastRun.reply)} /></small>}
       </div>
       <div className="auto-actions">
         <button type="button" className="switch" role="switch" aria-checked={automation.enabled} disabled={busy} aria-label={t("auto.toggle", { name: title })}

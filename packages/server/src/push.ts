@@ -14,6 +14,7 @@ import { join } from "node:path";
 import webpush from "web-push";
 import { listDevices, userLocale, type Outlet, type World } from "@alfred/core";
 import { translate, type Key } from "@alfred/ui/i18n";
+import { plainText } from "@alfred/ui/markdown";
 import type { Reach } from "./attention.ts";
 import type { SecretStore } from "./secrets.ts";
 
@@ -100,7 +101,9 @@ export function noticeMessage(notice: { id: string; kind: string; payload: Recor
   const status = notice.payload.status;
   if (status === "failed") return { ...base, title: say("mac.failed.title"), body: say("mac.goal", { goal }), url: at, ack: true };
   if (status === "cancelled") return { ...base, title: say("mac.cancelled.title"), body: say("mac.goal", { goal }), url: at, ack: true };
-  const reply = typeof notice.payload.reply === "string" && notice.payload.reply.trim() ? cut(notice.payload.reply.trim(), 200) : say("mac.done.body", { goal });
+  // A reply is written in Markdown; a notification shows it as plain text.
+  const said = typeof notice.payload.reply === "string" ? plainText(notice.payload.reply).trim() : "";
+  const reply = said ? cut(said, 200) : say("mac.done.body", { goal });
   return { ...base, title: "Alfred", body: reply, url: at, ack: true };
 }
 
