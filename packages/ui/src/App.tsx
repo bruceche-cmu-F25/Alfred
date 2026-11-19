@@ -262,7 +262,7 @@ export function App() {
   // A bare page (Code) takes the room Alfred's panel would; on a phone the panel is a sheet anyway.
   const bare = !!current?.bare;
   const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : bare ? "closed" : layout.alfred;
-  const size = widths(layout, viewport, alfredMode === "open");
+  const size = widths(layout, viewport, alfredMode === "open", desktop ? NAV.railMac : NAV.rail);
   /** The sidebar as drawn: its rail when the window has no room for it in full beside Alfred. */
   const navMode = size.navMode;
   const toggleNav = useCallback(() => {
