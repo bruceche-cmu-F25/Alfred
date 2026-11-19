@@ -25,10 +25,14 @@
  *   GET  /api/models                        ModelsResponse (models the engine can run)
  *   POST /api/ops/:op                       OpRequest -> OpResponse
  *   POST /api/notices/:id/(claim|present|acknowledge)   NoticeRequest -> Notice
+ *     (the home node hands each notice to one outlet, named in `claimedBy`; that outlet shows it and says `present`.
+ *      `claim` is how a device took one for itself before that; it is kept for those devices)
  *   POST /api/proposals/:id/(accept|decline)  ProposalRequest -> ProposalResponse (the user's decision; replays by request id)
  *   POST /api/proposals/:id/revise          ReviseRequest -> ProposalResponse (supersedes it; a new run in its conversation revises it)
  *   POST /api/settings                      SettingsRequest -> UserSettings (preferences that are not secrets; replays by request id)
  *   POST /api/presence                      PresenceRequest -> PresenceResponse
+ *   POST /api/outlets                       OutletReport -> {} (a window or the Mac's figure says what it sees; not recorded)
+ *   GET  /api/outlets                       OutletsResponse (which outlets have reported lately, and from which device)
  *   POST /api/projects                      AddProjectRequest -> Project (only on the home node's machine)
  *   POST /api/projects/:id/(trust|remove)   -> Project / {} (only on the home node's machine)
  *   (devices and pairing: see RemoteResponse below)
@@ -179,11 +183,40 @@ export interface Notice {
   state: NoticeState;
   createdAt: string;
   updatedAt: string;
+  /** The outlet it was handed to (docs/design/attention.md): the one that is to show it, or that did. A device
+   * shows only the notices handed to its own outlets. */
   claimedBy: string | null;
+  /** Until when that outlet has to show it; after that the home node hands it on. */
   claimUntil: string | null;
   expiresAt: string | null;
   payload: Record<string, unknown>;
 }
+
+/** What a place that can tell the user something says about itself (docs/design/attention.md): a window of the
+ * app, or the Mac's always-there figure. Sent when it changes and every half minute while someone is looking;
+ * the home node keeps the latest in memory and forgets an outlet that stops reporting. */
+export interface OutletReport {
+  /** The name this outlet is handed notices under (a notice's `claimedBy`, and the `client` it says `present` with). */
+  client: string;
+  kind: "window" | "figure";
+  /** A window: on screen and focused. The figure: its machine is awake and unlocked. */
+  attending: boolean;
+  /** How long since the user last did something there (in the window; on the machine), in milliseconds. Whether
+   * that still counts as being there is the home node's to say (core attention.ts). */
+  idleMs?: number;
+}
+export interface OutletInfo {
+  client: string;
+  kind: "window" | "figure";
+  /** The paired device it reported from; `home` for the home node's own machine. */
+  device: string;
+  attending: boolean;
+  /** Seconds since the user last did something there, when the outlet could tell. */
+  idleSeconds: number | null;
+  /** Seconds since it last reported. */
+  reportedSecondsAgo: number;
+}
+export interface OutletsResponse { outlets: OutletInfo[] }
 
 /** The languages Alfred speaks. */
 export type Locale = "zh" | "en";

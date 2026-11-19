@@ -24,12 +24,15 @@ import { appIcon, trayIcon } from "./icon.ts";
 const HOTKEY = "Alt+Space";
 /** Room for the figure to hop and grow and for its speech card; the transparent rest lets clicks through. */
 const PRESENCE_SIZE = { width: 440, height: 280 };
-/** Give a focused main window the first chance to show a result in place. */
-const NOTIFY_GRACE_MS = 1500;
 const HEARTBEAT_MS = 60_000;
 const IDLE_AFTER_S = 300;
-/** Locked, or no input for this long: the user is not at the Mac, so notices are left for the phone (push). */
-const AWAY_FOR_NOTICES_S = 120;
+/** How often the figure says how long this Mac has been left alone (the home node forgets an outlet after three of
+ * these). Whether that still counts as being at the Mac is the home node's to say, not this file's. */
+const OUTLET_REPORT_MS = 30_000;
+/** How often it looks whether the user has come back to the keyboard, to say so at once. */
+const OUTLET_CHECK_MS = 5_000;
+/** Untouched for this long at the last report, and touched since: the user came back. */
+const BACK_AFTER_S = 30;
 
 app.setName("Alfred");
 // The app's own files (window state, device id) live beside the world, never inside it:
@@ -113,6 +116,17 @@ function openExternal(url: string): void {
   } catch { /* not a URL */ }
 }
 
+/** A locked screen, or one behind its screen saver: nothing on it can be seen. */
+const screenLocked = (): boolean => powerMonitor.getSystemIdleState(1) === "locked";
+
+/** Tells the main window's page whether the user is looking at it. The page cannot reliably tell it was hidden, and
+ * a window in front on a locked screen is not looked at either. `locked`: what a lock or an unlock has just said;
+ * otherwise the system is asked. */
+function sayAttention(window: BrowserWindow | null = main, locked: boolean = screenLocked()): void {
+  if (!window || window.isDestroyed()) return;
+  window.webContents.send("attention", !locked && window.isVisible() && window.isFocused());
+}
+
 function createMain(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1120, height: 760, minWidth: 720, minHeight: 480, show: false, title: "Alfred",
@@ -124,8 +138,7 @@ function createMain(): BrowserWindow {
     // Closing the window hides it; Alfred keeps running.
     if (!quitting) { event.preventDefault(); window.hide(); }
   });
-  // The page cannot reliably tell it was hidden; the app tells it whether the user is looking.
-  const attention = () => { if (!window.isDestroyed()) window.webContents.send("attention", window.isVisible() && window.isFocused()); };
+  const attention = () => sayAttention(window);
   for (const change of ["focus", "blur", "show", "hide", "minimize", "restore"] as const) window.on(change as "focus", attention);
   window.webContents.on("did-finish-load", attention);
   window.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: "deny" }; });
@@ -254,15 +267,13 @@ function toggleMain(): void {
 
 // ---- notices -------------------------------------------------------------
 
-async function claimAndPresent(notice: Notice): Promise<boolean> {
+/** Tells the home node this Mac is showing a notice it was handed. False: it is no longer this Mac's to show. */
+async function present(notice: Notice): Promise<boolean> {
   try {
-    if (notice.state === "pending" || (notice.state === "claimed" && notice.claimedBy !== DEVICE)) {
-      await client.post(`/api/notices/${notice.id}/claim`, { client: DEVICE });
-    }
     await client.post(`/api/notices/${notice.id}/present`, { client: DEVICE });
     return true;
   } catch {
-    return false; // another device has it
+    return false;
   }
 }
 
@@ -273,7 +284,7 @@ function acknowledge(id: string): void {
 async function greet(notice: Notice): Promise<void> {
   if (handled.has(notice.id)) return;
   handled.add(notice.id);
-  if (!(await claimAndPresent(notice))) return;
+  if (!(await present(notice))) return;
   if (speak([notice])) return;
   // No figure to say it: greet with a notification instead.
   const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, USER, LOCALE);
@@ -310,34 +321,17 @@ function notify(title: string, body: string, onClick: () => void): void {
   notification.show();
 }
 
-let notifyTimer: NodeJS.Timeout | null = null;
-
+/** The figure says what the home node handed to this Mac, and nothing else: whether the user is at the Mac, whether
+ * a window is showing it already and how long to wait are the home node's to decide (core attention.ts), from what
+ * this Mac and the other devices report. */
 async function handleNotices(state: StateResponse): Promise<void> {
-  const now = Date.now();
-  const mainAttending = !!main && main.isVisible() && main.isFocused();
-  // Nobody at the Mac: leave notices pending, and the home node pushes them to the phone. Back at the Mac, whatever
-  // the phone did not take is shown here then.
-  const atMac = powerMonitor.getSystemIdleState(AWAY_FOR_NOTICES_S) === "active";
-  const results: Notice[] = [];
-  for (const notice of state.notices) {
-    if (handled.has(notice.id)) continue;
-    if (notice.kind === "welcome") {
-      if (notice.state === "pending" || (notice.state === "claimed" && notice.claimedBy === DEVICE)) await greet(notice);
-      continue;
-    }
-    // Which notices there are to say is the home node's list (core attention.ts): whatever it sends is said.
-    if (notice.state !== "pending" || mainAttending || !atMac) continue;
-    const age = now - Date.parse(notice.createdAt);
-    if (age < NOTIFY_GRACE_MS) {
-      if (!notifyTimer) notifyTimer = setTimeout(() => { notifyTimer = null; void refresh(); }, NOTIFY_GRACE_MS - age + 50);
-      continue;
-    }
-    results.push(notice);
-  }
+  const mine = state.notices.filter((notice) => notice.state === "claimed" && notice.claimedBy === DEVICE && !handled.has(notice.id));
   const presented: Notice[] = [];
-  for (const notice of results) {
+  for (const notice of mine) {
+    if (notice.kind === "welcome") { await greet(notice); continue; }
     handled.add(notice.id);
-    if (await claimAndPresent(notice)) presented.push(notice);
+    if (await present(notice)) presented.push(notice);
+    else handled.delete(notice.id); // not said: if it is handed to this Mac again, it is said then
   }
   if (!presented.length || speak(presented)) return;
   // No figure to say them: system notifications.
@@ -367,8 +361,14 @@ function followLocale(state: StateResponse): void {
   updateTray();
 }
 
+/** Something changed while a refresh was under way: what it read may be from before, so it reads once more. */
+let refreshAgain = false;
 function refresh(): Promise<void> {
-  refreshing ??= client.state().then((state) => { followLocale(state); dockBadge(state); return handleNotices(state); }).catch(() => {}).finally(() => { refreshing = null; });
+  if (refreshing) { refreshAgain = true; return refreshing; }
+  refreshing = client.state().then((state) => { followLocale(state); dockBadge(state); return handleNotices(state); }).catch(() => {}).finally(() => {
+    refreshing = null;
+    if (refreshAgain) { refreshAgain = false; void refresh(); }
+  });
   return refreshing;
 }
 
@@ -380,10 +380,35 @@ function reportPresence(kind: "active" | "away"): void {
     .catch(() => { /* the node is down; the next report catches up */ });
 }
 
+/** The figure, as a place where Alfred can tell the user something. It says what this Mac sees: whether its screen
+ * can be seen (not locked, no screen saver), and how long since it was touched. The home node decides from that
+ * whether a notice is the figure's to say (docs/design/attention.md).
+ *
+ * `locked`: what a lock or an unlock has just said. Otherwise the system is asked each time, and nothing is
+ * remembered here: a Mac that wakes to its lock screen says nothing more until it is unlocked. */
+let reported = { at: 0, idle: 0 };
+function reportFigure(locked: boolean = screenLocked()): void {
+  const idle = powerMonitor.getSystemIdleTime();
+  reported = { at: Date.now(), idle };
+  client.post("/api/outlets", { client: DEVICE, kind: "figure", attending: !locked, idleMs: idle * 1000 })
+    .catch(() => { /* the node is down; the next report catches up */ });
+}
+
+/** Says it again every so often, and at once when the user comes back to the keyboard: what waited for them is
+ * handed to the figure then. */
+function checkFigure(): void {
+  // Left alone, the time since the last touch only grows: less than was last said means something was touched.
+  const back = reported.idle >= BACK_AFTER_S && powerMonitor.getSystemIdleTime() < reported.idle;
+  if (back || Date.now() - reported.at >= OUTLET_REPORT_MS) reportFigure();
+}
+
 function watchPresence(): void {
-  powerMonitor.on("lock-screen", () => reportPresence("away"));
+  powerMonitor.on("lock-screen", () => { reportPresence("away"); reportFigure(true); sayAttention(main, true); });
   powerMonitor.on("suspend", () => reportPresence("away"));
-  powerMonitor.on("unlock-screen", () => reportPresence("active"));
+  powerMonitor.on("unlock-screen", () => { reportPresence("active"); reportFigure(false); sayAttention(main, false); });
+  powerMonitor.on("resume", () => { reportFigure(); sayAttention(); });
+  setInterval(checkFigure, OUTLET_CHECK_MS).unref();
+  reportFigure();
   setInterval(() => {
     if (powerMonitor.getSystemIdleState(IDLE_AFTER_S) === "active") reportPresence("active");
   }, HEARTBEAT_MS).unref();

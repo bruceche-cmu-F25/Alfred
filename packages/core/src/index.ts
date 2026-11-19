@@ -21,13 +21,13 @@ export {
   type Conversation, type ThinkingLevel,
 } from "./conversations.ts";
 export {
-  listNotices, pendingNotices, claimNotice, presentNotice, acknowledgeNotice, createNotice, NoticeStateError,
+  listNotices, undeliveredNotices, isOpen, claimNotice, releaseNotice, presentNotice, acknowledgeNotice, createNotice, NoticeStateError,
   type Notice, type NoticeState,
 } from "./notices.ts";
 export { runCommand, commandReplay, CommandConflictError } from "./commands.ts";
-export { decide, noticeClass, ATTENTION, NOTICE_CLASSES, type AttentionPolicy, type Decision, type NoticeClass, type Outlet } from "./attention.ts";
+export { attends, decide, noticeClass, ATTENTION, NOTICE_CLASSES, type AttentionPolicy, type Decision, type NoticeClass, type Outlet } from "./attention.ts";
 export {
-  reportPresence, isReturn, PRESENCE_KINDS, RETURN_AFTER_MS, AWAY_RETURN_MS, HEARTBEAT_MS,
+  reportPresence, isReturn, PRESENCE_KINDS, RETURN_AFTER_MS, AWAY_RETURN_MS,
   type AwayDigest, type PresenceKind, type PresenceOptions, type PresenceResult,
 } from "./presence.ts";
 export {

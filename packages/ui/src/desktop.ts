@@ -7,7 +7,7 @@ export type NoticeOutcome = "open" | "dismiss" | "timeout";
 export interface FigureSide { h: "left" | "right"; v: "top" | "bottom" }
 
 export interface DesktopBridge {
-  /** This window's device id for claiming notices. */
+  /** The name this window is handed notices under. */
   deviceId: string;
   role: "main" | "presence";
   /** The user's first name from macOS, for greetings. */

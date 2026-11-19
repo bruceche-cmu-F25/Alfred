@@ -82,10 +82,17 @@ export function handNotice(db: DatabaseSync, notice: Pick<Notice, "id" | "kind">
   appendEvent(db, { kind: "notice.assigned", subject: `notice:${notice.id}`, actor: "system", runId: null, now, payload: { noticeId: notice.id, kind: notice.kind, to } });
 }
 
-/** The notices nobody holds, oldest first. Unlike `listNotices` it only reads (no expiry pass), so it can be called
- * after every commit without causing one. */
-export function pendingNotices(world: World): Notice[] {
-  return world.db.prepare("SELECT * FROM core_notices WHERE state = 'pending' ORDER BY created_at, rowid").all().map(toNotice);
+/** The notices not shown anywhere yet, oldest first: nobody's (`pending`), or handed to someone who has not shown
+ * it (`claimed`). Unlike `listNotices` it only reads (no expiry pass), so it can be called after every commit
+ * without causing one. */
+export function undeliveredNotices(world: World, now: number = Date.now()): Notice[] {
+  return world.db.prepare(`SELECT * FROM core_notices WHERE state IN ('pending', 'claimed') AND (expires_at IS NULL OR expires_at > ?)
+    ORDER BY created_at, rowid`).all(iso(now)).map(toNotice);
+}
+
+/** Nobody holds it right now: it was never handed to anyone, or whoever got it ran out of time to show it. */
+export function isOpen(notice: Pick<Notice, "state" | "claimUntil">, now: number): boolean {
+  return notice.state === "pending" || (notice.state === "claimed" && Date.parse(notice.claimUntil!) <= now);
 }
 
 /** Undelivered notices, oldest first. When there are more than `limit`, the newest ones: old notices nobody
@@ -102,20 +109,35 @@ export function listNotices(world: World, options: { states?: NoticeState[]; lim
   });
 }
 
-/** One device at a time may present a notice; the claim lapses after ttlMs. */
+/** Names the one who is to show a notice next, for `ttlMs`; after that it is open again. The home node's attention
+ * does the naming (server attention.ts). A device may still name itself: clients from before that did, and the
+ * welcome is taken that way. */
 export function claimNotice(world: World, id: string, clientId: string, options: { ttlMs?: number; now?: number } = {}): Notice {
   const now = options.now ?? Date.now();
   const by = client(clientId);
   return world.tx((db) => {
     expire(db, now);
     const notice = load(db, id);
-    const reclaimable = notice.state === "claimed" && (notice.claimedBy === by || Date.parse(notice.claimUntil!) <= now);
-    if (notice.state !== "pending" && !reclaimable) throw new NoticeStateError(notice.state === "claimed" ? "claim" : "state");
+    if (notice.state !== "claimed" && notice.state !== "pending") throw new NoticeStateError("state");
+    if (!isOpen(notice, now) && notice.claimedBy !== by) throw new NoticeStateError("claim");
     const until = now + (options.ttlMs ?? 30_000);
-    // Holding on to it a little longer is not news; a new holder is.
-    if (notice.state === "claimed" && notice.claimedBy === by) db.prepare("UPDATE core_notices SET claim_until = ?, updated_at = ? WHERE id = ?").run(iso(until), iso(now), id);
+    // Holding on to it a little longer is not news; a new holder is, and so is being handed it again after the
+    // time to show it ran out.
+    if (notice.state === "claimed" && notice.claimedBy === by && !isOpen(notice, now)) db.prepare("UPDATE core_notices SET claim_until = ?, updated_at = ? WHERE id = ?").run(iso(until), iso(now), id);
     else handNotice(db, notice, by, until, now);
     return load(db, id);
+  });
+}
+
+/** Its holder ran out of time without showing it: it is nobody's again. Returns who that was; null when there is
+ * nothing to take back (it is still held, or it was shown after all). Not an event: the next handing over is. */
+export function releaseNotice(world: World, id: string, options: { now?: number } = {}): string | null {
+  const now = options.now ?? Date.now();
+  return world.tx((db) => {
+    const notice = load(db, id);
+    if (notice.state !== "claimed" || !isOpen(notice, now)) return null;
+    db.prepare("UPDATE core_notices SET state = 'pending', claimed_by = NULL, claim_until = NULL, updated_at = ? WHERE id = ?").run(iso(now), id);
+    return notice.claimedBy;
   });
 }
 

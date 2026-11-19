@@ -5,9 +5,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CORE_MIGRATIONS, deviceForToken, listDevices, openWorld, pairDevice, revokeDevice, type EnginePort } from "@alfred/core";
+import { CORE_MIGRATIONS, deviceForToken, listDevices, listEvents, openWorld, pairDevice, revokeDevice, type EnginePort } from "@alfred/core";
 import { todoModule } from "@alfred/module-todo";
-import type { PairingCode, RemoteResponse } from "@alfred/protocol";
+import type { OutletsResponse, PairingCode, RemoteResponse } from "@alfred/protocol";
 import { createHttpServer, createIngressServer, openHome, PushService, RemoteAccess, Tailscale, type Home, type Runner } from "../src/index.ts";
 
 const DNS = "mini.tail1234.ts.net";
@@ -193,6 +193,37 @@ test("a device pairs with a one-time code, then reaches everything but credentia
     await ask(local, `/api/devices/${self.device.id}/revoke`, { body: {} });
     assert.equal(await stream, "ended");
     assert.equal((await ask(ingress, "/api/state", { headers: as })).status, 401);
+  } finally { close(); }
+});
+
+test("an outlet's report is filed under the device it came from, and is not an event", async () => {
+  const { home, local, ingress, close } = await setUp();
+  try {
+    await ask(local, "/api/remote", { body: { enabled: true } });
+    const pairing = (await ask(local, "/api/remote/pairing", { body: {} })).body as unknown as PairingCode;
+    const paired = await ask(ingress, "/api/pair", { headers: viaServe(), body: { code: pairing.code, name: "iPhone", kind: "phone" } });
+    const as = viaServe({ Cookie: String(paired.headers["set-cookie"]?.[0]).split(";")[0] });
+    const phone = ((await ask(ingress, "/api/remote", { headers: as })).body as Extract<RemoteResponse, { local: false }>).device.id;
+    const before = listEvents(home.world).cursor;
+
+    // A device that is not paired has no say in where the user is.
+    assert.equal((await ask(ingress, "/api/outlets", { headers: viaServe(), body: { client: "tab-1", kind: "window", attending: true } })).status, 401);
+    for (const body of [{}, { client: "tab-1", kind: "push", attending: true }, { client: "tab 1", kind: "window", attending: true },
+      { client: "tab-1", kind: "window", attending: "yes" }, { client: "tab-1", kind: "window", attending: true, idleMs: -5 }]) {
+      assert.equal((await ask(ingress, "/api/outlets", { headers: as, body })).status, 400, JSON.stringify(body));
+    }
+    assert.equal((await ask(local, "/api/outlets", { body: { client: "mac", kind: "figure", attending: false, idleMs: 300_000 } })).status, 200);
+    assert.equal((await ask(ingress, "/api/outlets", { headers: as, body: { client: "tab-1", kind: "window", attending: true, idleMs: 2_000 } })).status, 200);
+
+    // The home node now knows the phone is in the user's hand, and the Mac is not being used. Either side may ask.
+    for (const reply of [await ask(local, "/api/outlets"), await ask(ingress, "/api/outlets", { headers: as })]) {
+      const { outlets } = reply.body as unknown as OutletsResponse;
+      assert.deepEqual(outlets.map((outlet) => [outlet.client, outlet.kind, outlet.device, outlet.attending, outlet.idleSeconds]), [
+        ["tab-1", "window", phone, true, 2],
+        ["mac", "figure", "home", false, 300],
+      ]);
+    }
+    assert.equal(listEvents(home.world).cursor, before, "what a device sees right now is not something that happened");
   } finally { close(); }
 });
 

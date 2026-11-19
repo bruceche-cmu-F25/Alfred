@@ -216,4 +216,21 @@ CREATE TABLE core_outbound (
 ) STRICT;
 CREATE INDEX core_outbound_queue ON core_outbound(module, state, created_at);
 `,
+}, {
+  // When the user was last seen (presence.ts): one row of state instead of a `presence.active` event every few
+  // minutes. Seeded from those events, so nobody is greeted for the upgrade itself.
+  id: "core:12",
+  sql: `
+CREATE TABLE core_presence (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  active_at TEXT,
+  active_seq INTEGER,
+  away_at TEXT,
+  away_seq INTEGER
+) STRICT;
+INSERT INTO core_presence (id, active_at, active_seq, away_at, away_seq)
+  SELECT 1, a.at, a.seq, w.at, w.seq FROM (SELECT 1)
+    LEFT JOIN (SELECT at, seq FROM core_events WHERE subject = 'presence' AND kind = 'presence.active' ORDER BY seq DESC LIMIT 1) a ON 1
+    LEFT JOIN (SELECT at, seq FROM core_events WHERE subject = 'presence' AND kind = 'presence.away' ORDER BY seq DESC LIMIT 1) w ON w.seq > COALESCE(a.seq, 0);
+`,
 }];

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { enqueueOutbound, listEvents, listOutbound, withCoreContext, type EnginePort } from "@alfred/core";
+import { ATTENTION, enqueueOutbound, listEvents, listOutbound, withCoreContext, type EnginePort } from "@alfred/core";
 import { defineModule } from "@alfred/module-kit";
 import { todoModule, type TodoSnapshot } from "@alfred/module-todo";
 import type { ConversationDetail, CoreEvent, RunDetail, SessionChanges, StateResponse, SubmitRunResponse } from "@alfred/protocol";
@@ -91,6 +91,40 @@ test("a sentence becomes a run, a todo, a receipt and a notice, streamed to devi
     assert.equal((await post(base, `/api/notices/${notice.id}/claim`, { client: "mac" })).status, 200);
     assert.equal((await post(base, `/api/notices/${notice.id}/claim`, { client: "phone" })).status, 409);
     assert.equal((await post(base, `/api/notices/${notice.id}/present`, { client: "mac" })).status, 200);
+  } finally {
+    server.close(); server.closeAllConnections();
+    home.close();
+  }
+});
+
+test("a notice is shown in one place: the window the user is looking at is handed it; one that is not, is not", async () => {
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [todoModule], attention: { ...ATTENTION, presentWithinMs: 300 } });
+  const { server, base } = await start(home);
+  const notices = async () => ((await (await fetch(`${base}/api/state`)).json()) as StateResponse).notices;
+  try {
+    // Two windows are open; the user is in the second.
+    await post(base, "/api/outlets", { client: "tab-a", kind: "window", attending: false, idleMs: 60_000 });
+    await post(base, "/api/outlets", { client: "tab-b", kind: "window", attending: true, idleMs: 500 });
+    await post(base, "/api/runs", { requestId: "r-1", goal: "add Hand in report" });
+    const events = await waitForEvent(base, 0, (event) => event.kind === "notice.assigned");
+    assert.equal(events.at(-1)!.payload.to, "tab-b");
+    const [notice] = await notices();
+    assert.deepEqual([notice.state, notice.claimedBy], ["claimed", "tab-b"]);
+    assert.equal((await post(base, `/api/notices/${notice.id}/present`, { client: "tab-a" })).status, 409, "it is not the other window's to show");
+    assert.equal((await post(base, `/api/notices/${notice.id}/present`, { client: "tab-b" })).status, 200);
+
+    // Nobody is looking any more, and no phone has notifications on: the next one waits.
+    await post(base, "/api/outlets", { client: "tab-b", kind: "window", attending: false, idleMs: 0 });
+    await post(base, "/api/runs", { requestId: "r-2", goal: "add Call the bank" });
+    await waitForEvent(base, 0, (event) => event.kind === "run.completed" && event.seq > events.at(-1)!.seq);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const waiting = (await notices()).find((item) => item.id !== notice.id)!;
+    assert.deepEqual([waiting.state, waiting.claimedBy], ["pending", null]);
+    // A device from before this still takes one for itself, and that holds.
+    assert.equal((await post(base, `/api/notices/${waiting.id}/claim`, { client: "old-mac" })).status, 200);
+    await post(base, "/api/outlets", { client: "tab-b", kind: "window", attending: true, idleMs: 0 });
+    assert.equal((await post(base, `/api/notices/${waiting.id}/present`, { client: "old-mac" })).status, 200);
+    assert.deepEqual(listEvents(home.world).events.filter((event) => event.kind === "notice.assigned").map((event) => event.payload.to), ["tab-b", "old-mac"]);
   } finally {
     server.close(); server.closeAllConnections();
     home.close();

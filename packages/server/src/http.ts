@@ -23,7 +23,7 @@ import {
 } from "@alfred/core";
 import { invokeOp, runQuery } from "@alfred/module-kit";
 import type {
-  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, PairRequest, PresenceRequest, ProposalResponse, PushInfo, PushResult,
+  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, OutletReport, OutletsResponse, PairRequest, PresenceRequest, ProposalResponse, PushInfo, PushResult,
   RemoteResponse, RespondRequest, StateResponse, SteerRequest, SubmitRunRequest, SessionChanges,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
@@ -432,6 +432,35 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   throw new HttpError(405, "Method not allowed");
 }
 
+const OUTLET_CLIENT = /^[A-Za-z0-9._:-]{1,80}$/;
+
+/** A window or the Mac's figure says what it sees, and anyone who may talk to Alfred may ask who is looking. None
+ * of it is recorded: the home node only keeps the latest from each outlet (attention.ts). */
+async function outletRoute(home: Home, peer: Peer, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method === "GET") {
+    const now = Date.now();
+    return send(res, 200, {
+      outlets: home.outlets.list(now).map((outlet) => ({
+        client: outlet.id, kind: outlet.kind as OutletReport["kind"], device: outlet.device, attending: outlet.attending,
+        idleSeconds: outlet.activeAt === undefined ? null : Math.max(0, Math.round((now - outlet.activeAt) / 1000)),
+        reportedSecondsAgo: Math.round((now - outlet.reportedAt) / 1000),
+      })),
+    } satisfies OutletsResponse);
+  }
+  if (req.method !== "POST") throw new HttpError(405, "Method not allowed");
+  const body = await readJson<OutletReport>(req);
+  const idle = body.idleMs;
+  if (typeof body.client !== "string" || !OUTLET_CLIENT.test(body.client) || (body.kind !== "window" && body.kind !== "figure") || typeof body.attending !== "boolean"
+    || (idle !== undefined && (typeof idle !== "number" || !(idle >= 0)))) {
+    throw new HttpError(400, "client, kind (window or figure) and attending are required");
+  }
+  // It is taken as coming from whoever sent it: a paired device, or this machine.
+  const device = peer.local ? "home" : peer.device?.id;
+  if (!device) throw new HttpError(401, "This device is not paired with Alfred yet", "unpaired");
+  home.outlets.report(device, { client: body.client, kind: body.kind, attending: body.attending, ...(idle === undefined ? {} : { idleMs: idle }) });
+  return send(res, 200, {});
+}
+
 export interface ServeOptions {
   port: number;
   host?: string;
@@ -467,6 +496,7 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
     }
     if (path.startsWith("/api/connections") && (options.google || options.models)
       && await handleConnections({ google: options.google, models: options.models }, req, res, url, options.log)) return;
+    if (path === "/api/outlets") return outletRoute(home, peer, req, res);
     await route(home, req, res, url);
   };
   answer().catch((error: unknown) => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ATTENTION, claimNotice, CORE_MIGRATIONS, createNotice, listEvents, listNotices, openWorld, recordDomainEvent, type World } from "@alfred/core";
-import { watchAttention, type Reach } from "../src/index.ts";
+import { ATTENTION, claimNotice, CORE_MIGRATIONS, createNotice, listEvents, listNotices, openWorld, presentNotice, recordDomainEvent, type World } from "@alfred/core";
+import { OUTLET_STALE_MS, Outlets, watchAttention, type Reach } from "../src/index.ts";
 
 /** The table, with a short wait before a notice nobody took is the phone's. */
 const policy = { ...ATTENTION, pushAfterMs: 40 };
@@ -77,4 +77,119 @@ test("closed, it hands nothing on", async () => {
   await wait(120);
   assert.deepEqual(sent, []);
   w.close();
+});
+
+test("the outlets that reported lately are known, the one used last first; one that goes quiet is forgotten", () => {
+  const outlets = new Outlets();
+  const t0 = Date.parse("2026-11-19T09:00:00.000Z");
+  outlets.report("home", { client: "mac", kind: "figure", attending: true, idleMs: 4_000 }, t0);
+  outlets.report("home", { client: "mac.window", kind: "window", attending: false, idleMs: 60_000 }, t0);
+  outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: true, idleMs: 500 }, t0 + 1_000);
+  assert.deepEqual(outlets.list(t0 + 1_000).map((outlet) => [outlet.id, outlet.kind, outlet.device, outlet.attending, outlet.activeAt! - t0]), [
+    ["phone.tab", "window", "d-phone", true, 500],
+    ["mac", "figure", "home", true, -4_000],
+    ["mac.window", "window", "home", false, -60_000],
+  ]);
+  // What an outlet says next replaces what it said before.
+  outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: false }, t0 + 30_000);
+  const phone = outlets.list(t0 + 30_000).find((outlet) => outlet.id === "phone.tab")!;
+  assert.deepEqual([phone.attending, phone.activeAt, phone.reportedAt - t0], [false, undefined, 30_000]);
+  // A device that was unpaired takes its outlets with it.
+  outlets.report("d-old", { client: "old.tab", kind: "window", attending: true, idleMs: 0 }, t0 + 30_000);
+  outlets.forget("d-old");
+  assert.equal(outlets.list(t0 + 30_000).some((outlet) => outlet.device === "d-old"), false);
+  // The Mac's two said nothing more: the home node no longer takes their word for it.
+  assert.deepEqual(outlets.list(t0 + OUTLET_STALE_MS + 1).map((outlet) => outlet.id), ["phone.tab"]);
+  assert.deepEqual(outlets.list(t0 + 30_000 + OUTLET_STALE_MS + 1), []);
+});
+
+/** Short waits all round: the figure after 30 ms, the phone after 40, and 60 ms for a device to show what it got. */
+const quick = { ...ATTENTION, figureAfterMs: 30, pushAfterMs: 40, presentWithinMs: 60 };
+const handings = (w: World) => listEvents(w).events.filter((event) => event.kind === "notice.assigned").map((event) => event.payload.to);
+const only = (w: World) => listNotices(w, { states: ["pending", "claimed", "presented"] })[0];
+
+test("a window the user is looking at is handed the notice at once and shows it; nothing else is told", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const sent: string[] = [];
+  const attention = watchAttention({ world: w, outlets, reaches: () => [phone(sent)], policy: quick });
+  try {
+    outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: true, idleMs: 9_000 });
+    outlets.report("home", { client: "mac.window", kind: "window", attending: true, idleMs: 200 });
+    outlets.report("home", { client: "mac", kind: "figure", attending: true, idleMs: 200 });
+    const made = make(w, "run_result");
+    await wait(15);
+    assert.deepEqual([only(w).state, only(w).claimedBy], ["claimed", "mac.window"], "of two windows in use, the one used last");
+    presentNotice(w, made.id, "mac.window");
+    await wait(200);
+    assert.deepEqual(handings(w), ["mac.window"]);
+    assert.deepEqual(sent, []);
+  } finally { attention.close(); w.close(); }
+});
+
+test("an outlet that does not show what it was handed is passed over: the window, then the figure, then the phone", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const sent: string[] = [];
+  const attention = watchAttention({ world: w, outlets, reaches: () => [phone(sent)], policy: quick });
+  try {
+    outlets.report("home", { client: "mac.window", kind: "window", attending: true, idleMs: 0 });
+    outlets.report("home", { client: "mac", kind: "figure", attending: true, idleMs: 0 });
+    const made = make(w);
+    await wait(400);
+    assert.deepEqual(handings(w), ["mac.window", "mac", "push"]);
+    assert.deepEqual(sent, [made.id]);
+  } finally { attention.close(); w.close(); }
+});
+
+test("what waited for the user is handed to the window they turn to", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const attention = watchAttention({ world: w, outlets, reaches: () => [], policy: quick });
+  try {
+    outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: false });
+    make(w);
+    await wait(100);
+    assert.equal(only(w).state, "pending", "nobody to tell: it waits");
+    outlets.report("d-phone", { client: "phone.tab", kind: "window", attending: true, idleMs: 0 });
+    assert.deepEqual([only(w).state, only(w).claimedBy], ["claimed", "phone.tab"]);
+  } finally { attention.close(); w.close(); }
+});
+
+test("a window left in front and not touched is not shown things; touched again, it gets what waited", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const sent: string[] = [];
+  const attention = watchAttention({ world: w, outlets, reaches: () => [phone(sent)], policy: quick });
+  try {
+    const says = (idleMs: number) => outlets.report("home", { client: "mac.window", kind: "window", attending: true, idleMs });
+    says(ATTENTION.atWindowWithinMs + 1_000);
+    const asked = make(w), news = make(w, "outbound", { state: "done" });
+    await wait(150);
+    assert.deepEqual(sent, [asked.id], "what needs the user goes to the phone");
+    assert.deepEqual(listNotices(w).map((notice) => [notice.kind, notice.state, notice.claimedBy]), [["run_request", "claimed", "push"], ["outbound", "pending", null]]);
+    says(0); // the user is back at it
+    assert.deepEqual(listNotices(w).find((notice) => notice.id === news.id)!.claimedBy, "mac.window");
+    assert.deepEqual(handings(w), ["push", "mac.window"]);
+  } finally { attention.close(); w.close(); }
+});
+
+test("a window that missed its chance is not asked over and over, and gets another when the user turns back to it", async () => {
+  const w = world();
+  const outlets = new Outlets();
+  const attention = watchAttention({ world: w, outlets, reaches: () => [], policy: quick });
+  try {
+    const says = (attending: boolean) => outlets.report("home", { client: "mac.window", kind: "window", attending, idleMs: 0 });
+    says(true);
+    const made = make(w);
+    await wait(150); // handed over, and not shown in time
+    says(true); // still says it is looked at: no reason to think it would show it now
+    await wait(100);
+    assert.deepEqual(handings(w), ["mac.window"]);
+    says(false);
+    says(true);
+    assert.deepEqual(handings(w), ["mac.window", "mac.window"]);
+    presentNotice(w, made.id, "mac.window");
+    assert.equal(only(w).state, "presented");
+  } finally { attention.close(); w.close(); }
 });

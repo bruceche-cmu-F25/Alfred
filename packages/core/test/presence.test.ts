@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   CORE_MIGRATIONS, finishRun, claimNextRun, listEvents, listNotices, openWorld, recordDomainEvent, reportPresence, submitRun,
@@ -54,10 +57,39 @@ test("long silence without a lock is a return too, and so is a new day", () => {
   assert.equal(reportPresence(w, { clientId: "mac", kind: "active", now: nextMorning }).returned, true);
 });
 
-test("heartbeats are written at most every few minutes", () => {
+test("still being here is not an event, and last seen is kept all the same", () => {
   const w = world();
   for (let minute = 0; minute < 10; minute++) reportPresence(w, { clientId: "mac", kind: "active", now: T0 + minute * MIN });
-  assert.equal(listEvents(w).events.filter((event) => event.kind === "presence.active").length, 4);
+  reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 9 * MIN + 5_000 }); // a second window, seconds later
+  const presence = () => listEvents(w).events.filter((event) => event.kind.startsWith("presence.")).map((event) => event.kind);
+  assert.deepEqual(presence(), ["presence.active"], "only the first report: the clock starting");
+  // Last seen at minute 9, though nothing in the log says so: 29 minutes on is no return, an hour on is.
+  assert.equal(reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 38 * MIN }).returned, false);
+  assert.equal(reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 100 * MIN }).returned, true);
+  // Going away and coming back are changes, and are recorded.
+  reportPresence(w, { clientId: "mac", kind: "away", now: T0 + 101 * MIN });
+  reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 103 * MIN });
+  assert.deepEqual(presence(), ["presence.active", "presence.returned", "presence.away", "presence.active"]);
+});
+
+test("a world from before last seen was state: the upgrade takes it from the old events, and greets nobody for it", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "alfred-presence-")), "world.sqlite");
+  const before = CORE_MIGRATIONS.filter((migration) => Number(migration.id.split(":")[1]) < 12);
+  const old = openWorld(path, before);
+  const event = (kind: string, at: number) => old.db.prepare("INSERT INTO core_events (id, at, kind, subject, actor, payload) VALUES (?, ?, ?, 'presence', 'user', '{}')")
+    .run(`e${at}`, new Date(at).toISOString(), kind);
+  event("presence.active", T0);
+  event("presence.away", T0 + MIN);
+  event("presence.active", T0 + 5 * MIN);
+  event("presence.active", T0 + 8 * MIN); // the last heartbeat the old way
+  old.close();
+
+  const w = openWorld(path, CORE_MIGRATIONS);
+  assert.equal(reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 9 * MIN }).returned, false, "seen a minute ago");
+  const back = reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 50 * MIN });
+  assert.equal(back.returned, true);
+  assert.equal(back.notice?.payload.awayMs, 41 * MIN);
+  w.close();
 });
 
 test("the welcome says what Alfred did while the user was away, not what the user did", () => {

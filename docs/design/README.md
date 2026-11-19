@@ -1,6 +1,6 @@
 # Alfred 设计主线
 
-**已定的是形象，不是整套工作台皮肤。** 把工作台原型做进 App 的方案草案：[workspace-architecture.md](workspace-architecture.md)（等确认）。 日常对话和开发会话怎么分开：[dev-mode.md](dev-mode.md)（2026-11-18 已批准；D1 对话组件、D2 项目和只读开发会话已做完），[原型](../../prototype/dev.html)。 一件事由谁、在哪、什么时候告诉你：[attention.md](attention.md)（2026-11-19 已批准；A1 决定用的表、A2 主节点分派推送并记事件，已做完）。 标志为超立方体线框；没有脸或眼睛。切换状态时，同一组线连续重组成另一种几何体。依据：[形象决策记录 §4.4](../research/alfred-entity.md)。
+**已定的是形象，不是整套工作台皮肤。** 把工作台原型做进 App 的方案草案：[workspace-architecture.md](workspace-architecture.md)（等确认）。 日常对话和开发会话怎么分开：[dev-mode.md](dev-mode.md)（2026-11-18 已批准；D1 对话组件、D2 项目和只读开发会话已做完），[原型](../../prototype/dev.html)。 一件事由谁、在哪、什么时候告诉你：[attention.md](attention.md)（2026-11-19 已批准；A1 决定用的表、A2 主节点分派推送并记事件、A3 每个出口上报它看到的、A4 窗口和形象只呈现派给自己的，已做完）。 标志为超立方体线框；没有脸或眼睛。切换状态时，同一组线连续重组成另一种几何体。依据：[形象决策记录 §4.4](../research/alfred-entity.md)。
 
 [查看可交互的十种状态](../../prototype/tesseract.html) · [浏览器截图](tesseract.png) · [放进工作台原型的样子](../../prototype/workspace.html)
 

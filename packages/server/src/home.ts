@@ -7,9 +7,10 @@ import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } f
 import { join } from "node:path";
 import {
   CORE_MIGRATIONS, createRunDrain, expireProposals, interruptOutbound, listOutbound, ensureTemplates, fireDueAutomations, interruptOrphanedRuns, openWorld,
-  type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type SessionMode, type World,
+  type AttentionPolicy, type EngineModel, type EnginePort, type LiveUpdate, type PresenceOptions, type Run, type RunProfile, type SessionMode, type World,
 } from "@alfred/core";
 import { assistantTools, deliverQueued, moduleMigrations, runTools, type AlfredModule, type ModuleServices } from "@alfred/module-kit";
+import { Outlets, watchAttention, type Reach } from "./attention.ts";
 
 export const ASSISTANT_PROFILE = "assistant";
 /** A development session's runs: the assistant's tools, plus reading its project's files (docs/design/dev-mode.md). */
@@ -58,6 +59,8 @@ export interface HomeOptions {
   modules: readonly AlfredModule[];
   /** How long away counts as away (a user preference). */
   presence?: PresenceOptions;
+  /** The attention table's waits, when not the usual ones (tests). */
+  attention?: AttentionPolicy;
   /** For the operator's log. */
   log?: (message: string) => void;
   /** The outside services the user has connected, for modules that mirror one (read when each sync runs). */
@@ -71,6 +74,11 @@ export interface Home {
   owner: string;
   /** What runs are writing right now (not recorded). Emits `update` with a LiveUpdate. */
   live: EventEmitter<{ update: [LiveUpdate] }>;
+  /** The windows and figures that have reported lately, and whether the user is looking there (not recorded).
+   * The home node hands each notice to one of them, or to a reach, as the attention table says (attention.ts). */
+  outlets: Outlets;
+  /** Adds outlets the home node tells the user through by itself (the phones' push notifications). */
+  reach(list: () => Reach[]): void;
   /** Starts executing queued runs if it is not already. */
   kick(): void;
   /** Delivers the user's words into a running run; false if it is not running or cannot take them. */
@@ -226,12 +234,21 @@ export function openHome(options: HomeOptions): Home {
     every.unref();
     return [first, every];
   });
+  // Who tells the user about a notice, where and when: decided here, once, for every device.
+  const outlets = new Outlets();
+  const reaches: Array<() => Reach[]> = [];
+  const attention = watchAttention({ world, outlets, reaches: () => reaches.flatMap((list) => list()), policy: options.attention, log: options.log });
   return {
     world,
     modules: options.modules,
     presence: options.presence ?? {},
     owner,
     live,
+    outlets,
+    reach(list) {
+      reaches.push(list);
+      attention.look();
+    },
     kick,
     steer: (runId, text) => drain.steer(runId, text),
     models: () => options.engine.models?.() ?? Promise.resolve([]),
@@ -250,6 +267,7 @@ export function openHome(options: HomeOptions): Home {
       clearInterval(clock);
       for (const timer of passTimers) clearTimeout(timer);
       stopping.abort();
+      attention.close();
       world.close();
       unlock();
     },

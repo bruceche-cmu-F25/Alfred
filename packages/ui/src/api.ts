@@ -15,8 +15,8 @@ function random(): string {
   return crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 }
 
-/** This window's id for claiming notices: the Mac app's when inside it,
- * otherwise this browser's, kept in localStorage when it can be.
+/** The name this window is handed notices under: the Mac app's when inside it,
+ * otherwise this browser's, kept in localStorage when it can be (so its tabs share it).
  */
 export const deviceId: string = (() => {
   if (window.alfredDesktop?.deviceId) return window.alfredDesktop.deviceId;
@@ -89,9 +89,13 @@ export const api = {
   cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, { requestId: newRequestId() }),
   resume: (runId: string) => post<Run>(`/api/runs/${runId}/resume`, { requestId: newRequestId() }),
   op: (op: string, input: unknown) => post<OpResponse>(`/api/ops/${op}`, { requestId: newRequestId(), input }),
-  claim: (id: string) => post<Notice>(`/api/notices/${id}/claim`, { client: deviceId }),
   present: (id: string) => post<Notice>(`/api/notices/${id}/present`, { client: deviceId }),
   acknowledge: (id: string) => post<Notice>(`/api/notices/${id}/acknowledge`, {}),
+  /** What this window sees (is it being looked at, when was it last used), for the home node to decide who tells the
+   * user what; not recorded. `keepalive`: "not looking any more" still gets out when a phone puts the page away. */
+  outlet: (attending: boolean, idleMs: number) => call<Record<string, never>>("/api/outlets", {
+    method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client: deviceId, kind: "window", attending, idleMs }),
+  }),
   /** The user's decision on a proposal. A retry with the same request id gets the same answer. */
   accept: (id: string, requestId = newRequestId()) => post<ProposalResponse>(`/api/proposals/${id}/accept`, { requestId }),
   decline: (id: string) => post<ProposalResponse>(`/api/proposals/${id}/decline`, { requestId: newRequestId() }),

@@ -19,6 +19,8 @@ import { Pair } from "./Pair.tsx";
 import { detectLocale, getLocale, setLocale, t, useLocale, type Locale } from "./i18n/index.ts";
 import { getScheme, setAppearance } from "./scheme.ts";
 import { useAlfred } from "./useAlfred.ts";
+import { handed } from "./handed.ts";
+import { useOutlet } from "./outlet.ts";
 import { welcomeLines } from "./welcome.ts";
 
 if (desktop) document.documentElement.classList.add("desktop");
@@ -74,40 +76,35 @@ function useRoute(): Route & { go(patch: Partial<Route>): void } {
   return { ...route, go };
 }
 
-/** Notices are presented by one device only. This window claims a notice only
- * while the user is looking at it. What happens in the open conversation is
- * already on screen, so seeing it counts as being told; a result or a question
- * elsewhere is said by Alfred (shell/Says.tsx), leading there. In the Mac app,
- * the figure greets; here only a plain browser does.
+/** A notice is shown in one place only, and the home node says where (docs/design/attention.md): this window shows
+ * what was handed to it, while the user is looking at it. What happens in the open conversation is already on
+ * screen, so seeing it counts as being told; a result or a question elsewhere is said by Alfred (shell/Says.tsx),
+ * leading there.
  */
 function useNotices(notices: Notice[], selected: string | null, onPresented: (notice: Notice) => void): { shown: Notice[]; remove(notice: Notice): void; acknowledge(notice: Notice): void } {
   const [shown, setShown] = useState<Notice[]>([]);
   const handled = useRef(new Set<string>());
   const attending = useAttention();
+  useOutlet(attending);
 
   useEffect(() => {
     if (!attending) return;
     for (const notice of notices) {
       if (handled.current.has(notice.id)) continue;
-      if (notice.kind === "welcome" && desktop) continue;
+      const mine = handed(notice, deviceId);
+      if (!mine) continue;
       const here = notice.payload.conversationId === selected;
       const show = () => {
         if ((notice.kind === "run_result" && here)) return api.acknowledge(notice.id).then(() => {});
         if (notice.kind === "run_request" && here) return; // answered inline; answering closes it
         setShown((current) => current.some((item) => item.id === notice.id) ? current : [...current, notice]);
       };
-      if (notice.state === "presented") {
-        // Shown here before (then a reload): show it again on this device only, never elsewhere.
-        if (notice.claimedBy !== deviceId) continue;
-        handled.current.add(notice.id);
-        void show();
-        continue;
-      }
       handled.current.add(notice.id);
-      api.claim(notice.id)
-        .then(() => api.present(notice.id))
+      if (mine === "again") { void show(); continue; }
+      api.present(notice.id)
         .then(() => { onPresented(notice); return show(); })
-        .catch(() => { /* another device has it */ });
+        // It is no longer this window's to show. If it is handed here again, it is shown then.
+        .catch(() => { handled.current.delete(notice.id); });
     }
   }, [notices, attending, selected, onPresented]);
 

@@ -3,14 +3,17 @@
  * records. Ported from Robin's alfred-core/presence.ts, plus an explicit
  * `away` (the screen locked, the machine slept) from devices that can tell.
  *
- * Devices report `active` (real input, a window in use) and `away`. Activity is
- * kept as `presence.active` events, at most one per HEARTBEAT_MS, so "last seen"
- * spans every device. A report is a return when the user was away long enough:
- * after an explicit `away`, `awayReturnMs`; otherwise after `returnAfterMs` of
- * silence, or on a new local day. A return records `presence.returned` and one
- * `welcome` notice, in one transaction, claimed by the device that saw the user
- * come back. A second window, a reload or another device reporting a moment
- * later finds fresh presence and greets nobody.
+ * Devices report `active` (real input, a window in use) and `away`. When the
+ * user was last seen is state (one row, `core_presence`), spanning every
+ * device; being there is not something that happened, so a report that only
+ * says "still here" writes no event. What is an event is a change: the first
+ * report, going away, coming back from away, and a return.
+ * A report is a return when the user was away long enough: after an explicit
+ * `away`, `awayReturnMs`; otherwise after `returnAfterMs` of silence, or on a
+ * new local day. A return records `presence.returned` and one `welcome`
+ * notice, in one transaction, handed to the device that saw the user come
+ * back. A second window, a reload or another device reporting a moment later
+ * finds fresh presence and greets nobody.
  */
 import type { DatabaseSync } from "node:sqlite";
 import { appendEvent } from "./events.ts";
@@ -29,7 +32,8 @@ export interface PresenceOptions {
 }
 export const RETURN_AFTER_MS = 30 * 60_000;
 export const AWAY_RETURN_MS = 10 * 60_000;
-export const HEARTBEAT_MS = 3 * 60_000;
+/** "Still here" is written down at most this often: reports come every minute or so from each device. */
+const SEEN_EVERY_MS = 20_000;
 /** A welcome nobody saw within this long is stale; the next return makes a new one. */
 export const WELCOME_TTL_MS = 2 * 60 * 60_000;
 const CLAIM_MS = 60_000;
@@ -76,13 +80,21 @@ function digest(db: DatabaseSync, since: { seq: number; at: string }, now: numbe
   };
 }
 
-interface Seen { seq: number; at: number; atIso: string; kind: string }
-
-function lastPresence(db: DatabaseSync, kind?: string): Seen | null {
-  const row = db.prepare(`SELECT seq, at, kind FROM core_events WHERE subject = 'presence'
-    AND kind IN ('presence.active', 'presence.away') AND (? IS NULL OR kind = ?) ORDER BY seq DESC LIMIT 1`).get(kind ?? null, kind ?? null);
-  return row ? { seq: row.seq as number, at: Date.parse(row.at as string), atIso: row.at as string, kind: row.kind as string } : null;
+/** When the user was last seen, and whether they have gone since. `seq` is where the event log stood then: what
+ * came after it happened while they were away. */
+interface Seen {
+  active: { at: number; iso: string; seq: number } | null;
+  /** Set while the latest signal is an explicit `away`. */
+  away: { at: number; iso: string; seq: number } | null;
 }
+
+function seen(db: DatabaseSync): Seen {
+  const row = db.prepare("SELECT active_at, active_seq, away_at, away_seq FROM core_presence WHERE id = 1").get();
+  const point = (at: unknown, seq: unknown) => (typeof at === "string" ? { at: Date.parse(at), iso: at, seq: Number(seq ?? 0) } : null);
+  return { active: point(row?.active_at, row?.active_seq), away: point(row?.away_at, row?.away_seq) };
+}
+
+const cursor = (db: DatabaseSync) => db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM core_events").get()!.seq as number;
 
 /** Pure: given the last activity and the last presence signal, is a report at `now` a return?
  * With no history it is not: the clock starts, and the next real return greets.
@@ -100,30 +112,40 @@ export function reportPresence(world: World, input: { clientId: string; kind: Pr
   if (!CLIENT.test(input.clientId)) throw new Error("Invalid client id");
   if (!PRESENCE_KINDS.includes(input.kind)) throw new Error("Invalid presence kind");
   const now = input.now ?? Date.now();
+  const latestOf = (was: Seen) => (was.away ? { kind: "presence.away", at: was.away.at } : was.active ? { kind: "presence.active", at: was.active.at } : null);
+  if (input.kind === "active") {
+    // "Still here", a moment after the last one: nothing to write down, so not even a transaction.
+    const was = seen(world.db);
+    if (was.active && !was.away && now - was.active.at < SEEN_EVERY_MS && !isReturn(was.active.at, latestOf(was), now, input)) return { returned: false, notice: null };
+  }
   return world.tx((db) => {
-    const latest = lastPresence(db);
+    const was = seen(db);
     if (input.kind === "away") {
-      if (latest?.kind !== "presence.away") {
-        appendEvent(db, { kind: "presence.away", subject: "presence", actor: "user", runId: null, now, payload: { client: input.clientId } });
+      if (!was.away) {
+        const event = appendEvent(db, { kind: "presence.away", subject: "presence", actor: "user", runId: null, now, payload: { client: input.clientId } });
+        db.prepare("UPDATE core_presence SET away_at = ?, away_seq = ? WHERE id = 1").run(iso(now), event.seq);
       }
       return { returned: false, notice: null };
     }
-    const active = lastPresence(db, "presence.active");
-    const returned = isReturn(active?.at ?? null, latest, now, input);
-    if (!active || returned || latest?.kind === "presence.away" || now - active.at >= HEARTBEAT_MS) {
-      appendEvent(db, { kind: "presence.active", subject: "presence", actor: "user", runId: null, now, payload: { client: input.clientId } });
+    const here = () => db.prepare("UPDATE core_presence SET active_at = ?, active_seq = ?, away_at = NULL, away_seq = NULL WHERE id = 1").run(iso(now), cursor(db));
+    const returned = isReturn(was.active?.at ?? null, latestOf(was), now, input);
+    // The first time ever, and back after going away: changes worth an event. Still being here is not.
+    if (!was.active || was.away) appendEvent(db, { kind: "presence.active", subject: "presence", actor: "user", runId: null, now, payload: { client: input.clientId } });
+    if (!returned || !was.active) {
+      here();
+      return { returned: false, notice: null };
     }
-    if (!returned || !active) return { returned: false, notice: null };
     // Only the newest welcome matters; an older one nobody presented is stale.
     db.prepare(`UPDATE core_notices SET state = 'expired', updated_at = ?, claimed_by = NULL, claim_until = NULL
       WHERE kind = 'welcome' AND state IN ('pending', 'claimed')`).run(iso(now));
     // Away since the last activity, or since the explicit `away` if that came later.
-    const since = latest && latest.kind === "presence.away" && latest.seq > active.seq ? latest : active;
-    const away = digest(db, { seq: since.seq, at: since.atIso }, now);
+    const since = was.away ?? was.active;
+    const away = digest(db, { seq: since.seq, at: since.iso }, now);
     const event = appendEvent(db, { kind: "presence.returned", subject: "presence", actor: "system", runId: null, now, payload: { ...away, client: input.clientId } });
     const notice = createNotice(db, { eventSeq: event.seq, kind: "welcome", payload: { ...away }, ttlMs: WELCOME_TTL_MS, now });
     // The device that saw the user come back is the one that greets them.
     handNotice(db, notice, input.clientId, now + CLAIM_MS, now);
+    here();
     return { returned: true, notice: { ...notice, state: "claimed", claimedBy: input.clientId, claimUntil: iso(now + CLAIM_MS) } };
   });
 }
