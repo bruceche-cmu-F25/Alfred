@@ -687,6 +687,13 @@ html.desktop .dev-bar > * { -webkit-app-region: no-drag; }
   animation: says-rise 560ms cubic-bezier(.23, 1, .32, 1) both;
 }
 .says-own[data-phase="sink"] { animation: says-sink 520ms cubic-bezier(.55, 0, .75, .2) both; }
+/* In a session that fills the page the corner is the composer's: Alfred comes down into the session's bar, small
+   (Says.tsx gives it its place there). */
+.says-own[data-at="bar"] { right: auto; bottom: auto; padding: 5px; border-radius: 12px; box-shadow: 0 4px 14px #0000001f, inset 0 0 0 1px var(--line-soft); animation-name: says-drop; }
+.says-own[data-at="bar"] [data-speaking] { --hop: 6px; }
+.says-own[data-at="bar"][data-phase="sink"] { animation: says-lift 420ms cubic-bezier(.55, 0, .75, .2) both; }
+@keyframes says-drop { 0% { transform: translateY(-70px); } 65% { transform: translateY(4px); } 100% { transform: none; } }
+@keyframes says-lift { to { transform: translateY(-70px); } }
 @keyframes says-rise { 0% { transform: translateY(120px); } 65% { transform: translateY(-8px); } 100% { transform: none; } }
 @keyframes says-sink { 25% { transform: translateY(-6px); } 100% { transform: translateY(120px); } }
 @media (prefers-reduced-motion: reduce) { .says-own { animation: none !important; } }

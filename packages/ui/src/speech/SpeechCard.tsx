@@ -19,12 +19,25 @@ interface Props {
   onNext(): void;
   onClose(): void;
   onHover(hovered: boolean): void;
+  /** Only the title, in a pill: there is no room for more just now. */
+  brief?: boolean;
   style?: CSSProperties;
 }
 
 /** What Alfred says, coming out of its figure: the tail points back at it and the card grows from there. */
-export function SpeechCard({ said, out, complete, folding, more, tail, tailAt, onOpen, onNext, onClose, onHover, style }: Props) {
+export function SpeechCard({ said, out, complete, folding, more, tail, tailAt, onOpen, onNext, onClose, onHover, brief, style }: Props) {
   const chars = Array.from(said.body);
+  if (brief) {
+    return (
+      <div className={`speech brief mood-${said.mood}${folding ? " folding" : ""}`} data-tail={tail} role="status" aria-live="polite" style={{ ...style, "--tail-at": tailAt } as CSSProperties}>
+        <button type="button" className="speech-body" onClick={onOpen} title={said.body}>
+          <span className="speech-title"><span>{said.title}</span></span>
+          {more > 0 && <span className="speech-count">+{more}</span>}
+        </button>
+        <button type="button" className="speech-close" aria-label={t("presence.close")} onClick={onClose}>×</button>
+      </div>
+    );
+  }
   return (
     <div
       className={`speech mood-${said.mood}${folding ? " folding" : ""}`} data-tail={tail} role="status" aria-live="polite"

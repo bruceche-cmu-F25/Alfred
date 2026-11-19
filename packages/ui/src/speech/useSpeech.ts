@@ -52,6 +52,9 @@ export interface SpeechOptions<T> {
   done(item: T, outcome: Outcome): void;
   /** Once it has folded: take the item out of `items`. */
   remove(item: T): void;
+  /** No room for the whole card now (the user is in a conversation with Alfred): only its title shows, and it waits.
+   * Nothing is typed out and nothing times out until there is room; then it is said in full. */
+  brief?: boolean;
   /** Nothing left to say: whether the figure goes away (sinks) rather than staying. */
   leaving?(): boolean;
   /** After sinking. */
@@ -82,7 +85,8 @@ export function useSpeech<T>(options: SpeechOptions<T>): Speech<T> {
   const current = options.items[0] ?? null;
   const said = current ? options.lines(current) : null;
   const key = current ? options.id(current) : null;
-  const [out, complete] = useSpoken(said?.body ?? "", phase === "speak" ? key : null);
+  const brief = !!options.brief;
+  const [out, complete] = useSpoken(said?.body ?? "", phase === "speak" && !brief ? key : null);
 
   // Something to say and nothing on screen: hop up, then speak.
   useEffect(() => { if (current && phase === "idle") setPhase("hop"); }, [current, phase]);
@@ -120,14 +124,14 @@ export function useSpeech<T>(options: SpeechOptions<T>): Speech<T> {
     return () => window.clearTimeout(timer);
   }, [phase, current]);
 
-  // Once fully said, the card stays a while; never while the pointer is on it.
+  // Once fully said, the card stays a while; never while the pointer is on it, or while only its title shows.
   const finishRef = useRef(finish);
   finishRef.current = finish;
   useEffect(() => {
-    if (!current || phase !== "speak" || !complete || hovered) return;
+    if (!current || phase !== "speak" || !complete || hovered || brief) return;
     const timer = window.setTimeout(() => finishRef.current("timeout"), opts.current.stayMs(current));
     return () => window.clearTimeout(timer);
-  }, [current, phase, complete, hovered]);
+  }, [current, phase, complete, hovered, brief]);
 
   const talking = phase === "hop" || phase === "speak" || phase === "fold";
   const mood: FigureState | null = talking && said ? (phase === "speak" && !complete ? "speak" : said.mood) : null;
