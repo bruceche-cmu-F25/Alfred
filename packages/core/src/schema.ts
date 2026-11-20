@@ -272,4 +272,22 @@ ALTER TABLE core_automations_next RENAME TO core_automations;
   sql: `
 ALTER TABLE core_outbound ADD COLUMN quiet INTEGER NOT NULL DEFAULT 0 CHECK (quiet IN (0, 1));
 `,
+}, {
+  // Files the user sends with a message (files.ts): what each is; its bytes are on the home node's disk under its id.
+  id: "core:16",
+  sql: `
+CREATE TABLE core_files (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+  type TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'text', 'pdf')),
+  size INTEGER NOT NULL CHECK (size >= 0),
+  sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+  meta TEXT CHECK (meta IS NULL OR json_valid(meta)),
+  conversation_id TEXT,
+  run_id TEXT,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX core_files_run ON core_files(run_id);
+`,
 }];

@@ -16,12 +16,22 @@
  *   POST /api/conversations/:id             UpdateConversationRequest -> Conversation
  *   GET  /api/conversations/:id/changes     SessionChanges (a development session's changed files)
  *   GET  /api/conversations/:id/diff?path=  { diff } (one changed file, against the session's snapshot)
+ *   POST /api/files?name=<name>             the file's bytes as the body -> FileInfo (201): an image, a PDF or a text
+ *                                           file, 20 MB at most; what it is, is made out from the bytes. It is kept
+ *                                           for a day unless a message takes it (SubmitRunRequest.attachments)
+ *   GET  /api/files/:id                     the file's bytes (an image shows; anything else downloads)
  *   POST /api/runs                          SubmitRunRequest -> SubmitRunResponse (202); no conversationId starts one
  *   GET  /api/runs/:id                      RunDetail
  *   POST /api/runs/:id/cancel               -> Run
  *   POST /api/runs/:id/resume               -> Run
  *   POST /api/runs/:id/respond              RespondRequest -> Run (answers the question the run waits on)
  *   POST /api/runs/:id/steer                SteerRequest -> { delivered } (words into the turn now running; 409 if none)
+ *   The user's own terminal in a development session, only on the home node's machine (403 `local_only` elsewhere):
+ *   POST /api/conversations/:id/terminal          { cols, rows } -> TerminalInfo (opens it, or answers the open one)
+ *   GET  /api/conversations/:id/terminal/stream?from=<offset>   text/event-stream: `output` { data, offset }, `exit` { code }
+ *   POST /api/conversations/:id/terminal/input    { data } -> {}
+ *   POST /api/conversations/:id/terminal/resize   { cols, rows } -> {}
+ *   POST /api/conversations/:id/terminal/close    -> {}
  *   GET  /api/models                        ModelsResponse (models the engine can run)
  *   POST /api/ops/:op                       OpRequest -> OpResponse
  *   POST /api/notices/:id/(claim|present|acknowledge)   NoticeRequest -> Notice
@@ -152,10 +162,28 @@ export interface Project {
 export interface AddProjectRequest { requestId?: string; path: string; name?: string }
 export interface StartSessionRequest { requestId?: string; projectId: string; title: string; mode?: SessionMode }
 
+/** A development session's terminal: where it is open, and how much it has printed so far. */
+export interface TerminalInfo { cwd: string; exited: boolean; offset: number }
+
+/** A file the user sent with a message. Its bytes are on the home node (`GET /api/files/:id`). */
+export interface FileInfo {
+  id: string;
+  name: string;
+  type: string;
+  /** How it reaches the model: an image is shown to it, a text file is given as text, a PDF as the text in it. */
+  kind: "image" | "text" | "pdf";
+  size: number;
+  /** A PDF: its pages, and whether text could be read out of it (false: a scan, or the home node has no PDF reader). */
+  pages?: number;
+  readable?: boolean;
+}
+
 export interface ConversationDetail {
   conversation: Conversation;
   /** Oldest first. */
   runs: Run[];
+  /** Per run: the files sent with it. Absent from a home node older than this field. */
+  files?: Record<string, FileInfo[]>;
   /** Per run: its receipts (the events it wrote). */
   receipts: Record<string, CoreEvent[]>;
   /** Per run: how it went (`run.step`, `run.view`, `run.waiting`, `run.answered`, `run.steered`, `run.usage`), oldest first. */
@@ -305,7 +333,11 @@ export interface StateResponse {
   projects: Project[];
 }
 
-export interface SubmitRunRequest { requestId: string; goal: string; conversationId?: string; context?: ViewContext }
+export interface SubmitRunRequest {
+  requestId: string; goal: string; conversationId?: string; context?: ViewContext;
+  /** Ids of files uploaded for this message (at most 10). */
+  attachments?: string[];
+}
 export interface SubmitRunResponse { run: Run; replayed: boolean }
 export interface RunDetail { run: Run; events: CoreEvent[] }
 

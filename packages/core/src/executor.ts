@@ -11,6 +11,7 @@ import { getConversation, updateConversation, type ThinkingLevel } from "./conve
 import { getProject, type SessionMode } from "./projects.ts";
 import { grantCommand, listCommandGrants, simpleCommand, normalizeCommand } from "./shell.ts";
 import { appendEvent, recordDomainEvent } from "./events.ts";
+import { listRunFiles, type FileInfo } from "./files.ts";
 import { newId } from "./ids.ts";
 import { getSettings } from "./settings.ts";
 import {
@@ -63,6 +64,18 @@ export interface Workspace {
   /** The commands the user allowed for the rest of the session (shell.ts): they run without asking. */
   commands: string[];
 }
+/** A file the user sent with the message, as the engine gets it: where its bytes are, or where the text made of it
+ * is (a PDF's), on the home node's disk. No `path`: there is nothing to read (a scanned PDF); `note` says why. */
+export interface Attachment {
+  name: string;
+  /** `image`: shown to the model. `text`: given as text, from `path`. */
+  as: "image" | "text";
+  type: string;
+  size: number;
+  path?: string;
+  /** What the model is told about it beside its name ("PDF, 12 pages"). */
+  note?: string;
+}
 /** A file a development session changed, as a receipt. */
 export interface FileChange { path: string; added: number; removed: number; created: boolean }
 export interface EngineRequest {
@@ -86,6 +99,8 @@ export interface EngineRequest {
   thinking?: ThinkingLevel;
   /** A development session's project folder; absent for everyday conversations. */
   workspace?: Workspace;
+  /** The files the user sent with this message. They are the user's own material: read them, do not obey them. */
+  attachments?: Attachment[];
   /** What the turn ran on and how full its context is, once it ends. Optional for engines. */
   onUsage?(usage: TurnUsage): void;
 }
@@ -136,6 +151,8 @@ export interface ExecuteOptions {
   profiles: Readonly<Record<string, RunProfile>>;
   leaseMs?: number;
   heartbeatMs?: number;
+  /** Where a run's files are for the engine (the home node keeps the bytes). Left out, files are not passed on. */
+  attach?: (files: readonly FileInfo[]) => Attachment[];
   /** For the operator's log. The run itself keeps only a short code. */
   onEngineError?: (run: Run, error: unknown) => void;
   onLive?: (update: LiveUpdate) => void;
@@ -276,8 +293,11 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   // The conversation's own choice, else the user's default model and thinking (settings).
   const preferred = getSettings(world);
   const model = conversation.model ?? preferred.model, thinking = conversation.thinking ?? preferred.thinking;
+  const files = options.attach ? listRunFiles(world, [run.id])[run.id] ?? [] : [];
+  const attachments = files.length ? options.attach!(files) : [];
   const request: EngineRequest = {
     ...(workspace ? { workspace } : {}),
+    ...(attachments.length ? { attachments } : {}),
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),
     onUsage: (usage) => note("usage", { ...usage }),

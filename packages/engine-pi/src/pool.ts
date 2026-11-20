@@ -179,6 +179,7 @@ export function createWorkerEngine(options: WorkerEngineOptions): WorkerEngine {
         ...(request.model ? { model: request.model } : {}),
         ...(request.thinking ? { thinking: request.thinking } : {}),
         ...(request.workspace ? { workspace: request.workspace } : {}),
+        ...(request.attachments?.length ? { attachments: request.attachments } : {}),
       };
       const worker = acquire(request.thread);
       running.set(request.thread, { worker, run });

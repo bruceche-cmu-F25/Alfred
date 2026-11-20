@@ -33,4 +33,14 @@ contextBridge.exposeInMainWorld("alfredDesktop", {
   figureMenu: () => ipcRenderer.send("presence-menu"),
   /** Main window: the system's folder picker; resolves with the chosen folder's path, or null. */
   pickFolder: () => ipcRenderer.invoke("pick-folder"),
+  /** Main window: the browser pane, laid over the rectangle the page gives (in the page's own pixels). */
+  browser: {
+    show: (bounds) => ipcRenderer.send("browser-show", { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }),
+    hide: () => ipcRenderer.send("browser-hide"),
+    go: (url) => ipcRenderer.send("browser-go", String(url)),
+    back: () => ipcRenderer.send("browser-nav", "back"),
+    forward: () => ipcRenderer.send("browser-nav", "forward"),
+    reload: () => ipcRenderer.send("browser-nav", "reload"),
+    onState: (listener) => listen("browser-state", (_event, state) => listener(state)),
+  },
 });

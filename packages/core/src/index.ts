@@ -32,7 +32,7 @@ export {
 } from "./presence.ts";
 export {
   executeNextRun, createRunDrain, localDate,
-  type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext, type Workspace, type FileChange,
+  type EngineModel, type EnginePort, type EngineRequest, type ExecuteOptions, type ExternalHooks, type RunDrain, type TurnUsage, type LiveUpdate, type RunProfile, type RunTool, type RunToolContext, type Workspace, type FileChange, type Attachment,
 } from "./executor.ts";
 export {
   openProposal, getProposal, listOpenProposals, acceptProposal, declineProposal, supersedeProposal, expireProposals, ProposalStateError, PROPOSAL_TTL_MS,
@@ -46,6 +46,9 @@ export {
 } from "./automations.ts";
 export { listProjects, getProject, addProject, trustProject, removeProject, ProjectError, PROJECT_ID, SESSION_MODES, type Project, type SessionMode } from "./projects.ts";
 export { listDevices, pairDevice, deviceForToken, revokeDevice, setDeviceScope, hashToken, DeviceError, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope } from "./devices.ts";
+export {
+  addFile, getFile, listRunFiles, dropUnattachedFiles, fileName, FileError, FILE_KINDS, FILE_ID, MAX_FILES_PER_RUN, type FileInfo, type FileKind,
+} from "./files.ts";
 export { simpleCommand, commandAllowed, normalizeCommand, listCommandGrants, grantCommand, revokeCommand, type CommandGrant } from "./shell.ts";
 export { defaultSecretStore, fileStore, keychainStore, type SecretStore } from "./secrets.ts";
 export {

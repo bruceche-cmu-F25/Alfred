@@ -19,7 +19,7 @@ import {
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
-  getProject, listProjects,
+  getProject, listProjects, getFile, listRunFiles,
 } from "@alfred/core";
 import { invokeOp, runQuery } from "@alfred/module-kit";
 import type {
@@ -37,6 +37,7 @@ import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
 import type { PushService } from "./push.ts";
 import { MAX_VOICE_BYTES, type Transcriber } from "./voice.ts";
 
+import { MAX_FILE_BYTES } from "./files.ts";
 const MAX_BODY = 64 * 1024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const TYPES: Record<string, string> = {
@@ -114,12 +115,29 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
 }
 
 function statusOf(error: unknown): { status: number; body: ErrorResponse } {
+/** A request's body as bytes (an uploaded file), refused past `max`. */
+async function readBytes(req: IncomingMessage, max: number): Promise<Buffer> {
+  if (Number(req.headers["content-length"] ?? 0) > max) throw new HttpError(413, "A file can be 20 MB at most", "file_too_big");
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > max) throw new HttpError(413, "A file can be 20 MB at most", "file_too_big");
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
   if (error instanceof HttpError) return { status: error.status, body: { error: error.message, ...(error.code ? { code: error.code } : {}) } };
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : "Request failed";
   const code = (error as { code?: unknown }).code;
   if (name === "SettingsError") return { status: 400, body: { error: message } };
   if (name === "AutomationError") return { status: code === "missing" ? 404 : 400, body: { error: message } };
+  if (name === "SkillError") return { status: code === "not_found" ? 404 : code === "exists" ? 409 : code === "too_large" ? 413 : code === "unreachable" ? 502 : 400, body: { error: message, code: `skill_${String(code)}` } };
+  if (name === "TerminalError") return { status: code === "missing" ? 404 : code === "unavailable" ? 503 : code === "too_many" ? 409 : 400, body: { error: message, code: `terminal_${String(code)}` } };
+  if (name === "UploadError") return { status: code === "too_big" ? 413 : code === "unsupported" ? 415 : 400, body: { error: message, code: `file_${String(code)}` } };
+  if (name === "FileError") return { status: code === "missing" ? 404 : code === "taken" ? 409 : 400, body: { error: message, code: `file_${String(code)}` } };
   if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
   if (name === "PairingError") return { status: 400, body: { error: message, code: String(code) } };
   if (name === "VoiceError") return { status: code === "unavailable" ? 503 : code === "busy" ? 429 : 502, body: { error: message, code: `voice_${String(code)}` } };
@@ -197,7 +215,7 @@ function conversationDetail(home: Home, id: string): ConversationDetail {
   const conversation = getConversation(home.world, id);
   const runs = listRuns(home.world, { conversationId: id, limit: 100 }).reverse();
   const ids = runs.map((run) => run.id);
-  return { conversation, runs, receipts: listRunReceipts(home.world, ids), activity: listRunActivity(home.world, ids) };
+  return { conversation, runs, receipts: listRunReceipts(home.world, ids), activity: listRunActivity(home.world, ids), files: listRunFiles(home.world, ids) };
 }
 
 /** Server-Sent Events: replay after the cursor, then follow commits. Live
@@ -361,14 +379,36 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     const body = await readJson<SubmitRunRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.goal !== "string") throw new HttpError(400, "requestId and goal are required");
     needDev(inSession(home.world, body.conversationId));
+    if (body.attachments !== undefined && !(Array.isArray(body.attachments) && body.attachments.every((id) => typeof id === "string"))) throw new HttpError(400, "attachments is a list of file ids");
     const profile = profileFor(home.world, body.conversationId);
     // A session is its own page: what page the user had open is not its context.
     const context = profile === DEVELOPER_PROFILE ? undefined : body.context;
-    const result = withCoreContext({ actor: "user" }, () => submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile, conversationId: body.conversationId, context }));
+    const result = withCoreContext({ actor: "user" }, () => submitRun(home.world, { requestId: body.requestId, goal: body.goal, profile, conversationId: body.conversationId, context, attachments: body.attachments }));
     home.kick();
     return send(res, result.replayed ? 200 : 202, result);
   }
   if (method === "POST" && path === "/api/conversations") { needDev(true); return send(res, 201, (await ask("conversation.start")).result); }
+  // A file for the next message: its bytes are the body. What it is, is made out from them (files.ts).
+  if (method === "POST" && path === "/api/files") {
+    const bytes = await readBytes(req, MAX_FILE_BYTES);
+    return send(res, 201, await home.files.save({ name: url.searchParams.get("name") ?? "file", bytes }));
+  }
+  const kept = /^\/api\/files\/([A-Za-z0-9_-]{1,64})$/.exec(path);
+  if (kept && method === "GET") {
+    const found = getFile(home.world, kept[1]);
+    needDev(inSession(home.world, found.conversationId));
+    const bytes = home.files.read(found.id);
+    // The user's own file, but still only bytes to a browser: an image is shown as an image, anything else is
+    // handed over as a download; neither may load or run anything.
+    res.writeHead(200, {
+      "Content-Type": found.kind === "image" ? found.type : found.kind === "pdf" ? "application/pdf" : "text/plain; charset=utf-8",
+      "Content-Length": bytes.byteLength, "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      ...(found.kind === "image" ? {} : { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(found.name)}` }),
+    });
+    res.end(bytes);
+    return;
+  }
   // Projects: only from the home node's own machine (dispatch refuses other devices).
   if (method === "POST" && path === "/api/projects") return send(res, 200, (await ask("project.add")).result);
   const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
@@ -378,6 +418,54 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
   if (conversation && method === "POST") return send(res, 200, (await ask("conversation.update", { id: conversation[1] })).result);
   // A development session's changes since its snapshot, and one file's diff.
+  // The Mac app comes for what only it can do (desk.ts): it waits here for a request and posts back its answer.
+  // Whether the Mac app is there to be asked (it is running and comes for requests).
+  if (method === "GET" && path === "/api/desktop") return send(res, 200, { present: home.desk.present });
+  if (path === "/api/desktop/requests" || path.startsWith("/api/desktop/requests/")) {
+    if (!peer.local) throw new HttpError(403, LOCAL_ONLY, "local_only");
+    if (method === "GET" && path === "/api/desktop/requests") {
+      const gone = new AbortController();
+      req.on("close", () => gone.abort());
+      return send(res, 200, { request: await home.desk.next(25_000, gone.signal) });
+    }
+    const taken = /^\/api\/desktop\/requests\/([A-Za-z0-9_-]{1,32})$/.exec(path);
+    if (taken && method === "POST") {
+      // A page's text is longer than a command's body may be.
+      let body: { ok?: unknown; result?: unknown; error?: unknown };
+      try { body = JSON.parse((await readBytes(req, 512 * 1024)).toString("utf8")) as typeof body; } catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, "Invalid JSON"); }
+      const known = home.desk.answer(taken[1], body.ok === true ? { ok: true, result: body.result } : { ok: false, error: typeof body.error === "string" ? body.error : "failed" });
+      return send(res, known ? 200 : 404, known ? {} : { error: "That request is no longer waited for" });
+    }
+    throw new HttpError(404, "Not found");
+  }
+  // The user's own terminal in a development session: a shell with everything their account can do, so only this
+  // machine opens one, types into it or watches it. No device scope lets another device in.
+  const terminal = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/terminal(?:\/(stream|input|resize|close))?$/.exec(path);
+  if (terminal) {
+    if (!peer.local) throw new HttpError(403, LOCAL_ONLY, "local_only");
+    const [, id, action] = terminal;
+    const found = getConversation(home.world, id);
+    if (!found.projectId) throw new HttpError(404, "Not a development session");
+    if (method === "GET" && action === "stream") {
+      const from = Number(url.searchParams.get("from")) || 0;
+      res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+      const stop = home.terminals.follow(id, from, (event) => { if (!res.writableEnded) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); });
+      const keepAlive = setInterval(() => res.write(": keep-alive\n\n"), 25_000);
+      req.on("close", () => { stop(); clearInterval(keepAlive); });
+      return;
+    }
+    if (method !== "POST") throw new HttpError(405, "Method not allowed");
+    const body = await readJson<{ cols?: unknown; rows?: unknown; data?: unknown }>(req);
+    if (!action) {
+      const project = getProject(home.world, found.projectId);
+      if (!project.trustedAt) throw new HttpError(409, "This folder is not trusted yet", "untrusted");
+      return send(res, 200, home.terminals.open(id, project.path, body));
+    }
+    if (action === "input") { home.terminals.write(id, typeof body.data === "string" ? body.data : ""); return send(res, 200, {}); }
+    if (action === "resize") { home.terminals.resize(id, body.cols, body.rows); return send(res, 200, {}); }
+    home.terminals.close(id);
+    return send(res, 200, {});
+  }
   const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff)$/.exec(path);
   if (session && method === "GET") {
     needDev(true);

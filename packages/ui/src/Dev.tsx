@@ -17,6 +17,10 @@ import { Figure } from "./shell/Figure.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { MicButton } from "./voice/MicButton.tsx";
 import { appendDictation } from "./voice/wav.ts";
+import { AttachButton, AttachChips, useAttachments } from "./attach.tsx";
+import { sends } from "./prefs.ts";
+import { Terminal } from "./Terminal.tsx";
+import { BrowserPane } from "./BrowserPane.tsx";
 import { when } from "./shell/Nav.tsx";
 
 export interface DevProps {
@@ -60,6 +64,11 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
   const [panel, setPanel] = useState(() => { try { return matchMedia("(min-width: 1001px)").matches && localStorage.getItem(PANEL_KEY) !== "closed"; } catch { return false; } });
   const [changes, setChanges] = useState<SessionChanges | null>(null);
   const [open, setOpen] = useState<{ path: string; diff: string | null } | null>(null);
+  // The user's own terminal, under the conversation. Hiding it leaves its shell running.
+  const [term, setTerm] = useState(false);
+  // The Mac app's browser pane takes the place of the details panel while it is open.
+  const [browser, setBrowser] = useState(false);
+  const canBrowse = !!desktop?.browser;
   const togglePanel = () => setPanel((value) => { try { localStorage.setItem(PANEL_KEY, value ? "closed" : "open"); } catch { /* not remembered */ } return !value; });
 
   // The changed files, read again whenever this session's runs change something or finish.
@@ -81,15 +90,18 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
   const mode = conversation?.mode ?? "plan";
   const allowed = conversation?.commands ?? [];
   return (
-    <div className="dev-layout" data-panel={panel || undefined}>
+    <div className="dev-layout" data-panel={(panel && !browser) || undefined} data-browser={browser || undefined}>
       <section className="dev-session">
         <header className="dev-bar">
           <button type="button" className="icon-btn" onClick={() => onSession(null)} aria-label={t("dev.back")} title={t("dev.back")}><Icon name="back" /></button>
           {project && <span className="dev-where" title={project.path}><Icon name="folder" />{project.name}{changes?.branch ? ` · ${changes.branch}` : ""}</span>}
+          <button type="button" className="icon-btn dev-term-toggle" onClick={() => setTerm(!term)} aria-pressed={term} aria-label={t("term.title")} title={t("term.title")}><Icon name="terminal" /></button>
+          {canBrowse && <button type="button" className="icon-btn dev-browser-toggle" onClick={() => setBrowser(!browser)} aria-pressed={browser} aria-label={t("browser.title")} title={t("browser.title")}><Icon name="globe" /></button>}
           <button type="button" className="icon-btn dev-panel-toggle" onClick={togglePanel} aria-pressed={panel} aria-label={t("dev.panel")} title={t("dev.panel")}><Icon name="panel" /></button>
         </header>
         <Conversation key={id} id={id} live={live} highlighted={highlighted} suggestions={[]} pageTitle={pageTitle} automationTitle={automationTitle}
           onEvent={onEvent} onView={noView} onStarted={noView} />
+        {term && <Terminal session={id} onClose={() => setTerm(false)} />}
         {open && (
           <div className="dev-drawer" role="dialog" aria-label={open.path}>
             <header><button type="button" className="icon-btn" onClick={() => setOpen(null)} aria-label={t("common.close")}><Icon name="back" /></button><span className="p">{open.path}</span></header>
@@ -97,7 +109,8 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
           </div>
         )}
       </section>
-      {panel && (
+      {browser && <BrowserPane onClose={() => setBrowser(false)} />}
+      {panel && !browser && (
         <aside className="dev-panel" aria-label={t("dev.panel")}>
           <section>
             <h3>{t("dev.env")}</h3>
@@ -165,6 +178,7 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const attachments = useAttachments();
   const project = projects.find((candidate) => candidate.id === chosen);
   const fail = (reason: unknown) => setError(reason instanceof ApiError && reason.code === "local_only" ? t("dev.addLocal")
     : reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope") : reason instanceof Error ? reason.message : String(reason));
@@ -188,16 +202,17 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
 
   const start = (event?: FormEvent) => {
     event?.preventDefault();
-    const text = draft.trim();
-    if (!text || !project?.trustedAt || busy) return;
+    const files = attachments.ids;
+    const text = draft.trim() || (files.length ? t("attach.look") : "");
+    if (!text || !project?.trustedAt || busy || attachments.busy) return;
     setBusy(true);
     setError(null);
     api.startSession(project.id, text, mode)
-      .then(async (conversation) => { await api.submit(text, conversation.id); onSession(conversation.id); })
+      .then(async (conversation) => { await api.submit(text, conversation.id, undefined, files); attachments.clear(); onSession(conversation.id); })
       .catch((reason) => { fail(reason); setBusy(false); });
   };
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) start(event);
+    if (sends(event)) start(event);
   };
   const recent = sessionsOf(state).slice(0, 5);
   const nameOf = (projectId: string | null) => projects.find((candidate) => candidate.id === projectId)?.name ?? "";
@@ -210,7 +225,8 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
           <h2>{t("dev.new")}</h2>
         </header>
 
-        <form className="composer dev-composer" onSubmit={start}>
+        <form className="composer dev-composer" onSubmit={start} onPaste={attachments.onPaste} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
+          <AttachChips attachments={attachments} />
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKey}
             rows={Math.min(6, Math.max(2, draft.split("\n").length))} maxLength={8000} aria-label={t("composer.label")}
             placeholder={project?.trustedAt ? t("dev.ask", { name: project.name }) : t("dev.pick")} disabled={!project?.trustedAt} />
@@ -230,8 +246,9 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
               </select>
             </label>
             <span className="grow" />
+            <AttachButton attachments={attachments} disabled={!project?.trustedAt} />
             <MicButton disabled={!project?.trustedAt} onText={(words) => setDraft((now) => appendDictation(now, words))} />
-            <button type="submit" className="send" disabled={!draft.trim() || !project?.trustedAt || busy} aria-label={t("composer.send")}>
+            <button type="submit" className="send" disabled={(!draft.trim() && !attachments.ids.length) || !project?.trustedAt || busy || attachments.busy} aria-label={t("composer.send")}>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
             </button>
           </div>

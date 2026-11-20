@@ -17,6 +17,7 @@ import type { AwayDigest, Notice, PresenceResponse, StateResponse } from "@alfre
 import { detectLocale, translate, type Key, type Locale } from "@alfred/ui/i18n";
 import { noticeLines } from "@alfred/ui/notice";
 import { welcomeLines } from "@alfred/ui/welcome";
+import { BrowserPane } from "./browser.ts";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
 import { appIcon, trayIcon } from "./icon.ts";
@@ -46,6 +47,8 @@ const config = homeNodeConfig({ runtime: process.execPath, cli: here("../../serv
 const client = new HomeClient(config.port);
 
 let main: BrowserWindow | null = null;
+/** The browser pane of the main window (browser.ts); made with the window. */
+let pane: BrowserPane | null = null;
 let presence: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
@@ -147,8 +150,37 @@ function createMain(): BrowserWindow {
   window.webContents.on("did-finish-load", fullScreen);
   window.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: "deny" }; });
   window.webContents.on("will-navigate", (event, url) => { if (!sameOrigin(url)) { event.preventDefault(); openExternal(url); } });
+  pane = new BrowserPane(window, { own: client.base, onState: (state) => { if (!window.isDestroyed()) window.webContents.send("browser-state", state); } });
+  // A page that reloads (or leaves the session) no longer holds a place for the pane.
+  window.webContents.on("did-start-navigation", (_event, _url, inPage, mainFrame) => { if (mainFrame && !inPage) pane?.hide(); });
   void window.loadURL(`${client.base}/`);
   return window;
+}
+
+/** The home node asks for what only this app can do (today: what is in the browser pane). The app comes for those
+ * requests, one at a time, for as long as it runs. */
+async function serveDesk(): Promise<void> {
+  for (;;) {
+    if (quitting) return;
+    try {
+      const response = await fetch(`${client.base}/api/desktop/requests`, { signal: AbortSignal.timeout(40_000) });
+      if (!response.ok) throw new Error(`requests: ${response.status}`);
+      const { request } = await response.json() as { request: { id: string; type: string } | null };
+      if (!request) continue;
+      let outcome: { ok: true; result: unknown } | { ok: false; error: string };
+      try {
+        if (request.type === "browser.where") outcome = { ok: true, result: pane?.where() ?? { open: false } };
+        else if (request.type === "browser.read") outcome = { ok: true, result: await pane?.read() ?? { open: false } };
+        else outcome = { ok: false, error: `This app cannot do ${request.type}` };
+      } catch (error) {
+        outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      await fetch(`${client.base}/api/desktop/requests/${request.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(outcome), signal: AbortSignal.timeout(10_000) }).catch(() => {});
+    } catch {
+      // The home node is away or older than this: try again in a while.
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  }
 }
 
 // ---- the figure's place --------------------------------------------------
@@ -558,6 +590,19 @@ function wireIpc(): void {
     if (!fromOurPages(event) || !presence || event.sender !== presence.webContents) return;
     if (!settings.showFigure && presence.isVisible()) presence.hide();
   });
+  // The browser pane: the page says where it is and where to go; only the main window's page may.
+  const fromMain = (event: IpcMainEvent) => fromOurPages(event) && !!main && event.sender === main.webContents;
+  ipcMain.on("browser-show", (event, bounds: unknown) => {
+    const rect = bounds as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | null;
+    if (!fromMain(event) || !rect || ![rect.x, rect.y, rect.width, rect.height].every((value) => typeof value === "number" && Number.isFinite(value))) return;
+    pane?.show({ x: rect.x as number, y: rect.y as number, width: rect.width as number, height: rect.height as number });
+  });
+  ipcMain.on("browser-hide", (event) => { if (fromMain(event)) pane?.hide(); });
+  ipcMain.on("browser-go", (event, url: unknown) => { if (fromMain(event) && typeof url === "string" && url.length <= 2100) pane?.go(url); });
+  ipcMain.on("browser-nav", (event, action: unknown) => {
+    if (!fromMain(event)) return;
+    if (action === "back") pane?.back(); else if (action === "forward") pane?.forward(); else if (action === "reload") pane?.reload();
+  });
   // Adding a project: the user picks the folder in the system's own dialog, so the path is one they chose.
   ipcMain.handle("pick-folder", async (event) => {
     if (!sameOrigin(event.senderFrame?.url ?? "") || !main || event.sender !== main.webContents) return null;
@@ -600,6 +645,7 @@ app.whenReady().then(async () => {
   });
 
   presence = createPresence();
+  void serveDesk();
   if (!app.getLoginItemSettings().wasOpenedAtLogin) showMain();
   if (!globalShortcut.register(HOTKEY, toggleMain)) console.warn(`[alfred] could not register ${HOTKEY}`);
   watchPresence();

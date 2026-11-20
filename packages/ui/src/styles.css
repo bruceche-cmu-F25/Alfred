@@ -866,3 +866,61 @@ textarea.ev-field:disabled { opacity: .5; }
 .with-mic > textarea + .mic { align-self: flex-end; margin-bottom: 3px; }
 .pal-field { border-bottom: 1px solid var(--line-soft); padding-right: 12px; }
 .pal .pal-field input { border-bottom: 0; }
+
+/* Files sent with a message (attach.tsx): the paperclip, the chips waiting in a composer, and those under a turn. */
+.attach-button { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.attach-button:hover:not(:disabled) { color: var(--ink); background: color-mix(in oklab, var(--field), var(--ink) 7%); }
+.attach-button:disabled { opacity: .4; cursor: default; }
+.attach-button svg { width: 18px; height: 18px; }
+.attach-chips, .sent-files { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.composer .attach-chips { padding: 2px 0 6px; width: 100%; }
+.composer:not(:has(.pick)):has(.attach-chips) { flex-wrap: wrap; }
+.sent-files { margin: 6px 0 2px; justify-content: flex-end; }
+.attach-chip { max-width: 240px; min-width: 0; display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 4px; border-radius: 10px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .75rem; text-decoration: none; }
+a.attach-chip { padding-right: 10px; }
+a.attach-chip:hover { box-shadow: inset 0 0 0 1px var(--muted); }
+.attach-chip img, .attach-kind { flex: none; width: 28px; height: 28px; border-radius: 7px; object-fit: cover; }
+.attach-kind { display: grid; place-items: center; background: var(--wash); color: var(--muted); font: 600 .5625rem/1 var(--mono); letter-spacing: .02em; }
+.attach-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink); }
+.attach-note { flex: none; color: var(--muted); white-space: nowrap; }
+.attach-chip[data-state="uploading"] { opacity: .7; }
+.attach-chip[data-state="failed"] { box-shadow: inset 0 0 0 1px var(--bad); }
+.attach-chip[data-state="failed"] { max-width: 340px; }
+.attach-chip[data-state="failed"] .attach-name { flex: 0 1 auto; min-width: 48px; }
+.attach-chip[data-state="failed"] .attach-note { flex: 1 1 auto; min-width: 0; color: var(--bad); overflow: hidden; text-overflow: ellipsis; }
+.attach-chip button { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.attach-chip button:hover { color: var(--ink); background: var(--wash); }
+.attach-chip button svg { width: 12px; height: 12px; }
+.ask-files { padding: 8px 10px; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); }
+
+/* The user's own terminal in a development session (Terminal.tsx): a panel under the conversation. */
+.dev-term-toggle { margin-left: auto; }
+.dev-term-toggle + .dev-panel-toggle { margin-left: 0; }
+.dev-term-toggle[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+.dev-session:has(.dev-term) > .conversation { min-height: 120px; }
+.dev-term { flex: none; height: min(42%, 380px); min-height: 180px; display: flex; flex-direction: column; border-top: 1px solid var(--line); background: var(--paper); }
+.dev-term > header { flex: none; display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 8px 4px 14px; border-bottom: 1px solid var(--line-soft); font-size: .75rem; color: var(--ink); }
+.dev-term > header .quiet { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+.dev-term > header .icon-btn { width: 26px; height: 26px; font-size: .875rem; }
+.dev-term > header .lk-btn { min-height: 24px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); font-size: .75rem; }
+.dev-term-host { flex: 1; min-height: 0; padding: 6px 4px 4px 12px; overflow: hidden; }
+.dev-term-host .xterm { height: 100%; }
+.dev-term-host .xterm-viewport { background: transparent !important; }
+.dev-term > .problem, .dev-term-note { padding: 10px 14px; }
+
+/* The Mac app's browser pane in a development session (BrowserPane.tsx): the app draws the browser itself over
+   .dev-browser-place; this is the bar above it. */
+.dev-term-toggle + .dev-browser-toggle, .dev-browser-toggle + .dev-panel-toggle { margin-left: 0; }
+.dev-browser-toggle[aria-pressed="true"] { color: var(--ink); background: var(--wash); }
+.dev-layout[data-browser] { grid-template-columns: minmax(340px, 1fr) minmax(360px, 1.15fr); }
+.dev-browser { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line-soft); background: var(--paper); }
+.dev-browser-bar { flex: none; display: flex; align-items: center; gap: 2px; padding: 8px 8px 8px 10px; }
+html.desktop .dev-browser-bar { -webkit-app-region: no-drag; }
+.dev-browser-bar .icon-btn { width: 28px; height: 28px; font-size: .9375rem; }
+.dev-browser-bar .icon-btn:disabled { opacity: .35; cursor: default; }
+.dev-browser-bar input { flex: 1; min-width: 0; height: 30px; margin: 0 4px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font: .8125rem var(--mono); outline: none; }
+.dev-browser-bar input:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.dev-browser-bar input[data-loading] { box-shadow: inset 0 0 0 1.5px var(--alf-soft), inset 0 -2px 0 var(--accent); }
+.dev-browser-note { padding: 0 14px 8px; }
+.dev-browser-place { flex: 1; min-height: 0; display: grid; place-items: center; padding: 24px; background: var(--raise); text-align: center; }
+.dev-browser-place p { max-width: 320px; }

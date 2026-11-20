@@ -24,6 +24,7 @@ import { outcomeText } from "../Inbox.tsx";
 import { Markdown } from "../Markdown.tsx";
 import { describeReceipt, errorText } from "../receipts.ts";
 import { MicButton } from "../voice/MicButton.tsx";
+import { AttachButton, AttachChips, useAttachments } from "../attach.tsx";
 import { appendDictation } from "../voice/wav.ts";
 import type { About } from "./about.ts";
 import { newestRun, standing } from "./ask.ts";
@@ -136,7 +137,8 @@ export interface AskBarProps {
   about?: About | null;
   onAbout?(about: null): void;
   /** Sends the words: to the open conversation while it is recent, else as a new one. */
-  onAsk(text: string): Promise<void>;
+  /** `attachments`: ids of files uploaded for this message. */
+  onAsk(text: string, attachments?: string[]): Promise<void>;
   /** Opens the conversation in Alfred's panel. */
   onOpen(): void;
   onProposal(id: string): void;
@@ -233,23 +235,27 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
   // On a phone the bar appears because Alfred was tapped: the cursor goes straight in.
   useEffect(() => { if (dock) field.current?.focus(); }, [dock]);
 
+  const attachments = useAttachments();
   const send = (event?: FormEvent, text = draft) => {
     event?.preventDefault();
-    const goal = text.trim();
-    if (!goal || sending) return;
+    // Files alone are a message too; words about a picked thing take no files.
+    const files = about ? [] : attachments.ids;
+    const goal = text.trim() || (files.length ? t("attach.look") : "");
+    if (!goal || sending || attachments.busy) return;
     setSending(true);
     setError(null);
     setDecided(null);
     if (about) {
       // Words about the thing in the bar go to it; it then leaves the bar.
       about.send(goal)
-        .then(() => { if (text === draft) setDraft(""); onAbout?.(null); })
+        // What comes of the words shows on the page: the cursor leaves the bar, so nothing opens over it.
+        .then(() => { if (text === draft) setDraft(""); onAbout?.(null); field.current?.blur(); setFocused(false); })
         .catch((reason: Error) => setError(reason.message))
         .finally(() => setSending(false));
       return;
     }
-    onAsk(goal)
-      .then(() => { if (text === draft) setDraft(""); setCard(true); })
+    onAsk(goal, files)
+      .then(() => { if (text === draft) setDraft(""); attachments.clear(); setCard(true); })
       .catch((reason: Error) => setError(reason.message))
       .finally(() => setSending(false));
   };
@@ -288,8 +294,9 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
   const offer = focused && !draft.trim() && !sending && (about ? true : !showCard && where !== "busy") && chips.length > 0;
   return (
     <div className="ask" ref={root} data-dock={dock || undefined}>
-      {((showCard && !about) || offer || error || found.length > 0) && (
+      {((showCard && !about) || offer || error || found.length > 0 || (attachments.items.length > 0 && !about)) && (
         <div className="ask-over">
+          {!about && attachments.items.length > 0 && <div className="ask-files"><AttachChips attachments={attachments} /></div>}
           {showCard && !about && (
             <AskCard key={run.id} run={run} live={words} doing={doing?.runId === run.id ? doing.label : undefined} receipts={receipts} proposal={proposal}
               decided={decided?.runId === run.id ? decided.text : undefined}
@@ -315,7 +322,7 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
           {error && <p className="problem small ask-error" role="alert">{error}</p>}
         </div>
       )}
-      <form className="ask-form" onSubmit={send}>
+      <form className="ask-form" onSubmit={send} onPaste={about ? undefined : attachments.onPaste} onDrop={about ? undefined : attachments.onDrop} onDragOver={about ? undefined : attachments.onDragOver}>
         {dock
           ? <button type="button" className="icon-btn" onClick={onBack} aria-label={t("ask.back")} title={t("ask.back")}><Icon name="down" /></button>
           : <button type="button" className="ask-figure" onClick={onOpen} aria-label={t("fab.open", { key: `${MOD}.` })} title={t("fab.open", { key: `${MOD}.` })}><Figure state={figure} size={28} anchor /></button>}
@@ -331,8 +338,9 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
           role="combobox" aria-expanded={found.length > 0} aria-controls="ask-found" aria-activedescendant={found.length ? `ask-found-${lit}` : undefined}
         />
         {!dock && !draft && !focused && !about && <kbd aria-hidden="true">{MOD}K</kbd>}
+        {!about && <AttachButton attachments={attachments} />}
         <MicButton onText={(text) => { setDraft((now) => appendDictation(now, text)); field.current?.focus(); }} />
-        <button type="submit" className="send" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
+        <button type="submit" className="send" disabled={(!draft.trim() && !(attachments.ids.length && !about)) || sending || attachments.busy} aria-label={t("composer.send")}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
         </button>
       </form>

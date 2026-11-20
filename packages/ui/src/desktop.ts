@@ -39,7 +39,20 @@ export interface DesktopBridge {
   figureMenu(): void;
   /** Main window: the system's folder picker; the chosen folder's path, or null. Absent in older app builds. */
   pickFolder?(): Promise<string | null>;
+  /** Main window: the browser pane, a real browser the app lays over a rectangle of the page. Absent in older app
+   * builds and outside the Mac app. */
+  browser?: {
+    /** Where the pane goes, in the page's own pixels; called again whenever that place moves or changes size. */
+    show(bounds: { x: number; y: number; width: number; height: number }): void;
+    hide(): void;
+    go(url: string): void;
+    back(): void;
+    forward(): void;
+    reload(): void;
+    onState(listener: (state: BrowserPaneState) => void): () => void;
+  };
 }
+export interface BrowserPaneState { open: boolean; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; error?: string }
 
 declare global {
   interface Window { alfredDesktop?: DesktopBridge }

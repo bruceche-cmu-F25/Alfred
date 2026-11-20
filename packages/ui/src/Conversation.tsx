@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationDetail, CoreEvent, EngineModel, Run, RunRequest, SessionMode, ThinkingLevel, ViewContext } from "@alfred/protocol";
+import type { ConversationDetail, CoreEvent, EngineModel, FileInfo, Run, RunRequest, SessionMode, ThinkingLevel, ViewContext } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
 import { Logo, modelMark } from "./brand/Logo.tsx";
 import { t, type Key } from "./i18n/index.ts";
@@ -10,6 +10,8 @@ import { Markdown } from "./Markdown.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { MicButton } from "./voice/MicButton.tsx";
 import { appendDictation } from "./voice/wav.ts";
+import { AttachButton, AttachChips, SentFiles, useAttachments } from "./attach.tsx";
+import { sends } from "./prefs.ts";
 
 const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
 
@@ -151,7 +153,7 @@ export function Request({ run, request }: { run: Run; request: RunRequest }) {
   );
 }
 
-function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, latest }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string; latest: boolean }) {
+function Turn({ run, receipts, activity, files, live, highlighted, askedOn, startedBy, latest }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; files?: FileInfo[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string; latest: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = (action: () => Promise<unknown>) => {
@@ -185,6 +187,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
       {askedOn && <p className="asked-on">{t("conv.askedFrom", { page: askedOn })}</p>}
       {/* An automation's run: nobody said anything; say which automation started it, and when. */}
       {startedBy ? <p className="asked-on auto-from" title={run.goal}>{startedBy}</p> : <p className="said"><Linked text={run.goal} /></p>}
+      <SentFiles files={files} />
       {added.map((event) => <p className="said added" key={event.id}><Linked text={String(event.payload.text)} /></p>)}
       <div className="reply-row">
         <span className="turn-dot" data-phase={dot} data-latest={latest || undefined} aria-hidden="true" />
@@ -352,6 +355,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   // reloading for it emptied the list on every streamed word.
   const view = useRef(onView);
   view.current = onView;
+  const attachments = useAttachments();
 
   useEffect(() => {
     setDetail(null);
@@ -396,12 +400,15 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   const working = last?.state === "running" ? last : null;
   const send = (event?: FormEvent, text = draft) => {
     event?.preventDefault();
-    const goal = text.trim();
-    if (!goal || sending) return;
+    // Files alone are a message too: they go with a few words of their own.
+    const files = attachments.ids;
+    const goal = text.trim() || (files.length ? t("attach.look") : "");
+    if (!goal || sending || attachments.busy) return;
     setSending(true);
     setError(null);
-    const submit = () => api.submit(goal, id ?? undefined, context).then(({ run }) => { if (!id) onStarted(run.conversationId); });
-    const attempt = working
+    const submit = () => api.submit(goal, id ?? undefined, context, files).then(({ run }) => { attachments.clear(); if (!id) onStarted(run.conversationId); });
+    // Words can join the turn that is working; files cannot, so with files it is the next message.
+    const attempt = working && !files.length
       // It may have just finished: then it goes as a new message.
       ? api.steer(working.id, goal).then(() => undefined, (reason: unknown) => {
         if (reason instanceof ApiError && reason.status === 409) return submit();
@@ -414,8 +421,8 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
       .finally(() => setSending(false));
   };
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter sends; Shift+Enter breaks the line; never while an IME is composing.
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) send(event);
+    // Enter sends and Shift+Enter breaks the line, or ⌘Enter sends (Settings → General); never while an IME is composing.
+    if (sends(event)) send(event);
   };
 
   // Which page a question came from, said once each time it changes, not on every turn.
@@ -438,7 +445,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         <ol className="turns" ref={list} onScroll={onScroll}>
           {runs.map((run, index) => (
             <Turn key={run.id} run={run} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
-              live={liveOf(run)} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />
+              files={detail?.files?.[run.id]} live={liveOf(run)} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />
           ))}
         </ol>
       )}
@@ -447,7 +454,8 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
           {suggestions.map((text) => <button type="button" key={text} className="suggestion" onClick={() => send(undefined, text)}>{text}</button>)}
         </div>
       )}
-      <form className="composer" onSubmit={send}>
+      <form className="composer" onSubmit={send} onPaste={attachments.onPaste} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
+        <AttachChips attachments={attachments} />
         <textarea
           ref={field}
           value={draft}
@@ -461,8 +469,9 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         <div className="composer-bar">
           {!slim && <ComposerBar conversation={detail?.conversation} onError={setError} />}
           <span className="grow" />
+          <AttachButton attachments={attachments} />
           <MicButton onText={(words) => { setDraft((now) => appendDictation(now, words)); field.current?.focus(); }} />
-          <button type="submit" className="send" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
+          <button type="submit" className="send" disabled={(!draft.trim() && !attachments.ids.length) || sending || attachments.busy} aria-label={t("composer.send")}>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>
           </button>
         </div>

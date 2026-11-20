@@ -14,13 +14,14 @@
   "dependencies": {
     "@alfred/core": "*",
     "@alfred/engine-pi": "*",
-    "@alfred/module-kit": "*",
     "@alfred/module-calendar": "*",
+    "@alfred/module-kit": "*",
     "@alfred/module-links": "*",
     "@alfred/module-mail": "*",
     "@alfred/module-todo": "*",
     "@alfred/protocol": "*",
     "@alfred/ui": "*",
+    "node-pty": "1.2.0-beta.15",
     "web-push": "3.6.7"
   },
   "devDependencies": {

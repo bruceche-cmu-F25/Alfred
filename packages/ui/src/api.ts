@@ -3,7 +3,7 @@
  */
 import type {
   Automation, Schedule,
-  Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, DeviceScope, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
+  Conversation, ConversationDetail, CoreEvent, DeviceInfo, FileInfo, DeviceKind, DeviceScope, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
   Project, SessionChanges, SessionMode, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
@@ -68,8 +68,10 @@ const post = <T>(path: string, body: unknown) =>
 export const api = {
   state: () => call<StateResponse>("/api/state"),
   /** Without a conversation id, the run starts a new conversation. `context`: the page it was asked from. */
-  submit: (goal: string, conversationId?: string, context?: ViewContext) =>
-    post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}) }),
+  submit: (goal: string, conversationId?: string, context?: ViewContext, attachments?: string[]) =>
+    post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}), ...(attachments?.length ? { attachments } : {}) }),
+  /** A file for the next message: kept on the home node, which says what it is (an image, a PDF, text) or refuses it. */
+  upload: (file: Blob, name: string) => call<FileInfo>(`/api/files?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
   updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode; forgetCommand?: string }) =>
     post<Conversation>(`/api/conversations/${id}`, { requestId: newRequestId(), ...change }),

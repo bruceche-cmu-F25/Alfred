@@ -11,6 +11,7 @@ import { EventEmitter } from "node:events";
 import type { DatabaseSync } from "node:sqlite";
 import { CONVERSATION_ID, ConversationError, createConversation, titleFrom, touchConversation } from "./conversations.ts";
 import { appendEvent, readRunEvents, type CoreEvent } from "./events.ts";
+import { attachFiles } from "./files.ts";
 import { iso, newId } from "./ids.ts";
 import { createNotice } from "./notices.ts";
 import { TEMPLATE_TEXT, type AutomationTemplate } from "./automation-templates.ts";
@@ -186,6 +187,8 @@ export interface SubmitRunInput {
   context?: unknown;
   /** Started by this automation, not by the user (automations.ts). */
   automationId?: string;
+  /** Files sent with the message (files.ts), by id: uploaded before, and no other message's. */
+  attachments?: readonly string[];
   now?: number;
 }
 
@@ -199,7 +202,11 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
   const goal = input.goal.trim();
   if (!goal || goal.length > 8000) throw new Error("Goal must be 1–8000 characters");
   const context = viewContext(input.context);
-  const hash = createHash("sha256").update(JSON.stringify({ goal, profile: input.profile, conversationId: input.conversationId ?? null, ...(context ? { context } : {}), ...(input.automationId ? { automationId: input.automationId } : {}) })).digest("hex");
+  const attachments = [...new Set(input.attachments ?? [])];
+  const hash = createHash("sha256").update(JSON.stringify({
+    goal, profile: input.profile, conversationId: input.conversationId ?? null, ...(context ? { context } : {}),
+    ...(input.automationId ? { automationId: input.automationId } : {}), ...(attachments.length ? { attachments } : {}),
+  })).digest("hex");
   const now = input.now ?? Date.now();
   return world.tx((db) => {
     const existing = db.prepare("SELECT * FROM core_runs WHERE request_id = ?").get(input.requestId);
@@ -214,7 +221,8 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
     db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at, context, automation_id)
       VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`).run(id, input.requestId, hash, conversationId, goal, input.profile, iso(now), iso(now), context ? JSON.stringify(context) : null, input.automationId ?? null);
     const run = load(db, id);
-    runEvent(db, run, "queued", now, { conversationId });
+    const files = attachments.length ? attachFiles(db, attachments, run) : [];
+    runEvent(db, run, "queued", now, { conversationId, ...(files.length ? { files: files.map((file) => ({ name: file.name, kind: file.kind })) } : {}) });
     return { run, replayed: false };
   });
 }

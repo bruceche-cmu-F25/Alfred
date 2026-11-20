@@ -4,7 +4,7 @@
  * they write the world under the run's lease. So a tool call travels to the
  * home node and its result comes back. One worker handles one run at a time.
  */
-import type { EngineRequest, FileChange, Workspace } from "@alfred/core";
+import type { Attachment, EngineRequest, FileChange, Workspace } from "@alfred/core";
 
 /** A tool as the worker sees it: its description only. */
 export interface ToolSpec {
@@ -28,6 +28,9 @@ export interface RunJob {
   thinking?: string;
   /** A development session's project folder: the session works there, with the file tools its access allows. */
   workspace?: Workspace;
+  /** The files the user sent with this turn: images are shown to the model, text is put into the turn (a long one is
+   * left on disk for the model to read). */
+  attachments?: Attachment[];
 }
 
 export interface ModelInfo { id: string; provider: string; name: string; reasoning: boolean; contextWindow?: number }

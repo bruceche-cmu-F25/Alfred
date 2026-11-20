@@ -305,11 +305,12 @@ export function App() {
   /** Says something to Alfred from outside its panel (the ask bar, the palette). It joins the open conversation
    * while that is recent, going straight into a turn that is still running; otherwise it starts a new one. */
   const conversations = state?.conversations, runs = state?.runs, go = route.go;
-  const ask = useCallback(async (text: string) => {
+  const ask = useCallback(async (text: string, attachments?: string[]) => {
     const target = continues(conversations?.find((conversation) => conversation.id === selected), Date.now());
-    const submit = () => api.submit(text, target ?? undefined, view?.context).then(({ run }) => { if (run.conversationId !== selected) go({ selected: run.conversationId }); });
+    const submit = () => api.submit(text, target ?? undefined, view?.context, attachments).then(({ run }) => { if (run.conversationId !== selected) go({ selected: run.conversationId }); });
     const working = target ? runs?.find((run) => run.conversationId === target && run.state === "running") : undefined;
-    if (!working) return submit();
+    // Words can join the turn that is working; files cannot, so with files it is the next message.
+    if (!working || attachments?.length) return submit();
     // It may have just finished: then it goes as a new message.
     await api.steer(working.id, text).then(() => undefined, (reason: unknown) => {
       if (reason instanceof ApiError && reason.status === 409) return submit();
