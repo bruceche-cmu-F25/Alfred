@@ -21,6 +21,7 @@ import { BrowserPane } from "./browser.ts";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
 import { appIcon, trayIcon } from "./icon.ts";
+import { installTextMenu } from "./text-menu.ts";
 
 const HOTKEY = "Alt+Space";
 /** Room for the figure to hop and grow and for its speech card; the transparent rest lets clicks through. */
@@ -137,6 +138,7 @@ function createMain(): BrowserWindow {
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#171613" : "#fcf9f6", // the paper theme's page colour (tokens.css)
     webPreferences: webPreferences("main"),
   });
+  installTextMenu(window, window.webContents);
   window.on("close", (event) => {
     // Closing the window hides it; Alfred keeps running.
     if (!quitting) { event.preventDefault(); window.hide(); }

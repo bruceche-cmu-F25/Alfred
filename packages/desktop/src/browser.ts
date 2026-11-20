@@ -10,6 +10,7 @@
  * text, and what it logged as warnings and errors.
  */
 import { session, WebContentsView, type BrowserWindow, type Rectangle } from "electron";
+import { installTextMenu } from "./text-menu.ts";
 
 export interface BrowserState { open: boolean; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; error?: string }
 export interface BrowserRead { open: boolean; url?: string; title?: string; loading?: boolean; text?: string; console?: string[] }
@@ -60,6 +61,7 @@ export class BrowserPane {
     store.on("will-download", (event) => event.preventDefault());
     const view = new WebContentsView({ webPreferences: { session: store, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false } });
     const contents = view.webContents;
+    installTextMenu(this.#window, contents);
     contents.setWindowOpenHandler(({ url }) => { if (this.#allowed(url)) void contents.loadURL(url); return { action: "deny" }; });
     const guard = (event: { preventDefault(): void }, url: string) => { if (!this.#allowed(url)) event.preventDefault(); };
     contents.on("will-navigate", guard);
