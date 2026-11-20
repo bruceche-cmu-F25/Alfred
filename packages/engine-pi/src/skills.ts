@@ -1,7 +1,7 @@
 /** Alfred's skills: folders of instructions (the Agent Skills format, a `SKILL.md` with a name and a description) in
  * `<data>/skills/`, which every engine session is told about (worker.ts). The home node lists them, switches one off
  * or on, removes one, and adds one in two ways: copied from another agent's folder on this Mac, or downloaded from
- * skills.sh (after pi-web's Settings › Skills, which runs `npx skills`; Alfred asks the site's own download route
+ * skills.sh (after pi-web's Settings › Skills, github.com/agegr/pi-web, which runs `npx skills`; Alfred asks the site's own download route
  * instead, so nothing is run).
  *
  * Off is the format's own `disable-model-invocation: true` in the skill's frontmatter: the skill stays on disk and
@@ -63,7 +63,8 @@ function frontmatterBlock(content: string): { start: number; end: number; newlin
 
 /** The skill's text with `disable-model-invocation` set or taken out: one line changes, the rest of the frontmatter
  * keeps its formatting. The key is found by being there, not by being true: a second key beside an explicit `false`
- * would make the file unreadable, and the skill would disappear. (From pi-web's lib/skill-frontmatter.ts.) */
+ * would make the file unreadable, and the skill would disappear. Adapted from pi-web's lib/skill-frontmatter.ts (https://github.com/agegr/pi-web, MIT, © 2026 agegr;
+ * see THIRD-PARTY-NOTICES.md). */
 export function setSkillDisabled(content: string, disable: boolean): string {
   const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
   const has = Object.prototype.hasOwnProperty.call(frontmatter, KEY);

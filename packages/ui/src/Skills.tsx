@@ -1,4 +1,4 @@
-/** Settings → Skills: the instructions Alfred reads when a task calls for one (after pi-web's Settings › Skills).
+/** Settings → Skills: the instructions Alfred reads when a task calls for one (after pi-web's Settings › Skills, github.com/agegr/pi-web, MIT).
  *
  * A plain list: one line per skill, its name, what it is for, and a switch (off stays on disk, and Alfred is not told
  * about it). A skill's name opens its instructions in a card over the page, where it can also be removed. Under the

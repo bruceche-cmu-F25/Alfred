@@ -103,4 +103,6 @@ npm run typecheck
 npm run dev:ui       # Vite on :5173, proxied to a running home node
 ```
 
-MIT licensed.
+MIT licensed. Alfred builds on [Pi](https://github.com/earendil-works/pi) (MIT, © Mario Zechner) and borrows code and
+designs from [pi-web](https://github.com/agegr/pi-web) (MIT, © agegr), among others: see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

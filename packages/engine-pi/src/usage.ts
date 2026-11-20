@@ -2,7 +2,8 @@
  * credential Alfred already keeps. Read-only; the token stays in the request and is never returned or logged.
  *
  * These endpoints are not a published API and may change, so parsing is defensive and a failure stays with its
- * provider. Formats follow pi-web-robin's provider-usage (itself after @narumitw/pi-usage, MIT).
+ * provider. Formats follow pi-web's lib/provider-usage.ts (https://github.com/agegr/pi-web, MIT, © 2026 agegr), itself after
+ * @narumitw/pi-usage (MIT, © 2026 narumiruna); see THIRD-PARTY-NOTICES.md.
  */
 import type { ModelUsage, ModelUsageWindow } from "@alfred/protocol";
 

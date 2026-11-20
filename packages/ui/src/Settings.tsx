@@ -1,5 +1,5 @@
 /** Settings, one tab per kind of thing (docs/design/settings-and-connections.md §3.7; the tabs after pi-web's
- * settings panel): General, Models, Accounts, Skills, Connectors, Devices.
+ * settings panel, github.com/agegr/pi-web, MIT): General, Models, Accounts, Skills, Connectors, Devices.
  *
  * Credentials, skills and connectors are the home node's: on another device only General and Devices are shown. A tab
  * that was opened stays mounted while the page is, so a sign-in that is waiting for the browser is not lost by

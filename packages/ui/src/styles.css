@@ -182,7 +182,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .conversation-head { padding: 16px max(16px, 6vw) 6px; }
 .conversation-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .conversation-head h1 { min-width: 0; font: 1rem/1.4 var(--sans); color: var(--copy); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* Usage, after pi web: ↑ in, ↓ out, cost, and a ring for how full the context is (amber past 70%, red past 90%). */
+/* Usage, after pi-web (github.com/agegr/pi-web, MIT): ↑ in, ↓ out, cost, and a ring for how full the context is (amber past 70%, red past 90%). */
 .conv-stats { flex: none; display: flex; align-items: center; gap: 9px; padding-left: 2px; font: .6875rem var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; cursor: default; }
 .conv-stats .ctx { display: inline-flex; align-items: center; gap: 4px; }
 .conv-stats .ctx svg { width: 13px; height: 13px; fill: none; stroke-width: 2; }

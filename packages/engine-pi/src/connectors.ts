@@ -52,7 +52,7 @@ const ENV = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 300);
 
-/** Names that mean a credential, in a URL's query or a command's arguments (after pi-web's Settings › MCP). */
+/** Names that mean a credential, in a URL's query or a command's arguments (after pi-web's Settings › MCP, github.com/agegr/pi-web, MIT). */
 const SECRET_WORD = /(key|token|secret|passw(or)?d|passphrase|credential|auth)/i;
 const MASK = "•••";
 /** A server's address as it is shown: without a password in it, and without the values of query parameters. */
