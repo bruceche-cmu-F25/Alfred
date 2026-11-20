@@ -80,10 +80,12 @@ function calendarCounts(snapshot: unknown, now: number = Date.now()) {
   };
 }
 
-/** The primary inbox's unread mail, newest first. */
+/** The page counts unread mail across categories; the sidebar badge tracks the primary inbox. */
 function unreadMail(snapshot: unknown) {
   const { messages = [], sources = [] } = (snapshot as MailSnapshot | undefined) ?? {};
-  return { sources, all: messages.length, unread: messages.filter((message) => message.unread && message.category === "primary"), broken: sources.some((source) => source.error) };
+  const unread = messages.filter((message) => message.unread);
+  return { sources, canRead: sources.some((source) => source.canRead !== false), all: messages.length, unread: unread.length,
+    primaryUnread: unread.filter((message) => message.category === "primary").length, broken: sources.some((source) => source.error) };
 }
 
 function soonest(state: StateResponse) {
@@ -162,18 +164,20 @@ const PAGES: PageDef[] = [
   },
   {
     key: "mail.inbox", get title() { return t("page.mail"); }, icon: "mail", k: "teal", group: "modules",
-    badge: (snapshot) => unreadMail(snapshot).unread.length || undefined,
+    badge: (snapshot) => unreadMail(snapshot).primaryUnread || undefined,
     summary: (snapshot) => {
       const mail = unreadMail(snapshot);
-      return mail.sources.length ? t("mail.sum", { unread: mail.unread.length, n: mail.all }) : t("src.notConnected.mail");
+      if (!mail.sources.length) return t("src.notConnected.mail");
+      return mail.canRead ? t("mail.sum", { unread: mail.unread, n: mail.all }) : t("mail.sendOnly");
     },
     headline: (snapshot) => {
       const mail = unreadMail(snapshot);
       if (!mail.sources.length) return t("head.mail.connect");
+      if (!mail.canRead) return t("mail.sendOnly");
       if (mail.broken) return t("head.mail.error");
-      return mail.unread.length ? t("head.mail.unread", { n: mail.unread.length }) : t("head.mail.clear");
+      return mail.unread ? t("head.mail.unread", { n: mail.unread }) : t("head.mail.clear");
     },
-    suggestions: (snapshot) => unreadMail(snapshot).sources.length ? ["sug.mail.reply", "sug.mail.today", "sug.mail.important"] : [],
+    suggestions: (snapshot) => unreadMail(snapshot).canRead ? ["sug.mail.reply", "sug.mail.today", "sug.mail.important"] : [],
     render: ({ snapshot, state, line }) => <Mail snapshot={snapshot as MailSnapshot | undefined} state={state} line={line} />,
   },
   {

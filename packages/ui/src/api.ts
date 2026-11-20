@@ -109,7 +109,7 @@ export const api = {
   run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
   cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, { requestId: newRequestId() }),
   resume: (runId: string) => post<Run>(`/api/runs/${runId}/resume`, { requestId: newRequestId() }),
-  op: (op: string, input: unknown) => post<OpResponse>(`/api/ops/${op}`, { requestId: newRequestId(), input }),
+  op: (op: string, input: unknown, requestId = newRequestId()) => post<OpResponse>(`/api/ops/${op}`, { requestId, input }),
   present: (id: string) => post<Notice>(`/api/notices/${id}/present`, { client: deviceId }),
   acknowledge: (id: string) => post<Notice>(`/api/notices/${id}/acknowledge`, {}),
   /** What this window sees (is it being looked at, when was it last used), for the home node to decide who tells the

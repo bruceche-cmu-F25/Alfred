@@ -34,6 +34,8 @@ export interface MailSource {
   syncedAt: string | null;
   error: string | null;
   reconnect: boolean;
+  /** Older snapshots include only accounts with inbox access. */
+  canRead?: boolean;
   /** The user let Alfred send from this account (Settings: Gmail：替你发). */
   canSend: boolean;
 }

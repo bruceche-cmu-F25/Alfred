@@ -10,10 +10,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Proposal, Run, StateResponse } from "@alfred/protocol";
 import type { MailDetail, MailMessage, MailSent, MailSnapshot, SendInput } from "@alfred/module-mail/types";
-import { api } from "./api.ts";
+import { api, newRequestId } from "./api.ts";
+import { NewMail } from "./NewMail.tsx";
 import { outcomeText } from "./Inbox.tsx";
 import { Linked, OutLink } from "./Linked.tsx";
 import { SourceBar } from "./SourceBar.tsx";
+import { Icon } from "./shell/icons.tsx";
 import type { PageLine, Picked } from "./shell/about.ts";
 import { MicButton } from "./voice/MicButton.tsx";
 import { appendDictation } from "./voice/wav.ts";
@@ -30,8 +32,8 @@ const GOING = new Set<Run["state"]>(["queued", "running", "cancelling"]);
 /** A draft: Alfred's (a step of an open proposal) or the user's own (kept on this device). */
 type Draft =
   | { kind: "alfred"; key: string; input: SendInput; at: string; proposal: Proposal; index: number }
-  | { kind: "own"; key: string; input: SendInput; at: string };
-interface OwnDraft { key: string; input: SendInput; at: string }
+  | ({ kind: "own" } & OwnDraft);
+interface OwnDraft { key: string; input: SendInput; at: string; requestId?: string }
 
 const messageKey = (message: Pick<MailMessage, "account" | "id">) => `${message.account}|${message.id}`;
 const pickedOf = (message: MailMessage): Picked => ({ id: message.id, title: `${message.from}: ${message.subject}`.slice(0, 200) });
@@ -208,6 +210,14 @@ interface ReaderProps {
   onBack(): void;
 }
 
+function MailBack({ onBack }: { onBack: () => void }) {
+  return (
+    <button type="button" className="mail-back small" onClick={onBack}>
+      <Icon name="back" />{t("mail.back")}
+    </button>
+  );
+}
+
 function Reader({ message, draft, writing, sent, canSend, line, acts, written, onWritten, onDraft, onOwn, onBack }: ReaderProps) {
   const [detail, setDetail] = useState<MailDetail | "loading" | "gone">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -228,7 +238,7 @@ function Reader({ message, draft, writing, sent, canSend, line, acts, written, o
   });
   return (
     <article className="mail-read" aria-label={message.subject}>
-      <button type="button" className="ghost small mail-back" onClick={onBack}>‹ {t("mail.back")}</button>
+      <MailBack onBack={onBack} />
       <h2>{message.subject}</h2>
       <p className="mail-from"><b>{message.from}</b>{message.from !== message.fromEmail && <span className="quiet"> &lt;{message.fromEmail}&gt;</span>}</p>
       <p className="quiet small">
@@ -272,8 +282,10 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
   /** Runs asked from here, by what they are about (a message's key, or COMPOSE), until the state has caught up. */
   const [follow, setFollow] = useState<Record<string, { run: string; at: number }>>({});
   const { own, put, drop } = useOwnDrafts();
+  const [sending, setSending] = useState<string[]>([]);
   const messages = snapshot?.messages ?? [];
   const sources = snapshot?.sources ?? [];
+  const senders = sources.filter((source) => source.canSend).map((source) => source.account);
   const sentMail = snapshot?.sent ?? [];
   const lineNow = useRef(line);
   lineNow.current = line;
@@ -316,6 +328,7 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
   const count = (which: Filter) => (which === "drafts" ? drafts.length : messages.filter((message) => which === "all" || (which === "unread" ? message.unread : message.category === "primary")).length);
   const open = messages.find((message) => messageKey(message) === picked);
   const openDraft = picked?.startsWith("d:") ? drafts.find((draft) => `d:${draft.key}` === picked) : undefined;
+  const ownCompose = openDraft?.kind === "own" && openDraft.key.startsWith("compose:");
   const composing = isWriting(COMPOSE, COMPOSE);
 
   // A draft that is not under a message (a new email) is followed by the run that writes it: the pane waits while
@@ -340,7 +353,7 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
     return message ? pickedOf(message) : { id: COMPOSE, title: t("mail.compose.about") };
   };
   const sendOwn = async (draft: OwnDraft) => {
-    const { result } = await api.op("mail.send", draft.input);
+    const { result } = await api.op("mail.send", draft.input, draft.requestId);
     const refused = (result as { error?: unknown } | null)?.error;
     if (typeof refused === "string") throw new Error(refused);
     drop(draft.key);
@@ -402,6 +415,27 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
       subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`, replyTo: { id: message.id, threadId: message.threadId },
     },
   });
+  const startNew = () => {
+    line.attach(null);
+    const blank = own.find(({ key, input }) => key.startsWith("compose:") && !input.to.some(Boolean) && !input.cc.some(Boolean) && !input.subject && !input.body);
+    const key = blank?.key ?? `compose:${newRequestId()}`;
+    if (!blank) put({ key, at: new Date().toISOString(), input: { account: senders[0] ?? "", to: [], cc: [], subject: "", body: "" } });
+    setFilter("drafts");
+    setPicked(`d:${key}`);
+  };
+  const sendNew = async (draft: OwnDraft, input: SendInput) => {
+    if (sending.includes(draft.key)) return;
+    const requestId = draft.requestId ?? newRequestId();
+    // Keep the receipt key with the draft so retrying after a lost response cannot send it twice.
+    put({ key: draft.key, at: draft.at, input: { ...draft.input, account: input.account }, requestId });
+    setSending((keys) => [...keys, draft.key]);
+    try {
+      await sendOwn({ ...draft, input, requestId });
+      setPicked((current) => current === `d:${draft.key}` ? null : current);
+    } finally {
+      setSending((keys) => keys.filter((key) => key !== draft.key));
+    }
+  };
   const compose = () => line.attach(line.about === "mail:compose" ? null : {
     key: "mail:compose", label: t("mail.compose.about"), placeholder: t("mail.compose.placeholder"),
     async send(words) {
@@ -418,29 +452,41 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
       canSend={sources.find((source) => source.account === open.account)?.canSend ?? false}
       line={line} acts={acts} {...shownWritten(draftFor(messageKey(open)))} onDraft={draftReply(open)} onOwn={ownReply(open)} onBack={() => setPicked(null)} />
   ) : openDraft ? (
-    <article className="mail-read" aria-label={openDraft.input.subject}>
-      <button type="button" className="ghost small mail-back" onClick={() => setPicked(null)}>‹ {t("mail.back")}</button>
-      <DraftCard key={openDraft.key} draft={openDraft} acts={acts} changing={line.about === `mail:change:${openDraft.key}`} heading {...shownWritten(openDraft)} />
+    <article className="mail-read" aria-label={openDraft.input.subject || t("mail.compose.about")}>
+      {!ownCompose && <MailBack onBack={() => setPicked(null)} />}
+      {ownCompose ? (
+        <NewMail key={openDraft.key} input={openDraft.input} accounts={senders} busy={sending.includes(openDraft.key)} onBack={() => setPicked(null)}
+          onChange={(input) => put({ key: openDraft.key, at: openDraft.at, input })}
+          onDiscard={() => { drop(openDraft.key); setPicked(null); }}
+          onSend={(input) => sendNew(openDraft, input)} />
+      ) : <DraftCard key={openDraft.key} draft={openDraft} acts={acts} changing={line.about === `mail:change:${openDraft.key}`} heading {...shownWritten(openDraft)} />}
     </article>
   ) : picked?.startsWith("d:") && composing ? (
     <article className="mail-read">
-      <button type="button" className="ghost small mail-back" onClick={() => setPicked(null)}>‹ {t("mail.back")}</button>
+      <MailBack onBack={() => setPicked(null)} />
       <Writing />
     </article>
   ) : <p className="mail-read quiet mail-pick">{t("mail.pick")}</p>;
 
   return (
-    <section className="mail" aria-label={t("page.mail")}>
-      <SourceBar module="mail" mark="gmail" sources={sources} notConnected={t("src.notConnected.mail")} />
-      {sources.length > 0 && (
+    <section className="mail" data-composing={ownCompose || undefined} aria-label={t("page.mail")}>
+      <div className="mail-toolbar">
+        <SourceBar module="mail" mark="gmail" sources={sources} notConnected={t("src.notConnected.mail")} />
+        <div className="mail-toolbar-actions">
+          {(sources.length > 0 || drafts.length > 0 || composing) && (
+            <button type="button" className="mail-compose" aria-pressed={line.about === "mail:compose"} onClick={compose}>{t("mail.compose")}</button>
+          )}
+          <button type="button" className="mail-new" onClick={startNew}><Icon name="plus" />{t("mail.new")}</button>
+        </div>
+      </div>
+      {(sources.length > 0 || drafts.length > 0 || composing) && (
         <>
-          <div className="chips" role="group">
-            {FILTERS.filter(([id]) => id !== "drafts" || filter === "drafts" || drafts.length > 0 || composing).map(([id, label]) => (
-              <button type="button" key={id} className="chip" aria-pressed={filter === id} onClick={() => setFilter(id)}>
-                {t(label)}<span className="count">{count(id)}</span>
+          <div className="mail-filters" role="group" aria-label={t("mail.filters")}>
+            {FILTERS.map(([id, label]) => (
+              <button type="button" key={id} aria-pressed={filter === id} onClick={() => { setFilter(id); setPicked(null); }}>
+                {t(label)} <span className="count">{count(id)}</span>
               </button>
             ))}
-            <button type="button" className="chip mail-compose" aria-pressed={line.about === "mail:compose"} onClick={compose}>{t("mail.compose")}</button>
           </div>
           {said && <p className="inbox-said" role="status">{said}</p>}
           <div className="mail-split" data-reading={open || openDraft || (picked?.startsWith("d:") && composing) ? true : undefined}>
@@ -449,17 +495,19 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
                 <>
                   {composing && <li><button type="button" className="mail-row" aria-current={picked === "d:new" || undefined} onClick={() => setPicked("d:new")}><span className="mail-dot" aria-hidden="true" /><span className="mail-who working-label">{t("mail.writing")}</span></button></li>}
                   {drafts.length === 0 && !composing && <li className="quiet empty-list">{t("mail.empty.drafts")}</li>}
-                  {drafts.map((draft) => {
+                  {drafts.toSorted((a, b) => b.at.localeCompare(a.at)).map((draft) => {
                     const under = answers(draft);
-                    const target = under && messages.some((message) => messageKey(message) === under) ? under : `d:${draft.key}`;
+                    const inReader = under && draftFor(under)?.key === draft.key && messages.some((message) => messageKey(message) === under);
+                    const target = inReader ? under : `d:${draft.key}`;
+                    const recipients = draft.input.to.map((address) => address.trim()).filter(Boolean).join(", ");
+                    const preview = draft.input.body.trim().slice(0, 160);
                     return (
                       <li key={draft.key}>
-                        <button type="button" className="mail-row" aria-current={picked === target || undefined} onClick={() => setPicked(target)}>
-                          <span className="mail-dot" aria-hidden="true" />
-                          <span className="mail-who">{draft.input.to.join(", ")}</span>
-                          <span className="mail-meta">{draft.kind === "alfred" && <span className="tag" data-k="alfred">Alfred</span>}<time>{when(draft.at)}</time></span>
-                          <span className="mail-subject">{draft.input.subject || t("mail.nosubject")}</span>
-                          <span className="mail-snippet">{draft.input.body.slice(0, 160)}</span>
+                        <button type="button" className="mail-row mail-draft-row" aria-current={picked === target || undefined} onClick={() => setPicked(target)}>
+                          <span className="mail-draft-title">{draft.input.subject.trim() || t("mail.draft.untitled")}</span>
+                          <span className="mail-meta">{draft.kind === "alfred" && <span className="tag" data-k="alfred">Alfred</span>}<time dateTime={draft.at}>{when(draft.at)}</time></span>
+                          {recipients && <span className="mail-draft-to">{t("mail.to")} {recipients}</span>}
+                          {preview && <span className="mail-snippet">{preview}</span>}
                         </button>
                       </li>
                     );

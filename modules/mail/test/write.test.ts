@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { acceptProposal, CORE_MIGRATIONS, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
+import { acceptProposal, CORE_MIGRATIONS, listEvents, listNotices, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
 import { applyStep, assistantTools, deliverQueued, invokeOp, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
 import { buildRaw, checkAddress, mailModule, syncMail, type MailSnapshot } from "../src/index.ts";
 
@@ -138,4 +138,36 @@ test("the mail page hears what was sent from here: Alfred's draft once accepted,
   assert.equal(bodyOf(decode(sent[1].body.raw)), "One more thing: who signs first?");
   assert.deepEqual(page().map((mail) => mail[3]), ["done", "done"]);
   assert.match(String((invokeOp(w, [mailModule], { op: "mail.send", requestId: "own-2", input: { ...own, to: ["Leo <leo@studio.example>"] } }).result as { error?: string }).error), /plain email addresses/);
+});
+
+test("a send-only account can compose new mail without reading an inbox or starting a proposal", async () => {
+  const w = world();
+  const { google, sent } = fakeGmail({ capabilities: ["mailSend"] });
+  const page = () => mailModule.snapshot!(w) as MailSnapshot;
+  await syncMail(w, { google: fakeGmail().google });
+  assert.equal(page().messages.length, 1);
+  await syncMail(w, { google: { ...google, session: async () => assert.fail("send-only sync must not read Gmail") } });
+  assert.deepEqual(page().messages, [], "removing read access clears the previous mirror");
+  assert.deepEqual(page().sources.map((source) => [source.account, source.canRead, source.canSend]), [["me@example.com", false, true]]);
+  const input = { account: "me@example.com", to: ["ana@example.com"], cc: ["leo@example.com"], subject: "你好", body: "周五见。" };
+  const click = { op: "mail.send", requestId: "compose-click", input };
+  const queued = invokeOp(w, [mailModule], click);
+  assert.equal(invokeOp(w, [mailModule], click).replayed, true);
+  assert.deepEqual(queued.result, { queued: page().sent[0].id });
+  assert.equal(page().sent[0].state, "queued");
+  await deliverQueued(w, mailModule, { google }, signal);
+  assert.equal(sent.length, 1);
+  const message = decode(sent[0].body.raw);
+  assert.equal(sent[0].body.threadId, undefined);
+  assert.doesNotMatch(message, /In-Reply-To:|References:/);
+  assert.match(message, /To: ana@example\.com\r\nCc: leo@example\.com/);
+  assert.equal(bodyOf(message), input.body);
+  assert.equal(page().sent[0].state, "done");
+  await syncMail(w, { google: fakeGmail({ capabilities: ["mailRead"] }).google });
+  assert.deepEqual(page().sources.map((source) => [source.canRead, source.canSend]), [[true, false]]);
+  assert.equal(page().messages.length, 1);
+  const syncCount = () => listEvents(w).events.filter((event) => event.kind === "mail.synced").length;
+  const before = syncCount();
+  await syncMail(w, { google: fakeGmail().google });
+  assert.equal(syncCount(), before + 1, "send access changed while the inbox stayed the same");
 });

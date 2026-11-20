@@ -52,24 +52,38 @@ CREATE TABLE mail_sources (
   // Whether the user let Alfred send from the account (write.ts checks it before proposing).
   id: "mail:2",
   sql: "ALTER TABLE mail_sources ADD COLUMN can_send INTEGER NOT NULL DEFAULT 0 CHECK (can_send IN (0, 1));",
+}, {
+  // Existing sources were created only after reading an inbox.
+  id: "mail:3",
+  sql: "ALTER TABLE mail_sources ADD COLUMN can_read INTEGER NOT NULL DEFAULT 1 CHECK (can_read IN (0, 1));",
 }];
 
 /** Reads every connected account's inbox; one that fails keeps its last messages and says why. Records `mail.synced`
  * only when the inbox changed. */
 export async function syncMail(world: World, services: ModuleServices, signal?: AbortSignal, now: number = Date.now()): Promise<void> {
   const google = services.google;
-  const readable = (google?.accounts() ?? []).filter((account) => account.capabilities.includes("mailRead"));
-  const accounts = readable.map((account) => account.email);
-  const sends = new Set(readable.filter((account) => account.capabilities.includes("mailSend")).map((account) => account.email));
+  const connected = google?.accounts() ?? [];
+  const reads = new Set(connected.filter((account) => account.capabilities.includes("mailRead")).map((account) => account.email));
+  const sends = new Set(connected.filter((account) => account.capabilities.includes("mailSend")).map((account) => account.email));
   withDefaultActor("system", () => world.tx((db) => {
-    const gone = db.prepare("SELECT account FROM mail_sources").all().map((row) => row.account as string).filter((account) => !accounts.includes(account));
+    const gone = db.prepare("SELECT account FROM mail_sources").all().map((row) => row.account as string).filter((account) => !reads.has(account) && !sends.has(account));
     for (const account of gone) {
       db.prepare("DELETE FROM mail_messages WHERE account = ?").run(account);
       db.prepare("DELETE FROM mail_sources WHERE account = ?").run(account);
       recordDomainEvent(world, { kind: "mail.synced", subject: `mail:${account}`, payload: { removed: true } });
     }
+    for (const account of sends) {
+      if (reads.has(account)) continue;
+      const changed = db.prepare(`INSERT INTO mail_sources (account, can_read, can_send) VALUES (?, 0, 1)
+        ON CONFLICT(account) DO UPDATE SET can_read = 0, can_send = 1, synced_at = NULL, error = NULL, reconnect = 0, digest = NULL
+        WHERE can_read = 1`).run(account).changes;
+      if (changed) {
+        db.prepare("DELETE FROM mail_messages WHERE account = ?").run(account);
+        recordDomainEvent(world, { kind: "mail.synced", subject: `mail:${account}`, payload: { canRead: false, canSend: true } });
+      }
+    }
   }));
-  for (const account of accounts) {
+  for (const account of reads) {
     if (signal?.aborted) return;
     const known = new Set(world.db.prepare("SELECT id FROM mail_messages WHERE account = ?").all(account).map((row) => row.id as string));
     let result: Awaited<ReturnType<typeof readInbox>> | null = null;
@@ -81,11 +95,12 @@ export async function syncMail(world: World, services: ModuleServices, signal?: 
       failure = { error: (error as Error).message.slice(0, 300), reconnect: error instanceof ServiceError && error.code === "reconnect" };
     }
     withDefaultActor("system", () => world.tx((db) => {
-      const before = db.prepare("SELECT digest, error FROM mail_sources WHERE account = ?").get(account);
+      const before = db.prepare("SELECT digest, error, can_send FROM mail_sources WHERE account = ?").get(account);
+      const canSend = sends.has(account) ? 1 : 0;
       if (failure) {
         db.prepare(`INSERT INTO mail_sources (account, error, reconnect, can_send) VALUES (?, ?, ?, ?)
-          ON CONFLICT(account) DO UPDATE SET error = excluded.error, reconnect = excluded.reconnect, can_send = excluded.can_send`).run(account, failure.error, failure.reconnect ? 1 : 0, sends.has(account) ? 1 : 0);
-        if (before?.error !== failure.error) recordDomainEvent(world, { kind: "mail.synced", subject: `mail:${account}`, payload: { error: failure.error } });
+          ON CONFLICT(account) DO UPDATE SET error = excluded.error, reconnect = excluded.reconnect, can_read = 1, can_send = excluded.can_send`).run(account, failure.error, failure.reconnect ? 1 : 0, canSend);
+        if (before?.error !== failure.error || before?.can_send !== canSend) recordDomainEvent(world, { kind: "mail.synced", subject: `mail:${account}`, payload: { error: failure.error } });
         return;
       }
       const { inbox, unread, added } = result!;
@@ -103,9 +118,9 @@ export async function syncMail(world: World, services: ModuleServices, signal?: 
       for (const id of unread) markUnread.run(account, id);
       const digest = createHash("sha256").update(JSON.stringify([inbox, [...unread].sort()])).digest("hex");
       db.prepare(`INSERT INTO mail_sources (account, synced_at, error, reconnect, digest, can_send) VALUES (?, ?, NULL, 0, ?, ?)
-        ON CONFLICT(account) DO UPDATE SET synced_at = excluded.synced_at, error = NULL, reconnect = 0, digest = excluded.digest, can_send = excluded.can_send`)
-        .run(account, new Date(now).toISOString(), digest, sends.has(account) ? 1 : 0);
-      if (before?.digest !== digest || before?.error || added.length) {
+        ON CONFLICT(account) DO UPDATE SET synced_at = excluded.synced_at, error = NULL, reconnect = 0, digest = excluded.digest, can_read = 1, can_send = excluded.can_send`)
+        .run(account, new Date(now).toISOString(), digest, canSend);
+      if (before?.digest !== digest || before?.error || before?.can_send !== canSend || added.length) {
         recordDomainEvent(world, { kind: "mail.synced", subject: `mail:${account}`, payload: { messages: inbox.length, unread: unread.size, added: added.length } });
       }
     }));
@@ -126,7 +141,7 @@ function toMessage(row: Record<string, unknown>): MailMessage {
 export function mailSources(world: World): MailSource[] {
   return world.db.prepare("SELECT * FROM mail_sources ORDER BY account").all().map((row) => ({
     account: row.account as string, syncedAt: row.synced_at as string | null, error: row.error as string | null, reconnect: row.reconnect === 1,
-    canSend: row.can_send === 1,
+    canRead: row.can_read === 1, canSend: row.can_send === 1,
   }));
 }
 
@@ -170,7 +185,7 @@ const stamp = (iso: string) => { const date = new Date(iso); const pad = (n: num
 
 function notConnected(world: World): string | null {
   const sources = mailSources(world);
-  if (!sources.length) return "The user's mail is not connected. They can connect Google (Gmail, read) in Settings.";
+  if (!sources.some((source) => source.canRead)) return "The user's mail is not connected. They can connect Google (Gmail, read) in Settings.";
   return null;
 }
 
