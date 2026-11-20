@@ -94,7 +94,10 @@ export const api = {
   /** A file for the next message: kept on the home node, which says what it is (an image, a PDF, text) or refuses it. */
   upload: (file: Blob, name: string) => call<FileInfo>(`/api/files?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }),
   archivedConversations: () => call<{ conversations: ArchivedConversation[] }>("/api/conversations/archived"),
-  conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
+  conversation: (id: string, query?: { before: string } | { runs: string[] }) => {
+    const suffix = !query ? "" : "before" in query ? `?before=${encodeURIComponent(query.before)}` : `?runs=${query.runs.map(encodeURIComponent).join(",")}`;
+    return call<ConversationDetail>(`/api/conversations/${id}${suffix}`);
+  },
   readConversationReply: (id: string, runId: string) => post<Record<string, never>>(`/api/conversations/${id}/read`, { runId }),
   /** `worktree`: what to do with a session's worktree that has uncommitted changes, when archiving it. */
   updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; speed?: "fast" | null; mode?: SessionMode; forgetCommand?: string; worktree?: "keep" | "discard" }) =>

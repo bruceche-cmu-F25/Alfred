@@ -17,7 +17,7 @@ import { extname, join, normalize, sep } from "node:path";
 import {
   AREAS, getSettings, listOpenProposals, userLocale, withCoreContext, listAutomations, type World,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, markConversationReplyRead, getRun, listAutomationRuns, getAutomation, latestEventSeq, listConversations, listArchivedConversations, listEvents, listNotices,
-  listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
+  listRunActivity, listRunReceipts, listRuns, conversationRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
   getProject, listProjects, getFile, listRunFiles, isSession, runInSession, sessionEvent, sessionIds, sessionRoot,
 } from "@alfred/core";
@@ -122,11 +122,17 @@ function state(home: Home, peer: Peer): StateResponse {
   };
 }
 
-function conversationDetail(home: Home, id: string): ConversationDetail {
+function conversationDetail(home: Home, id: string, query: URLSearchParams): ConversationDetail {
   const conversation = getConversation(home.world, id);
-  const runs = listRuns(home.world, { conversationId: id, limit: 100, includeWaiting: true }).reverse();
-  const ids = runs.map((run) => run.id);
-  return { conversation, runs, receipts: listRunReceipts(home.world, ids), activity: listRunActivity(home.world, ids), files: listRunFiles(home.world, ids) };
+  const before = query.get("before") ?? undefined;
+  const changed = query.has("runs") ? (query.get("runs") || "").split(",").filter(Boolean) : undefined;
+  const validId = /^[A-Za-z0-9_-]{1,64}$/;
+  if ((before !== undefined && (!validId.test(before) || changed)) || (changed && (changed.length > 64 || changed.some((key) => !validId.test(key))))) {
+    throw new HttpError(400, "Invalid history query");
+  }
+  const page = conversationRuns(home.world, id, { before, changed });
+  const ids = page.runs.map((run) => run.id);
+  return { conversation, ...page, receipts: listRunReceipts(home.world, ids), activity: listRunActivity(home.world, ids), files: listRunFiles(home.world, ids) };
 }
 
 /** Server-Sent Events: replay after the cursor, then follow commits. Live
@@ -336,7 +342,7 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   }
   const conversation = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})$/.exec(path);
   if (conversation) needDev(isSession(home.world, conversation[1]));
-  if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
+  if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1], url.searchParams));
   if (conversation && method === "POST") return send(res, 200, (await ask("conversation.update", { id: conversation[1] })).result);
   // The Mac app comes for what only it can do (desk.ts): it waits here for a request and posts back its answer.
   // Whether the Mac app is there to be asked (it is running and comes for requests).

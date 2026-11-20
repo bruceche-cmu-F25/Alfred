@@ -334,4 +334,13 @@ CREATE INDEX core_runs_updated_at ON core_runs(updated_at);
   sql: `
 ALTER TABLE core_conversations ADD COLUMN unread_reply_id TEXT REFERENCES core_runs(id);
 `,
+}, {
+  // Large replies live beside the compact outcomes used in /state and result previews.
+  id: "core:23",
+  sql: `
+CREATE TABLE core_run_replies (
+  run_id TEXT PRIMARY KEY REFERENCES core_runs(id) ON DELETE CASCADE,
+  reply TEXT NOT NULL
+) STRICT;
+`,
 }];

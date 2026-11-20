@@ -27,6 +27,8 @@ export interface RunOutcome {
   status: "completed" | "failed" | "cancelled";
   /** The engine's own account. An interpretation, not proof of what happened. */
   reply?: string;
+  /** The overview carries a preview; the run and conversation detail carry the complete reply. */
+  replyTruncated?: true;
   /** A short code, never a raw provider error. */
   error?: string;
   /** Ids of the domain events recorded under this run: what it actually did. */
@@ -301,10 +303,11 @@ export function finishRun(world: World, id: string, owner: string, result: Omit<
     const receipts = receiptsOf(db, id);
     const outcome: RunOutcome = {
       status: result.status,
-      ...(result.reply ? { reply: result.reply.slice(0, 4000) } : {}),
+      ...(result.reply ? { reply: result.reply.slice(0, 4000), ...(result.reply.length > 4000 ? { replyTruncated: true as const } : {}) } : {}),
       ...(result.error ? { error: result.error.slice(0, 80) } : {}),
       receipts,
     };
+    if (outcome.replyTruncated) db.prepare("INSERT INTO core_run_replies (run_id, reply) VALUES (?, ?)").run(id, result.reply!);
     setState(db, run, result.status, now, { lease_owner: null, lease_until: null, outcome: JSON.stringify(outcome), request: null });
     closeWaitingNotices(db, id, now);
     touchConversation(db, run.conversationId, now);
@@ -322,7 +325,7 @@ export function finishRun(world: World, id: string, owner: string, result: Omit<
     } else if (!run.automationId && result.status === "completed" && outcome.reply) {
       recordUnreadReply(db, run.conversationId, id);
     }
-    return load(db, id);
+    return detailRun(db, id);
   });
 }
 
@@ -429,8 +432,56 @@ export function answerRequest(world: World, id: string, input: { requestId: stri
   return run;
 }
 
+const DETAIL_ROWS = `SELECT r.*, r.rowid AS history_order, body.reply AS full_reply
+  FROM core_runs r LEFT JOIN core_run_replies body ON body.run_id = r.id`;
+
+function withReply(row: Record<string, unknown>): Run {
+  const run = toRun(row);
+  if (typeof row.full_reply === "string" && run.outcome) {
+    run.outcome.reply = row.full_reply;
+    delete run.outcome.replyTruncated;
+  }
+  return run;
+}
+
+function detailRun(db: DatabaseSync, id: string): Run {
+  const run = load(db, id);
+  if (run.outcome?.replyTruncated) {
+    const row = db.prepare("SELECT reply FROM core_run_replies WHERE run_id = ?").get(id);
+    if (row) { run.outcome.reply = String(row.reply); delete run.outcome.replyTruncated; }
+  }
+  return run;
+}
+
 export function getRun(world: World, id: string): { run: Run; events: CoreEvent[] } {
-  return { run: load(world.db, id), events: readRunEvents(world.db, id) };
+  return { run: detailRun(world.db, id), events: readRunEvents(world.db, id) };
+}
+
+/** Chronological transcript pages, with the insertion order breaking timestamp ties. Older unanswered
+ * requests accompany the first page, but do not move the cursor past the intervening conversation. */
+export function conversationRuns(world: World, id: string, options: { before?: string; changed?: string[]; limit?: number } = {}) {
+  const scope = `${DETAIL_ROWS} WHERE r.conversation_id = ?`;
+  const order = " ORDER BY r.created_at DESC, r.rowid DESC";
+  const turn = (row: Record<string, unknown>) => ({ ...withReply(row), historyOrder: Number(row.history_order) });
+  if (options.changed) {
+    const rows = world.db.prepare(`${scope} AND r.id IN (SELECT value FROM json_each(?))${order}`)
+      .all(id, JSON.stringify(options.changed));
+    return { runs: rows.map(turn).reverse() };
+  }
+  const size = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 100)));
+  const before = options.before;
+  const rows = before === undefined
+    ? world.db.prepare(`${scope}${order} LIMIT ?`).all(id, size + 1)
+    : world.db.prepare(`${scope} AND (r.created_at, r.rowid) <
+        (SELECT created_at, rowid FROM core_runs WHERE id = ? AND conversation_id = ?)${order} LIMIT ?`).all(id, before, id, size + 1);
+  const page = rows.slice(0, size);
+  const boundary = page.at(-1);
+  const nextCursor = rows.length > size && boundary ? String(boundary.id) : null;
+  if (!before && nextCursor && boundary) {
+    page.push(...world.db.prepare(`${scope} AND r.request IS NOT NULL AND (r.created_at, r.rowid) < (?, ?)${order}`)
+      .all(id, boundary.created_at, boundary.history_order));
+  }
+  return { runs: page.map(turn).reverse(), nextCursor };
 }
 
 /** Newest first. A device can keep unanswered requests visible beyond its window of recent runs. */

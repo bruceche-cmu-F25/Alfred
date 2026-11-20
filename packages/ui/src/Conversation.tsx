@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { fastSpeed, type ConversationDetail, type CoreEvent, type EngineModel, type FileInfo, type Run, type RunRequest, type SessionMode, type ThinkingLevel, type ViewContext } from "@alfred/protocol";
+import { mergeHistory } from "./conversationHistory.ts";
 import { ApiError, api } from "./api.ts";
 import { Logo, modelMark } from "./brand/Logo.tsx";
 import { intlLocale, t, type Key } from "./i18n/index.ts";
@@ -425,7 +426,9 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   const [error, setError] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
-  const timer = useRef<number | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const readingEarlier = useRef(false);
+  const anchor = useRef<{ element: HTMLElement; top: number } | null>(null);
   // The latest onView, without being a reason to load again: the parent hands a new function on every render, and
   // reloading for it emptied the list on every streamed word.
   const view = useRef(onView);
@@ -435,8 +438,34 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
     setDetail(null);
     if (!id) return;
     let alive = true;
-    const load = () => api.conversation(id).then((next) => { if (alive) setDetail(next); })
-      .catch((reason: Error) => { if (alive) setError(reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope") : reason.message); });
+    let timer: number | undefined;
+    let fetched = false;
+    let loading = false;
+    let refresh = false;
+    const changed = new Set<string>();
+    // New runs and changes to already paged-in turns arrive over the same event stream. Refresh only
+    // the affected runs, in order, so an older response can never replace a newer state.
+    const load = async () => {
+      if (!alive || loading) return;
+      loading = true;
+      const ids = [...changed].slice(0, 64);
+      for (const key of ids) changed.delete(key);
+      refresh = false;
+      try {
+        const next = await api.conversation(id, fetched ? { runs: ids } : undefined);
+        if (!alive) return;
+        setDetail((current) => current ? mergeHistory(current, next, false) : next);
+        fetched = true;
+      } catch (reason) {
+        if (alive) setError(reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope") : (reason as Error).message);
+        // A subsequent event or reconnection retries any missing updates.
+        for (const key of ids) changed.add(key);
+        return;
+      } finally {
+        loading = false;
+      }
+      if (alive && (refresh || changed.size)) void load();
+    };
     void load();
     const off = onEvent((event) => {
       // Anything about this conversation or any run may concern it; reloading is cheap and local.
@@ -445,9 +474,11 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         // Only views opened now, by a run here: not ones replayed from history.
         api.run(event.runId).then(({ run }) => { if (run.conversationId === id) view.current(String(event.payload.module), String(event.payload.view)); }).catch(() => {});
       }
-      if (timer.current === null) timer.current = window.setTimeout(() => { timer.current = null; void load(); }, 100);
+      if (event.runId) changed.add(event.runId);
+      refresh = true;
+      if (timer === undefined) timer = window.setTimeout(() => { timer = undefined; void load(); }, 100);
     });
-    return () => { alive = false; off(); };
+    return () => { alive = false; window.clearTimeout(timer); off(); };
   }, [id, onEvent]);
 
   const runs = detail?.runs ?? [];
@@ -457,18 +488,43 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   const spoken = useRef<Record<string, string>>({});
   for (const [runId, text] of Object.entries(live)) spoken.current[runId] = text;
   const liveOf = (run: Run) => live[run.id] ?? (BUSY.has(run.state) ? spoken.current[run.id] : undefined);
-  // The list stays at its end while you are there, and stays put once you scroll up to read. A new turn takes you
-  // back to the end. Set, not animated: an animation restarted on every streamed word never arrives.
+  // Following a reply keeps its end in view. Someone else's new turn does not interrupt a reader in the past.
   const atEnd = useRef(true);
   const onScroll = () => {
     const el = list.current;
     if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   };
-  useLayoutEffect(() => { atEnd.current = true; }, [last?.id]);
   useLayoutEffect(() => {
     const el = list.current;
-    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+    const saved = anchor.current;
+    if (el && saved && el.contains(saved.element)) {
+      el.scrollTop += saved.element.getBoundingClientRect().top - saved.top;
+      anchor.current = null;
+    } else if (el && atEnd.current) {
+      el.scrollTop = el.scrollHeight;
+    }
   });
+
+  const loadEarlier = async () => {
+    const listElement = list.current;
+    if (!id || !detail?.nextCursor || !listElement || readingEarlier.current) return;
+    readingEarlier.current = true;
+    setLoadingEarlier(true);
+    try {
+      const page = await api.conversation(id, { before: detail.nextCursor });
+      if (list.current !== listElement) return;
+      const top = listElement.getBoundingClientRect().top;
+      const visible = [...listElement.querySelectorAll<HTMLElement>(".turn")].find((turn) => turn.getBoundingClientRect().bottom > top);
+      if (visible) anchor.current = { element: visible, top: visible.getBoundingClientRect().top };
+      atEnd.current = false;
+      setDetail((current) => current && mergeHistory(current, page, true));
+    } catch (reason) {
+      if (list.current === listElement) setError((reason as Error).message);
+    } finally {
+      readingEarlier.current = false;
+      setLoadingEarlier(false);
+    }
+  };
 
   // While a run works, what you say joins it, as in Claude; otherwise it is the next request.
   const working = last?.state === "running" ? last : null;
@@ -478,6 +534,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
     const files = attachments.ids;
     const goal = text.trim() || (files.length ? t("attach.look") : "");
     if (!goal || attachments.busy || !store.beginSend()) return;
+    atEnd.current = true;
     setError(null);
     const submit = () => api.submit(goal, id ?? undefined, context, files).then(({ run }) => { if (!id) onStarted(run.conversationId); });
     // Words can join the turn that is working; files cannot, so with files it is the next message.
@@ -520,6 +577,9 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
         </div>
       ) : (
         <ol className="turns" ref={list} onScroll={onScroll}>
+          {detail?.nextCursor && <li className="earlier-turns">
+            <button className="link" type="button" disabled={loadingEarlier} onClick={loadEarlier}>{t(loadingEarlier ? "auto.loading" : "conv.earlier")}</button>
+          </li>}
           {runs.map((run, index) => (
             <Turn key={run.id} run={run} unread={detail?.conversation.unreadReplyId === run.id} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
               files={detail?.files?.[run.id]} live={liveOf(run)} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />

@@ -90,6 +90,7 @@ export const zh = {
   "conv.model": "模型",
   "conv.defaultModel": "默认模型",
   "conv.thinking": "思考强度",
+  "conv.earlier": "加载更早的对话",
   "conv.context": "上下文 {n}%",
   "think.default": "默认思考",
   "think.off": "不思考",

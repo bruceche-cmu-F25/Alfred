@@ -12,7 +12,7 @@
  *   GET  /api/events?after=<seq>            text/event-stream: `core` events (data: CoreEvent, with ids, replayed
  *                                           after a drop) and `live` updates (data: LiveUpdate, never replayed)
  *   GET  /api/conversations/archived        { conversations: ArchivedConversation[] }, most recently archived first
- *   GET  /api/conversations/:id             ConversationDetail
+ *   GET  /api/conversations/:id             ConversationDetail (?before=<run id> for an older page, ?runs=<ids> to refresh changed turns)
  *   POST /api/conversations                 StartSessionRequest -> Conversation (a development session in a trusted project)
  *   POST /api/conversations/:id             UpdateConversationRequest -> Conversation
  *   GET  /api/conversations/:id/changes     SessionChanges (a development session's changed files)
@@ -71,6 +71,8 @@ export interface RunOutcome {
   status: "completed" | "failed" | "cancelled";
   /** The engine's own account; an interpretation, not proof. */
   reply?: string;
+  /** A compact overview may omit the end. Open the run or conversation to read the full text. */
+  replyTruncated?: true;
   error?: string;
   /** Ids of the events the run actually wrote. */
   receipts: string[];
@@ -236,8 +238,10 @@ export interface FileInfo {
 
 export interface ConversationDetail {
   conversation: Conversation;
-  /** Oldest first. */
-  runs: Run[];
+  /** Oldest first. Newer home nodes include the insertion order for messages created in the same millisecond. */
+  runs: Array<Run & { historyOrder?: number }>;
+  /** Start the next older page before this run. Absent on a refresh of individual turns or an older home node. */
+  nextCursor?: string | null;
   /** Per run: the files sent with it. Absent from a home node older than this field. */
   files?: Record<string, FileInfo[]>;
   /** Per run: its receipts (the events it wrote). */

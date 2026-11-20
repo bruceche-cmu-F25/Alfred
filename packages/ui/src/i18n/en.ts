@@ -91,6 +91,7 @@ export const en: Record<keyof typeof zh, string> = {
   "conv.model": "Model",
   "conv.defaultModel": "Default model",
   "conv.thinking": "Thinking",
+  "conv.earlier": "Load earlier messages",
   "conv.context": "Context {n}%",
   "think.default": "Default thinking",
   "think.off": "No thinking",

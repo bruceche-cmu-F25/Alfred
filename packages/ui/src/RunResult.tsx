@@ -17,16 +17,17 @@ export function RunResult({ runId, run, preview, reading = false }: { runId: str
   const [fetched, setFetched] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const supplied = run?.outcome?.replyTruncated ? undefined : run;
   useEffect(() => {
-    if (run) return;
+    if (supplied) return;
     let current = true;
     setError(null);
     api.run(runId).then(({ run }) => { if (current) setFetched(run); })
       .catch((reason: Error) => { if (current) setError(reason.message); });
     return () => { current = false; };
-  }, [runId, run, attempt]);
+  }, [runId, supplied, attempt]);
   const className = reading ? "run-reading inbox-result-reading" : "run-reading";
-  const result = run ?? (fetched?.id === runId ? fetched : null);
+  const result = supplied ?? (fetched?.id === runId ? fetched : null);
   if (!result) return <div className={className}>
     {preview && <p>{preview}</p>}
     {error ? <p className="problem small" role="alert">{error} <button className="link" type="button" onClick={() => setAttempt(attempt + 1)}>{t("archive.retry")}</button></p>
