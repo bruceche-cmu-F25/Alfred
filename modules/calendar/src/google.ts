@@ -17,6 +17,7 @@ export interface GoogleEvent {
   recurringEventId?: string;
   summary?: string;
   location?: string;
+  description?: string;
   htmlLink?: string;
   hangoutLink?: string;
   conferenceData?: { entryPoints?: Array<{ entryPointType?: string; uri?: string }> };
@@ -49,6 +50,8 @@ export interface EventRow {
   organizerSelf: boolean;
   /** `<calendar id>:<id of the repeating event>` when this is one time of an event that repeats. */
   recurring: string | null;
+  /** Its description, as Google holds it (which may be HTML). */
+  notes: string | null;
 }
 
 export function addDays(date: string, days: number): string {
@@ -92,6 +95,7 @@ export function mapEvent(item: GoogleEvent, calendarId: string, calendar: string
     etag: item.etag?.slice(0, 200) ?? null,
     organizerSelf: !!item.organizer?.self || (!item.organizer && !item.attendees?.length),
     recurring: item.recurringEventId ? `${calendarId}:${item.recurringEventId}`.slice(0, 300) : null,
+    notes: item.description?.slice(0, 4000) || null,
   };
 }
 

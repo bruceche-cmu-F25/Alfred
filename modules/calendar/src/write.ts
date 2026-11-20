@@ -1,22 +1,32 @@
 /** Changing the user's Google Calendar: adding an event (holding time), moving one they organize, answering an
  * invitation. A run never does these itself (level `external`): it proposes them, and on the user's yes each becomes
- * an outbound change (core/outbound.ts), which the home node hands to `deliverCalendar` one at a time. All three are
- * safe to deliver again: a new event carries its own id, and a move or an answer that Google already shows counts as
- * done.
+ * an outbound change (core/outbound.ts), which the home node hands to `deliverCalendar` one at a time. All of them
+ * are safe to deliver again: a new event carries its own id, and a move or an answer that Google already shows counts
+ * as done.
+ *
+ * The user needs no proposal for their own hand: on the calendar page they add an event (`calendar.create`), change
+ * one they organize (`calendar.edit`) or delete it (`calendar.delete`, which only they can do: a run has no tool for
+ * it), and saving, or confirming the delete, is the yes. Those go out the same way, quietly: the page shows them
+ * on their way (`pendingChanges`), and only one that fails is told.
  */
 import { randomInt } from "node:crypto";
-import { enqueueOutbound, localeOf, userLocale, type Locale, type Outbound, type World } from "@alfred/core";
-import { defineOp, defineTool, Type, type Delivered, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
-import { addDays } from "./google.ts";
+import { enqueueOutbound, listOutbound, localeOf, userLocale, type Locale, type Outbound, type World } from "@alfred/core";
+import { defineOp, defineQuery, defineTool, Type, type Delivered, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
+import { addDays, mapEvent, type GoogleEvent } from "./google.ts";
+import { colourOf, colourSeries, putEvent } from "./mirror.ts";
+import type { CalendarPending, CalendarWhen } from "./types.ts";
 
 const API = "https://www.googleapis.com/calendar/v3";
 const RESPONSES = ["accepted", "declined", "tentative"] as const;
 type Response = (typeof RESPONSES)[number];
 
-/** When an event is: a time span (instants) or whole days (local dates, the last one included). */
-type When = { start: string; end: string } | { date: string; endDate: string };
+type When = CalendarWhen;
 export interface AddInput { account: string; calendarId: string; calendar: string; title: string; when: When; location?: string; notes?: string }
 export interface MoveInput { account: string; calendarId: string; eventId: string; title: string; etag: string | null; when: When; notify: boolean; attendees: number }
+/** What the user changed of an event, by hand: only what is named is set. `title` is what it was called before. */
+export interface EditInput { account: string; calendarId: string; eventId: string; title: string; changes: { title?: string; when?: When; location?: string; notes?: string }; notify: boolean; attendees: number }
+/** An event the user deleted by hand. `at`: when it was, for the words. */
+export interface DeleteInput { account: string; calendarId: string; eventId: string; title: string; at: string; notify: boolean; attendees: number }
 export interface RespondInput { account: string; calendarId: string; eventId: string; title: string; response: Response; at: string }
 
 /** Google's event ids are base32hex. Ours start with "alfred", so they are recognisable in Google too. */
@@ -44,11 +54,15 @@ const SAY = {
     add: (input: AddInput) => `在「${input.calendar}」加「${input.title}」：${format(input.when, "zh")}`,
     move: (input: MoveInput) => `把「${input.title}」改到 ${format(input.when, "zh")}${input.notify ? `（会通知 ${input.attendees - 1} 位参会者）` : ""}`,
     respond: (input: RespondInput) => `${{ accepted: "接受", declined: "拒绝", tentative: "暂定" }[input.response]}「${input.title}」（${input.at}）的邀请`,
+    delete: (input: DeleteInput) => `删除「${input.title}」（${input.at}）${input.notify ? `（会通知 ${input.attendees - 1} 位参会者）` : ""}`,
+    edit: (input: EditInput) => `改「${input.title}」${input.changes.title ? ` →「${input.changes.title}」` : ""}${input.changes.when ? `：${format(input.changes.when, "zh")}` : ""}${input.notify ? `（会通知 ${input.attendees - 1} 位参会者）` : ""}`,
   },
   en: {
     add: (input: AddInput) => `Add “${input.title}” to ${input.calendar}: ${format(input.when, "en")}`,
     move: (input: MoveInput) => `Move “${input.title}” to ${format(input.when, "en")}${input.notify ? ` (tells ${input.attendees - 1} other ${input.attendees - 1 === 1 ? "guest" : "guests"})` : ""}`,
     respond: (input: RespondInput) => `${{ accepted: "Accept", declined: "Decline", tentative: "Maybe:" }[input.response]} “${input.title}” (${input.at})`,
+    delete: (input: DeleteInput) => `Delete “${input.title}” (${input.at})${input.notify ? ` (tells ${input.attendees - 1} other ${input.attendees - 1 === 1 ? "guest" : "guests"})` : ""}`,
+    edit: (input: EditInput) => `Change “${input.title}”${input.changes.title ? ` → “${input.changes.title}”` : ""}${input.changes.when ? `: ${format(input.changes.when, "en")}` : ""}${input.notify ? ` (tells ${input.attendees - 1} other ${input.attendees - 1 === 1 ? "guest" : "guests"})` : ""}`,
   },
 };
 
@@ -94,7 +108,118 @@ export const calendarOps = [
       response: Type.Union(RESPONSES.map((response) => Type.Literal(response))), at: Type.String({ maxLength: 60 }) }),
     run: (world, input) => queue(world, "respond", input as RespondInput),
   }),
+  // The user's own hand, from the calendar page. What they may change is checked against the mirror here, not taken
+  // from the device; a refusal is a code the page has words for.
+  defineOp({
+    name: "calendar.create",
+    input: Type.Object({ ...Ids, title: Type.String({ minLength: 1, maxLength: 300 }), when: WhenSchema,
+      location: Type.Optional(Type.String({ maxLength: 300 })), notes: Type.Optional(Type.String({ maxLength: 4000 })) }),
+    run(world, input): { queued: string; id: string; k?: string } | { error: DirectRefusal } {
+      const access = source(world, input.account);
+      const calendar = access?.canWrite ? access.calendars.find((candidate) => candidate.id === input.calendarId && candidate.writable) : undefined;
+      if (!calendar) return { error: "no_write" };
+      const title = input.title.trim();
+      if (!title) return { error: "nothing" };
+      if (checkWhen(input.when as When)) return { error: "bad_time" };
+      const location = input.location?.trim(), notes = input.notes?.trim();
+      const payload: AddInput & { eventId: string } = {
+        account: input.account, calendarId: calendar.id, calendar: calendar.name, title, when: input.when as When,
+        ...(location ? { location } : {}), ...(notes ? { notes } : {}), eventId: newEventId(),
+      };
+      const outbound = enqueueOutbound(world, { module: "calendar", action: "add", payload, preview: SAY[userLocale(world)].add(payload), idempotent: true, quiet: true });
+      colourSeries(world, input.account, [title]);
+      return { queued: outbound.id, id: `${calendar.id}:${payload.eventId}`, k: colourOf(world, input.account, calendar.id, title) };
+    },
+  }),
+  defineOp({
+    name: "calendar.edit",
+    input: Type.Object({ account: Ids.account, id: Type.String({ maxLength: 300 }), title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), when: Type.Optional(WhenSchema),
+      location: Type.Optional(Type.String({ maxLength: 300 })), notes: Type.Optional(Type.String({ maxLength: 4000 })) }),
+    run(world, input): { queued: string; k?: string } | { error: DirectRefusal } {
+      const row = world.db.prepare("SELECT * FROM calendar_events WHERE account = ? AND id = ?").get(input.account, input.id) as Row | undefined;
+      if (!row) return { error: "gone" };
+      const access = source(world, row.account);
+      if (!access?.canWrite || !access.calendars.find((calendar) => calendar.id === row.calendar_id)?.writable) return { error: "no_write" };
+      if (row.organizer_self !== 1) return { error: "not_yours" };
+      const title = input.title?.trim();
+      const changes: EditInput["changes"] = {
+        ...(title && title !== row.title ? { title } : {}), ...(input.when ? { when: input.when as When } : {}),
+        ...(input.location !== undefined ? { location: input.location.trim() } : {}), ...(input.notes !== undefined ? { notes: input.notes.trim() } : {}),
+      };
+      if (!Object.keys(changes).length) return { error: "nothing" };
+      if (changes.when && checkWhen(changes.when)) return { error: "bad_time" };
+      const payload: EditInput = {
+        account: row.account, calendarId: row.calendar_id, eventId: row.id.slice(row.calendar_id.length + 1), title: row.title, changes,
+        notify: row.attendees > 1, attendees: row.attendees,
+      };
+      const outbound = enqueueOutbound(world, { module: "calendar", action: "edit", payload, preview: SAY[userLocale(world)].edit(payload), idempotent: true, quiet: true });
+      if (!changes.title) return { queued: outbound.id };
+      colourSeries(world, row.account, [changes.title]);
+      return { queued: outbound.id, k: colourOf(world, row.account, row.calendar_id, changes.title) };
+    },
+  }),
+  defineOp({
+    name: "calendar.delete",
+    input: Type.Object({ account: Ids.account, id: Type.String({ maxLength: 300 }) }),
+    run(world, input): { queued: string } | { error: DirectRefusal } {
+      const row = world.db.prepare("SELECT * FROM calendar_events WHERE account = ? AND id = ?").get(input.account, input.id) as Row | undefined;
+      if (!row) return { error: "gone" };
+      const access = source(world, row.account);
+      if (!access?.canWrite || !access.calendars.find((calendar) => calendar.id === row.calendar_id)?.writable) return { error: "no_write" };
+      if (row.organizer_self !== 1) return { error: "not_yours" };
+      const locale = userLocale(world);
+      const payload: DeleteInput = {
+        account: row.account, calendarId: row.calendar_id, eventId: row.id.slice(row.calendar_id.length + 1), title: row.title, at: whenWas(row, locale),
+        notify: row.attendees > 1, attendees: row.attendees,
+      };
+      const outbound = enqueueOutbound(world, { module: "calendar", action: "delete", payload, preview: SAY[locale].delete(payload), idempotent: true, quiet: true });
+      return { queued: outbound.id };
+    },
+  }),
 ];
+
+/** Why a change typed on the calendar page was not taken: the account or calendar may not be changed, the event is
+ * no longer there, someone else organizes it, its times make no event, or nothing was changed. */
+export type DirectRefusal = "no_write" | "gone" | "not_yours" | "bad_time" | "nothing";
+
+/** What a device reads when the user opens one event to change it: its description is not in the snapshot. */
+export const calendarQueries = [
+  defineQuery({
+    name: "calendar.event",
+    input: Type.Object({ account: Ids.account, id: Type.String({ maxLength: 300 }) }),
+    run(world, input) {
+      const row = world.db.prepare("SELECT notes FROM calendar_events WHERE account = ? AND id = ?").get(input.account, input.id);
+      return row ? { notes: (row.notes as string | null) ?? "" } : { error: "not_found" };
+    },
+  }),
+];
+
+/** The calendar changes Google has not answered yet, as the page draws them over the mirror. */
+export function pendingChanges(world: World): CalendarPending[] {
+  return listOutbound(world, { module: "calendar", states: ["queued", "sending"] }).flatMap((outbound): CalendarPending[] => {
+    if (outbound.action === "add") {
+      const add = outbound.payload as AddInput & { eventId: string };
+      const k = colourOf(world, add.account, add.calendarId, add.title);
+      return [{ id: `${add.calendarId}:${add.eventId}`, account: add.account, calendarId: add.calendarId, added: true, title: add.title, when: add.when, ...(add.location ? { location: add.location } : {}), ...(k ? { k } : {}) }];
+    }
+    if (outbound.action === "move") {
+      const move = outbound.payload as MoveInput;
+      return [{ id: `${move.calendarId}:${move.eventId}`, account: move.account, calendarId: move.calendarId, added: false, when: move.when }];
+    }
+    if (outbound.action === "delete") {
+      const gone = outbound.payload as DeleteInput;
+      return [{ id: `${gone.calendarId}:${gone.eventId}`, account: gone.account, calendarId: gone.calendarId, added: false, removed: true }];
+    }
+    if (outbound.action === "edit") {
+      const edit = outbound.payload as EditInput;
+      const { title, when, location } = edit.changes;
+      const k = title !== undefined ? colourOf(world, edit.account, edit.calendarId, title) : undefined;
+      return [{ id: `${edit.calendarId}:${edit.eventId}`, account: edit.account, calendarId: edit.calendarId, added: false,
+        ...(title !== undefined ? { title } : {}), ...(when ? { when } : {}), ...(location !== undefined ? { location } : {}), ...(k ? { k } : {}) }];
+    }
+    return [];
+  });
+}
 
 /** "2026-11-19T14:00" in the home node's local time, as an instant. */
 function localInstant(value: string): string | null {
@@ -115,6 +240,12 @@ function whenFrom(params: { start?: string; end?: string; date?: string; end_dat
 interface Row { account: string; id: string; calendar_id: string; calendar: string; title: string; etag: string | null; organizer_self: number; response: string | null; attendees: number; start_at: number | null; start_date: string }
 function eventRow(world: World, ref: string): Row | null {
   return (world.db.prepare("SELECT * FROM calendar_events WHERE id = ? ORDER BY account LIMIT 1").get(ref) as Row | undefined) ?? null;
+}
+/** When an event of the mirror is, in a few words. */
+function whenWas(row: Row, locale: Locale): string {
+  return row.start_at
+    ? new Date(row.start_at).toLocaleString(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
+    : row.start_date;
 }
 function source(world: World, account: string) {
   const row = world.db.prepare("SELECT can_write, calendars FROM calendar_sources WHERE account = ?").get(account);
@@ -200,9 +331,7 @@ export const calendarWriteTools = [
       if (!row.response || row.organizer_self === 1) return { error: "This is not an invitation the user can answer." };
       if (!source(world, row.account)?.canWrite) return { error: NO_WRITE };
       const locale = userLocale(world);
-      const at = row.start_at
-        ? new Date(row.start_at).toLocaleString(locale === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
-        : row.start_date;
+      const at = whenWas(row, locale);
       const input: RespondInput = { account: row.account, calendarId: row.calendar_id, eventId: row.id.slice(row.calendar_id.length + 1), title: row.title, response: params.response, at };
       return { op: "calendar.respond", input, preview: SAY[locale].respond(input) };
     },
@@ -212,6 +341,11 @@ export const calendarWriteTools = [
 const googleTime = (when: When) => "date" in when
   ? { start: { date: when.date }, end: { date: addDays(when.endDate, 1) } }
   : { start: { dateTime: when.start }, end: { dateTime: when.end } };
+/** For a change by hand, which may turn a timed event into whole days or back: the kind of time it no longer has is
+ * taken away, since Google merges what a PATCH sends into what is there. */
+const patchTime = (when: When) => "date" in when
+  ? { start: { date: when.date, dateTime: null, timeZone: null }, end: { date: addDays(when.endDate, 1), dateTime: null, timeZone: null } }
+  : { start: { dateTime: when.start, date: null }, end: { dateTime: when.end, date: null } };
 const sameTime = (event: Record<string, unknown>, when: When) => {
   const time = googleTime(when);
   const start = event.start as { date?: string; dateTime?: string } | undefined, end = event.end as typeof start;
@@ -224,7 +358,19 @@ const reason = (body: Record<string, unknown>) => {
   return typeof message === "string" ? message.slice(0, 200) : "";
 };
 
-async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: AbortSignal): Promise<Delivered> {
+/** The event as Google answered a change with, written into the mirror at once: the page shows it without waiting
+ * for the next read. An answer that is not a whole event (a test's, a 409) is left to that read. */
+function store(world: World, account: string, calendarId: string, body: Record<string, unknown>): void {
+  const name = source(world, account)?.calendars.find((calendar) => calendar.id === calendarId)?.name;
+  const row = name ? mapEvent(body as GoogleEvent, calendarId, name) : null;
+  if (!row) return;
+  world.tx((db) => {
+    putEvent(db, account, row);
+    colourSeries(world, account);
+  });
+}
+
+async function deliverOne(world: World, session: GoogleSession, outbound: Outbound, signal?: AbortSignal): Promise<Delivered> {
   if (outbound.action === "add") {
     const input = outbound.payload as AddInput & { eventId: string };
     const answer = await session.send("POST", `${API}/calendars/${encodeURIComponent(input.calendarId)}/events?sendUpdates=none`, {
@@ -232,16 +378,45 @@ async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: A
       ...(input.location ? { location: input.location } : {}), ...(input.notes ? { description: input.notes } : {}),
     }, { signal });
     if (answer.status === 409) return { state: "done", result: { id: input.eventId, already: true } };
-    if (answer.status < 300) return { state: "done", result: { id: answer.body.id, link: answer.body.htmlLink } };
+    if (answer.status < 300) {
+      store(world, input.account, input.calendarId, answer.body);
+      return { state: "done", result: { id: answer.body.id, link: answer.body.htmlLink } };
+    }
     return answer.status >= 500 ? { state: "unclear", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
   }
-  const input = outbound.payload as MoveInput | RespondInput;
+  const input = outbound.payload as MoveInput | EditInput | DeleteInput | RespondInput;
   const url = `${API}/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`;
+  if (outbound.action === "delete") {
+    // Gone already (deleted in Google, or by an earlier try of this) is what was asked for.
+    const answer = await session.send("DELETE", `${url}?sendUpdates=${(input as DeleteInput).notify ? "all" : "none"}`, undefined, { signal });
+    if (answer.status < 300 || answer.status === 404 || answer.status === 410) {
+      world.db.prepare("DELETE FROM calendar_events WHERE account = ? AND id = ?").run(input.account, `${input.calendarId}:${input.eventId}`);
+      return { state: "done" };
+    }
+    return answer.status >= 500 ? { state: "unclear", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
+  }
+  if (outbound.action === "edit") {
+    // By the user's own hand: what they set is set, whatever Google had (no If-Match). Nothing else is touched.
+    const { notify, changes } = input as EditInput;
+    const answer = await session.send("PATCH", `${url}?sendUpdates=${notify ? "all" : "none"}`, {
+      ...(changes.title !== undefined ? { summary: changes.title } : {}), ...(changes.location !== undefined ? { location: changes.location } : {}),
+      ...(changes.notes !== undefined ? { description: changes.notes } : {}), ...(changes.when ? patchTime(changes.when) : {}),
+    }, { signal });
+    if (answer.status < 300) {
+      store(world, input.account, input.calendarId, answer.body);
+      return { state: "done" };
+    }
+    if (answer.status === 404 || answer.status === 410) return { state: "failed", error: "The event is no longer in the calendar" };
+    return answer.status >= 500 ? { state: "unclear", error: `Google answered ${answer.status}` } : { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
+  }
   if (outbound.action === "move") {
     const move = input as MoveInput;
     const answer = await session.send("PATCH", `${url}?sendUpdates=${move.notify ? "all" : "none"}`, googleTime(move.when),
       { signal, ...(move.etag ? { headers: { "If-Match": move.etag } } : {}) });
-    if (answer.status < 300) return { state: "done" };
+    if (answer.status < 300) {
+      store(world, input.account, input.calendarId, answer.body);
+      return { state: "done" };
+    }
     if (answer.status === 404 || answer.status === 410) return { state: "failed", error: "The event is no longer in the calendar" };
     if (answer.status === 412) {
       // Changed in Google since it was proposed; maybe by an earlier try of this very move.
@@ -259,7 +434,10 @@ async function deliverOne(session: GoogleSession, outbound: Outbound, signal?: A
   const answer = await session.send("PATCH", `${url}?sendUpdates=all`,
     { attendees: attendees.map((attendee) => attendee.self ? { ...attendee, responseStatus: respond.response } : attendee) },
     { signal, ...(typeof current.etag === "string" ? { headers: { "If-Match": current.etag } } : {}) });
-  if (answer.status < 300) return { state: "done" };
+  if (answer.status < 300) {
+    store(world, input.account, input.calendarId, answer.body);
+    return { state: "done" };
+  }
   if (answer.status === 412 || answer.status >= 500) return { state: "unclear", error: `Google answered ${answer.status}` };
   return { state: "failed", error: `Google refused (${answer.status}) ${reason(answer.body)}`.trim() };
 }
@@ -272,5 +450,5 @@ export async function deliverCalendar(world: World, outbound: Outbound, services
   if (!google?.accounts().find((candidate) => candidate.email === account)?.capabilities.includes("calWrite")) {
     return { state: "failed", error: localeOf(world.db) === "zh" ? "没有改这个日历的权限：在设置里打开「日历：替你加和改」" : "No permission to change this calendar: turn on “Calendar: add and change” in Settings" };
   }
-  return deliverOne(await google.session(account), outbound, signal);
+  return deliverOne(world, await google.session(account), outbound, signal);
 }

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { acceptProposal, CORE_MIGRATIONS, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
-import { applyStep, assistantTools, deliverQueued, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
-import { calendarModule, listEvents, syncCalendar } from "../src/index.ts";
+import { acceptProposal, CORE_MIGRATIONS, listNotices, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
+import { applyStep, assistantTools, deliverQueued, invokeOp, runQuery, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
+import { calendarModule, listEvents, syncCalendar, type CalendarSnapshot } from "../src/index.ts";
+
+const snapshotOf = (w: World) => calendarModule.snapshot!(w) as CalendarSnapshot;
 
 const world = (): World => openWorld(":memory:", [...CORE_MIGRATIONS, ...calendarModule.migrations]);
 const signal = new AbortController().signal;
@@ -142,4 +144,95 @@ test("without the user's permission to change the calendar: nothing is proposed,
   await proposeAndAccept(w, [{ tool: "calendar_add", params: { title: "Focus 2", start: local(at(1, 11)), end: local(at(1, 12)) } }]);
   await deliverQueued(w, calendarModule, { google: revoked.google }, signal);
   assert.deepEqual(listOutbound(w).map((outbound) => [outbound.state, outbound.error?.slice(0, 22)]), [["failed", "No permission to chang"], ["failed", "Google refused the acc"]]);
+});
+
+let request = 0;
+/** What the calendar page sends when the user saves. */
+const byHand = (w: World, op: string, input: unknown) => invokeOp(w, [calendarModule], { op, requestId: `hand-${++request}`, input }).result as { queued?: string; id?: string; k?: string; error?: string };
+
+test("by hand: an event typed into the page goes out with no proposal, shows as on its way, and is in the mirror the moment Google answers", async () => {
+  const w = world();
+  const start = at(2, 14), end = at(2, 15);
+  const created = { id: "", summary: "Lunch with Mia", location: "Cafe", description: "Bring the draft", etag: "\"n1\"", start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() }, htmlLink: "https://calendar.google.com/e" };
+  const { google, sent } = fakeGoogle({ answers: [{ status: 200, body: created }] });
+  await syncCalendar(w, { google });
+
+  const said = byHand(w, "calendar.create", { account: "me@example.com", calendarId: "me@example.com", title: " Lunch with Mia ", when: { start: start.toISOString(), end: end.toISOString() }, location: "Cafe", notes: "Bring the draft" });
+  assert.match(said.id!, /^me@example\.com:alfred[0-9a-v]{20}$/);
+  assert.deepEqual(listOpenProposals(w), [], "saving was the yes");
+  const [pending] = snapshotOf(w).pending;
+  assert.deepEqual(pending, { id: said.id, account: "me@example.com", calendarId: "me@example.com", added: true, title: "Lunch with Mia", when: { start: start.toISOString(), end: end.toISOString() }, location: "Cafe", k: said.k });
+
+  created.id = said.id!.slice("me@example.com:".length);
+  await deliverQueued(w, calendarModule, { google }, signal);
+  assert.deepEqual(sent[0].body, { id: created.id, summary: "Lunch with Mia", start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() }, location: "Cafe", description: "Bring the draft" });
+  const snapshot = snapshotOf(w);
+  assert.deepEqual(snapshot.pending, []);
+  const lunch = snapshot.events.find((candidate) => candidate.id === said.id)!;
+  assert.deepEqual([lunch.title, lunch.location, lunch.editable, lunch.k], ["Lunch with Mia", "Cafe", true, said.k], "no read of Google was needed to show it, and it kept the colour it was drawn in");
+  assert.notEqual(said.k, event(w, "Standup").k, "a new series: its own colour, the one least used");
+  assert.deepEqual(runQuery([calendarModule], w, "calendar.event", { account: "me@example.com", id: said.id }), { notes: "Bring the draft" });
+  assert.deepEqual(listNotices(w).filter((notice) => notice.kind === "outbound"), [], "they watched it happen: no notice");
+});
+
+test("by hand: changing an event sets only what was changed, tells its guests, and can turn it into whole days", async () => {
+  const w = world();
+  const { google, sent } = fakeGoogle();
+  await syncCalendar(w, { google });
+  const standup = event(w, "Standup");
+  const day = `${at(3, 0).getFullYear()}-${pad(at(3, 0).getMonth() + 1)}-${pad(at(3, 0).getDate())}`;
+
+  assert.deepEqual(byHand(w, "calendar.edit", { account: standup.account, id: standup.id, title: "Standup" }), { error: "nothing" });
+  const renamed = byHand(w, "calendar.edit", { account: standup.account, id: standup.id, title: "Daily sync", location: "", when: { date: day, endDate: day } });
+  const [outbound] = listOutbound(w);
+  assert.deepEqual([outbound.action, outbound.quiet], ["edit", true]);
+  assert.match(outbound.preview, /^Change “Standup” → “Daily sync”: .* \(tells 2 other guests\)$/);
+  assert.deepEqual(snapshotOf(w).pending, [{ id: standup.id, account: standup.account, calendarId: standup.calendarId, added: false, title: "Daily sync", when: { date: day, endDate: day }, location: "", k: renamed.k }]);
+
+  await deliverQueued(w, calendarModule, { google }, signal);
+  assert.deepEqual([sent[0].method, sent[0].url, sent[0].headers], ["PATCH", "/calendars/me%40example.com/events/standup?sendUpdates=all", undefined]);
+  const next = `${at(4, 0).getFullYear()}-${pad(at(4, 0).getMonth() + 1)}-${pad(at(4, 0).getDate())}`;
+  assert.deepEqual(sent[0].body, { summary: "Daily sync", location: "", start: { date: day, dateTime: null, timeZone: null }, end: { date: next, dateTime: null, timeZone: null } });
+  assert.equal(listOutbound(w)[0].state, "done");
+});
+
+test("by hand: only what the user may change, and a refusal by Google is told", async () => {
+  const w = world();
+  const { google } = fakeGoogle({ answers: [{ status: 403, body: { error: { message: "Forbidden" } } }] });
+  await syncCalendar(w, { google });
+  const when = { start: at(1, 9).toISOString(), end: at(1, 10).toISOString() };
+  assert.deepEqual(byHand(w, "calendar.create", { account: "me@example.com", calendarId: "team", title: "Focus", when }), { error: "no_write" }, "a calendar they only read");
+  assert.deepEqual(byHand(w, "calendar.create", { account: "me@example.com", calendarId: "me@example.com", title: "Focus", when: { start: when.end, end: when.start } }), { error: "bad_time" });
+  const demo = event(w, "Vendor demo");
+  assert.deepEqual(byHand(w, "calendar.edit", { account: demo.account, id: demo.id, title: "Mine now" }), { error: "not_yours" });
+  assert.deepEqual(byHand(w, "calendar.edit", { account: demo.account, id: "me@example.com:nope", title: "x" }), { error: "gone" });
+  assert.deepEqual(listOutbound(w), []);
+
+  byHand(w, "calendar.edit", { account: "me@example.com", id: event(w, "Standup").id, notes: "Agenda: demo" });
+  await deliverQueued(w, calendarModule, { google }, signal);
+  assert.deepEqual(listNotices(w).filter((notice) => notice.kind === "outbound").map((notice) => [notice.payload.state, notice.payload.error]), [["failed", "Google refused (403) Forbidden"]]);
+  assert.equal(event(w, "Standup").title, "Standup", "the mirror is as Google has it");
+});
+
+test("by hand: deleting an event the user organizes takes it out at once, tells its guests, and one already gone counts as done", async () => {
+  const w = world();
+  const { google, sent } = fakeGoogle({ answers: [{ status: 503 }, { status: 410 }] });
+  await syncCalendar(w, { google });
+  const standup = event(w, "Standup"), demo = event(w, "Vendor demo");
+  assert.deepEqual(byHand(w, "calendar.delete", { account: demo.account, id: demo.id }), { error: "not_yours" });
+  assert.equal(runTools(w, [calendarModule]).concat(assistantTools(w, [calendarModule])).some((tool) => /delete/.test(tool.name)), false, "a run cannot delete, even by proposing");
+
+  byHand(w, "calendar.delete", { account: standup.account, id: standup.id });
+  const [outbound] = listOutbound(w);
+  assert.deepEqual([outbound.action, outbound.quiet, outbound.idempotent], ["delete", true, true]);
+  assert.match(outbound.preview, /^Delete “Standup” \(.*\) \(tells 2 other guests\)$/);
+  assert.deepEqual(snapshotOf(w).pending, [{ id: standup.id, account: standup.account, calendarId: standup.calendarId, added: false, removed: true }]);
+
+  await deliverQueued(w, calendarModule, { google }, signal);
+  assert.equal(listOutbound(w)[0].state, "queued", "Google was down: tried again");
+  await deliverQueued(w, calendarModule, { google }, signal);
+  assert.deepEqual([sent[1].method, sent[1].url, sent[1].body], ["DELETE", "/calendars/me%40example.com/events/standup?sendUpdates=all", undefined]);
+  assert.equal(listOutbound(w)[0].state, "done", "410: the first try had deleted it");
+  assert.equal(snapshotOf(w).events.some((candidate) => candidate.id === standup.id), false, "out of the mirror without a read");
+  assert.deepEqual(listNotices(w).filter((notice) => notice.kind === "outbound"), []);
 });

@@ -3,27 +3,23 @@
  * Google is the source of truth; Alfred keeps no second calendar. A sync every few minutes reads each connected
  * account's shown calendars, a week back to five weeks ahead, and replaces that account's events here. Devices and
  * runs read the mirror, so a question about the schedule never waits on Google. Writing (moving a meeting, holding
- * time) is only ever proposed; an accepted change is delivered by write.ts.
+ * time) is only ever proposed by a run; the user adds and changes events themselves on the calendar page. Either way
+ * the change is delivered by write.ts, and what Google answers is written into the mirror at once.
  */
 import { createHash } from "node:crypto";
 import { localDate, recordDomainEvent, withDefaultActor, type World } from "@alfred/core";
 import { defineModule, defineTool, ServiceError, Type, type ModuleServices } from "@alfred/module-kit";
-import { addDays, readAccount, type EventRow } from "./google.ts";
-import { calendarOps, calendarWriteTools, deliverCalendar } from "./write.ts";
-import type { CalendarEvent, CalendarSnapshot, CalendarSource } from "./types.ts";
+import { addDays, readAccount } from "./google.ts";
+import { calendarSources, colourSeries, putEvent, seriesOf } from "./mirror.ts";
+import { calendarOps, calendarQueries, calendarWriteTools, deliverCalendar, pendingChanges } from "./write.ts";
+import type { CalendarEvent, CalendarSnapshot } from "./types.ts";
 
-export type { CalendarEvent, CalendarSnapshot, CalendarSource } from "./types.ts";
+export type { CalendarEvent, CalendarPending, CalendarSnapshot, CalendarSource, CalendarWhen } from "./types.ts";
+export { calendarSources } from "./mirror.ts";
 export { mapEvent, addDays, type GoogleEvent } from "./google.ts";
-export { deliverCalendar, newEventId, type AddInput, type MoveInput, type RespondInput } from "./write.ts";
+export { deliverCalendar, newEventId, type AddInput, type DeleteInput, type EditInput, type MoveInput, type RespondInput } from "./write.ts";
 
 const WINDOW = { back: 7, ahead: 35 };
-/** Colour slots, in order. A calendar the user only reads (holidays, a school's) is one colour, taken in this order.
- * In a calendar of their own, each series (events with the same title) has its own colour, so a week that is mostly
- * theirs is not all one colour. */
-const KS = ["blue", "green", "orange", "violet", "teal", "pink", "yellow"];
-/** What makes events the same series: their title, however it is spaced or cased. */
-const seriesOf = (title: string) => title.trim().toLowerCase().replace(/\s+/g, " ") || "-";
-
 const MIGRATIONS = [{
   id: "calendar:1",
   sql: `
@@ -84,32 +80,14 @@ UPDATE calendar_sources SET digest = NULL;
 ALTER TABLE calendar_events ADD COLUMN recurring TEXT;
 UPDATE calendar_sources SET digest = NULL;
 `,
+}, {
+  // An event's description, for changing it on the calendar page (kept out of the snapshot: read when one is opened).
+  id: "calendar:5",
+  sql: `
+ALTER TABLE calendar_events ADD COLUMN notes TEXT;
+UPDATE calendar_sources SET digest = NULL;
+`,
 }];
-
-/** Gives each series that has no colour yet the one that carries the fewest of this account's events (those of its
- * read-only calendars count too); the most frequent series choose first, so what is seen most is furthest apart. */
-function colourSeries(world: World, account: string): void {
-  const calendars = calendarSources(world).find((source) => source.account === account)?.calendars ?? [];
-  const own = new Set(calendars.filter((calendar) => calendar.varied).map((calendar) => calendar.id));
-  if (!own.size) return;
-  const known = new Map(world.db.prepare("SELECT series, k FROM calendar_colours WHERE account = ?").all(account).map((row) => [row.series as string, row.k as string]));
-  const count = new Map<string, number>();
-  const load = new Map(KS.map((k) => [k, 0]));
-  const carry = (k: string | undefined, n: number) => { if (k && load.has(k)) load.set(k, load.get(k)! + n); };
-  for (const row of world.db.prepare("SELECT calendar_id, title, count(*) AS n FROM calendar_events WHERE account = ? GROUP BY calendar_id, title").all(account)) {
-    if (!own.has(row.calendar_id as string)) { carry(calendars.find((calendar) => calendar.id === row.calendar_id)?.k, row.n as number); continue; }
-    const series = seriesOf(row.title as string);
-    count.set(series, (count.get(series) ?? 0) + (row.n as number));
-    carry(known.get(series), row.n as number);
-  }
-  const insert = world.db.prepare("INSERT OR REPLACE INTO calendar_colours (account, series, k) VALUES (?, ?, ?)");
-  const fresh = [...count.keys()].filter((series) => !known.has(series)).sort((a, b) => count.get(b)! - count.get(a)! || a.localeCompare(b));
-  for (const series of fresh) {
-    const k = KS.reduce((least, candidate) => (load.get(candidate)! < load.get(least)! ? candidate : least));
-    carry(k, count.get(series)!);
-    insert.run(account, series, k);
-  }
-}
 
 const canRead = (capabilities: readonly string[]) => capabilities.includes("calRead") || capabilities.includes("calWrite");
 
@@ -155,29 +133,11 @@ export async function syncCalendar(world: World, services: ModuleServices, signa
         .run(account, new Date(now).toISOString(), JSON.stringify(result!.calendars), digest, writes.has(account) ? 1 : 0);
       if (before?.digest === digest && !before?.error) return;
       db.prepare("DELETE FROM calendar_events WHERE account = ?").run(account);
-      const insert = db.prepare(`INSERT OR REPLACE INTO calendar_events (account, id, calendar_id, calendar, title, all_day, start_date, end_date, start_at, end_at,
-        location, link, meeting, organizer, response, attendees, etag, organizer_self, recurring) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-      for (const event of result!.events) {
-        insert.run(account, event.id, event.calendarId, event.calendar, event.title, event.allDay ? 1 : 0, event.startDate, event.endDate,
-          event.startAt, event.endAt, event.location, event.link, event.meeting, event.organizer, event.response, event.attendees, event.etag, event.organizerSelf ? 1 : 0, event.recurring);
-      }
+      for (const event of result!.events) putEvent(db, account, event);
       colourSeries(world, account);
       recordDomainEvent(world, { kind: "calendar.synced", subject: `calendar:${account}`, payload: { events: result!.events.length } });
     }));
   }
-}
-
-export function calendarSources(world: World): CalendarSource[] {
-  let next = 0;
-  return world.db.prepare("SELECT * FROM calendar_sources ORDER BY account").all().map((row) => ({
-    account: row.account as string,
-    syncedAt: row.synced_at as string | null,
-    error: row.error as string | null,
-    reconnect: row.reconnect === 1,
-    canWrite: row.can_write === 1,
-    calendars: (JSON.parse(row.calendars as string) as Array<{ id: string; name: string; writable?: boolean }>)
-      .map((calendar) => ({ id: calendar.id, name: calendar.name, writable: !!calendar.writable, varied: !!calendar.writable, k: KS[next++ % KS.length] })),
-  }));
 }
 
 /** Events touching the days from `from` to `to` (inclusive), by start. */
@@ -238,6 +198,7 @@ export const calendarModule = defineModule({
   title: "Calendar",
   migrations: MIGRATIONS,
   ops: calendarOps,
+  queries: calendarQueries,
   tools: [
     defineTool({
       name: "calendar_list",
@@ -266,7 +227,8 @@ export const calendarModule = defineModule({
   ].join(" "),
   snapshot(world): CalendarSnapshot {
     const today = localDate();
-    return { today, events: listEvents(world, addDays(today, -WINDOW.back), addDays(today, WINDOW.ahead)), sources: calendarSources(world) };
+    const from = addDays(today, -WINDOW.back), to = addDays(today, WINDOW.ahead);
+    return { today, from, to, events: listEvents(world, from, to), pending: pendingChanges(world), sources: calendarSources(world) };
   },
   sync: { everyMs: 5 * 60_000, run: syncCalendar },
   deliver: deliverCalendar,

@@ -634,7 +634,8 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 .source-bar[data-problem] { color: var(--bad); }
 .source-bar a { color: var(--accent); }
 .source-bar .logo { width: 16px; height: 16px; margin-right: -3px; }
-.source-bar .small { min-height: 26px; padding: 0 10px; border-radius: 999px; font-size: .75rem; }
+.source-bar .small { flex: none; min-height: 26px; padding: 0 10px; border-radius: 999px; font-size: .75rem; white-space: nowrap; }
+.source-bar > span { min-width: 0; }
 
 .calendar { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px 0 20px; }
 .cal-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 10px; }
@@ -642,10 +643,26 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 .cal-nav b { margin-left: 8px; color: var(--ink); font-weight: 500; }
 .cal-nav .small { min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: .75rem; }
 .cal-nav .icon-btn { font-size: 1.25rem; line-height: 1; }
-.cal-legend { padding: 0; }
-/* Calendars are toggles that are mostly on: on is a quiet raised pill with its colour dot, off fades out. */
-.cal-legend .chip[aria-pressed="true"] { background: var(--raise); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
-.cal-legend .chip[data-off] { opacity: .45; }
+/* Which calendars are shown (Calendar.tsx CalendarPicker): a small button at the end of the source's row, and under
+   it a card that lists them, each one on or off. */
+.cal-pick { position: relative; flex: none; margin-left: auto; }
+.cal-pick-btn { min-height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; border-radius: 999px; color: var(--copy); font-size: .75rem; white-space: nowrap; box-shadow: inset 0 0 0 1px var(--line); }
+.cal-pick-btn:hover, .cal-pick-btn[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.cal-pick-btn svg { width: 14px; height: 14px; color: var(--muted); }
+.cal-pick-btn .count { color: inherit; }
+.cal-dots { display: inline-flex; gap: 3px; }
+.cal-card { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: max-content; min-width: 200px; max-width: min(300px, calc(100cqw - 32px)); max-height: min(60vh, 420px); overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--raise); box-shadow: var(--shadow); transform-origin: calc(100% - 24px) 0; animation: cal-card 160ms var(--ease) both; }
+@keyframes cal-card { from { opacity: 0; transform: scale(.96); } }
+.cal-card-label { padding: 6px 10px 2px; color: var(--muted); font-size: .75rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cal-card button { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 10px; border-radius: 9px; color: var(--ink); font-size: .875rem; text-align: left; }
+.cal-card button:hover { background: var(--wash); }
+.cal-card button > span:not(.mark) { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cal-card button svg { flex: none; width: 16px; height: 16px; color: var(--accent); stroke-width: 2; }
+.cal-card button[aria-checked="false"] { color: var(--muted); }
+.cal-card button[aria-checked="false"] svg { visibility: hidden; }
+@media (hover: none) { .cal-card button { min-height: 42px; } }
+/* The narrowest phones: the button is its colours alone. */
+@container page (max-width: 380px) { .cal-pick-name { display: none; } }
 /* A calendar of the user's own has a colour per series: its mark shows three of them. */
 .mark[data-varied] { background: conic-gradient(oklch(.6 .15 250) 0 33.3%, oklch(.63 .15 45) 0 66.6%, oklch(.62 .15 142) 0); }
 .ev-card { flex: none; max-width: 520px; margin: 0 0 10px; padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--k-fill); box-shadow: inset 3px 0 0 var(--k-solid); color: var(--copy); font-size: .8125rem; }
@@ -654,6 +671,43 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 .ev-card p { margin-top: 3px; }
 .ev-card-links { display: flex; gap: 14px; }
 .ev-card-links a { color: var(--k-text, var(--accent)); }
+.ev-card-links { flex-wrap: wrap; align-items: baseline; row-gap: 2px; }
+.ev-card-links button.link { color: var(--k-text, var(--accent)); text-decoration-color: color-mix(in oklch, currentColor 35%, transparent); }
+/* Adding and changing events by hand: a button for a new one, and the event being typed in a card over the page. */
+.cal-add { flex: none; min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 12px 0 8px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .75rem; white-space: nowrap; }
+.cal-add svg { width: 14px; height: 14px; }
+.cal-note { flex: none; display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0 0 10px; color: var(--copy); font-size: .8125rem; }
+.cal-note a { color: var(--accent); }
+/* The card is over the page, which blurs behind it: near the top, so a phone's keyboard does not cover it. */
+.ev-pop { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: min(16vh, 140px) 16px 16px; overflow-y: auto; background: color-mix(in oklch, var(--bg) 40%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); animation: ev-pop-in 160ms var(--ease) both; }
+.ev-edit { width: min(464px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 16px 16px 14px 18px; border-radius: 18px; background: var(--raise); box-shadow: 0 20px 60px oklch(0 0 0 / .18), inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: .8125rem; animation: ev-edit-in 200ms var(--ease) both; }
+@keyframes ev-pop-in { from { opacity: 0; } }
+@keyframes ev-edit-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .ev-pop, .ev-edit { animation: none; } }
+.ev-edit .ev-card-head { align-items: center; }
+.ev-title { flex: 1; min-width: 0; padding: 2px 0 5px; border: 0; border-bottom: 1px solid var(--k-line, var(--line)); border-radius: 0; background: none; color: var(--ink); font-size: 1.0625rem; font-weight: 600; outline: none; }
+.ev-title:focus { border-bottom-color: var(--k-solid); }
+.ev-title::placeholder, .ev-field::placeholder { color: var(--muted); font-weight: 400; }
+.ev-when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ev-when input[type="date"], .ev-when input[type="time"], .ev-field { min-width: 0; height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line-soft); color: var(--ink); font-size: .8125rem; outline: none; }
+.ev-when input:focus, .ev-field:focus { box-shadow: inset 0 0 0 1.5px var(--k-solid); }
+.ev-times { display: inline-flex; align-items: center; gap: 6px; }
+.ev-allday { display: inline-flex; align-items: center; gap: 5px; margin-left: 4px; white-space: nowrap; cursor: pointer; }
+.ev-allday input { accent-color: var(--k-solid); }
+.ev-field { width: 100%; }
+textarea.ev-field { height: auto; min-height: 56px; max-height: 180px; padding: 8px 10px; line-height: 1.45; resize: none; field-sizing: content; }
+textarea.ev-field:disabled { opacity: .5; }
+.ev-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.ev-foot > span { flex: 1; min-width: 0; font-size: .75rem; }
+.ev-foot .ev-error { color: var(--bad); }
+.ev-foot button { flex: none; min-height: 32px; padding: 0 16px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; white-space: nowrap; }
+.ev-foot button.ghost { background: none; color: var(--copy); box-shadow: none; }
+.ev-foot button.danger { background: var(--bad); color: #fff; }
+.ev-foot button.ev-delete { margin-left: -10px; padding: 0 10px; color: var(--bad); }
+.ev-foot button.ev-delete:hover { background: color-mix(in oklch, var(--bad) 10%, transparent); }
+.ev-ask { width: min(380px, 100%); gap: 6px; }
+.ev-ask b { color: var(--ink); font-size: 1rem; font-weight: 600; overflow-wrap: anywhere; }
+.ev-ask .ev-foot { margin-top: 10px; }
 .week-grid { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 40px; }
 .wk-head, .wk-allday, .wk-body { display: grid; grid-template-columns: 52px repeat(7, minmax(0, 1fr)); }
 .wk-top { position: sticky; top: 0; z-index: 4; background: var(--bg); }
@@ -675,6 +729,13 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 .ev[data-past] { opacity: .5; }
 .ev[data-declined] { opacity: .45; text-decoration: line-through; }
 .ev:hover { filter: brightness(.97); }
+/* On its way to Google: there, but not settled. Being typed: lifted, with its outline. Being dragged out: only the hours. */
+.ev[data-pending], .agenda-ev[data-pending] { opacity: .6; }
+.ev[data-draft] { z-index: 3; box-shadow: inset 3px 0 0 var(--k-solid), 0 0 0 1.5px var(--k-solid), 0 6px 18px oklch(0 0 0 / .12); cursor: default; }
+.ev.ev-stretch { z-index: 3; background: color-mix(in oklch, var(--accent) 12%, transparent); box-shadow: inset 0 0 0 1.5px var(--accent); pointer-events: none; }
+.ev.ev-stretch small { color: var(--accent); opacity: 1; }
+.wk-col[data-open] { cursor: cell; }
+.wk-col .ev { cursor: pointer; }
 .ev.ev-chip { position: static; display: block; width: 100%; padding: 2px 7px 2px 9px; white-space: nowrap; text-overflow: ellipsis; }
 .wk-now { position: absolute; left: -1px; right: 0; z-index: 2; height: 2px; background: var(--now); pointer-events: none; }
 .wk-now::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--now); }
@@ -701,13 +762,47 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 .mail-pick { display: grid; place-items: center; }
 .mail-body { margin: 18px 0; max-width: 72ch; color: var(--copy); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mail-back { display: none; }
+/* Drafts and replies. A draft sits under the mail it answers: dashed and in Alfred's colour while Alfred's and only
+   a draft, plain when the user's own; what was sent is solid and quiet. */
+.mail .chips .mail-compose { margin-left: auto; }
+.mail .inbox-said { margin: 0 0 10px; }
+.mail-meta { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.mail-meta .tag { height: 18px; padding: 0 6px; font-size: .6875rem; }
+.mail-draft, .mail-sent { margin: 18px 0; max-width: 72ch; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 12px; }
+.mail-draft { border: 1px dashed color-mix(in oklch, var(--alf) 45%, transparent); background: var(--alf-soft); animation: draft-in 900ms ease-out both; }
+.mail-draft[data-own] { border-color: var(--line); background: var(--raise); }
+.mail-draft[data-on] { border-style: solid; border-color: var(--alf); }
+@keyframes draft-in { from { background: color-mix(in oklch, var(--alf) 22%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .mail-draft { animation: none; } }
+.mail-sent { background: var(--wash); }
+.mail-draft-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; color: var(--muted); font-size: .75rem; }
+.mail-draft-head b { color: var(--alf); font-weight: 500; }
+.mail-draft[data-own] .mail-draft-head b, .mail-sent .mail-draft-head b { color: var(--copy); }
+.mail-sent:is([data-state="failed"], [data-state="unknown"]) .mail-draft-head b { color: var(--bad); }
+.mail-draft-head span { min-width: 0; overflow-wrap: anywhere; }
+.mail-draft-subject { color: var(--ink); font-weight: 500; overflow-wrap: anywhere; }
+.mail-draft-text { color: var(--copy); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-draft .with-mic { align-items: stretch; }
+.mail-draft textarea { width: 100%; min-height: 5.4em; max-height: 60vh; padding: 8px 10px; border: 0; border-radius: 8px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line-soft); outline: none; resize: vertical; line-height: 1.65; field-sizing: content; }
+.mail-draft textarea:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.mail-draft-also { display: flex; flex-direction: column; gap: 2px; color: var(--copy); font-size: .8125rem; }
+.mail-draft-also li::before { content: "+ "; color: var(--muted); }
+.mail-reply { margin: 18px 0; display: flex; flex-direction: column; gap: 8px; }
+.mail-writing { margin: 18px 0; }
+:is(.mail-draft, .mail-reply) .inbox-actions button.ghost[aria-pressed="true"] { background: var(--wash); color: var(--ink); box-shadow: inset 0 0 0 1px var(--copy); }
 
 /* A week of seven columns needs room: in a narrow page the days are a list. */
 @container page (max-width: 640px) {
   .calendar { padding: 0 16px; }
   .week-grid { display: none; }
-  .agenda { display: flex; flex-direction: column; gap: 14px; padding-bottom: 80px; overflow-y: auto; }
-  .agenda h3 { margin-bottom: 4px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+  /* The list runs to the page's edges, so what scrolls it is at the edge of the screen. */
+  .agenda { display: flex; flex-direction: column; gap: 14px; margin: 0 -16px; padding: 0 16px 80px; overflow-y: auto; }
+  .agenda h3 { min-height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+  .agenda h3 .icon-btn { width: 26px; height: 26px; }
+  /* Each day of the list has its own +; the bar's is a round one that stays on the week's row. */
+  .cal-add { width: 28px; padding: 0; justify-content: center; }
+  .cal-add span { display: none; }
+  .agenda h3 .icon-btn svg { width: 15px; height: 15px; }
   .agenda li[data-today] h3 { color: var(--now); }
   .agenda-ev { width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-radius: 8px; color: var(--copy); text-align: left; }
   .agenda-ev time { flex: none; width: 3.6em; color: var(--muted); font: .75rem var(--mono); }

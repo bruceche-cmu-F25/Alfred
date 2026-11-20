@@ -66,3 +66,15 @@ test("a home node that stopped mid-delivery: idempotent changes go back in the q
   assert.deepEqual(outboundNotices(w), [{ outboundId: listOutbound(w)[1].id, module: "mail", action: "send", state: "unknown", preview: "Email Leo", error: "Alfred stopped while sending this" }]);
   assert.equal(interruptOutbound(w), 0);
 });
+
+test("a change the user made with their own hands is told only when it did not go through", () => {
+  const w = world();
+  const typed = enqueueOutbound(w, { module: "calendar", action: "add", payload: {}, preview: "Add “Lunch”", idempotent: true, quiet: true });
+  assert.equal(typed.quiet, true);
+  finishOutbound(w, claimOutbound(w, "calendar")!.id, { state: "done" });
+  assert.deepEqual(outboundNotices(w), [], "it went through: they watched it happen");
+
+  enqueueOutbound(w, { module: "calendar", action: "edit", payload: {}, preview: "Change “Lunch”", idempotent: true, quiet: true });
+  finishOutbound(w, claimOutbound(w, "calendar")!.id, { state: "failed", error: "Google refused (403)" });
+  assert.deepEqual(outboundNotices(w).map((payload) => [payload.state, payload.preview]), [["failed", "Change “Lunch”"]]);
+});

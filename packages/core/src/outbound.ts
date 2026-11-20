@@ -6,7 +6,8 @@
  *
  * Nothing goes out twice. A delivery that was cut off while `sending` (the home node stopped) becomes `unknown`, and is
  * retried only when its module said the action is idempotent (an event created under its own id, say); an email is
- * never resent, and the user is asked to check. Every ending is a notice, so the user hears how it went.
+ * never resent, and the user is asked to check. Every ending is a notice, so the user hears how it went; except that
+ * a change they made with their own hands (`quiet`) is only told when it did not go through.
  */
 import type { DatabaseSync } from "node:sqlite";
 import { coreContext } from "./context.ts";
@@ -34,6 +35,8 @@ export interface Outbound {
   idempotent: boolean;
   /** The proposal whose yes this is, if it came from one. */
   proposalId: string | null;
+  /** The user made it themselves, in place: they are told only if it fails or may not have happened. */
+  quiet: boolean;
   state: OutboundState;
   attempts: number;
   error: string | null;
@@ -45,7 +48,7 @@ export interface Outbound {
 function toOutbound(row: Record<string, unknown>): Outbound {
   return {
     id: row.id as string, module: row.module as string, action: row.action as string, payload: JSON.parse(row.payload as string),
-    preview: row.preview as string, detail: row.detail as string | null, idempotent: row.idempotent === 1, proposalId: row.proposal_id as string | null, state: row.state as OutboundState,
+    preview: row.preview as string, detail: row.detail as string | null, idempotent: row.idempotent === 1, proposalId: row.proposal_id as string | null, quiet: row.quiet === 1, state: row.state as OutboundState,
     attempts: row.attempts as number, error: row.error as string | null, result: row.result ? JSON.parse(row.result as string) : null,
     createdAt: row.created_at as string, updatedAt: row.updated_at as string,
   };
@@ -70,7 +73,7 @@ export function listOutbound(world: World, options: { module?: string; states?: 
 /** Records a change to deliver. Inside the caller's transaction (an op, a proposal's step), so it commits with the
  * decision or not at all. */
 export function enqueueOutbound(world: World, input: {
-  module: string; action: string; payload: unknown; preview: string; detail?: string; idempotent: boolean; now?: number;
+  module: string; action: string; payload: unknown; preview: string; detail?: string; idempotent: boolean; quiet?: boolean; now?: number;
 }): Outbound {
   const now = input.now ?? Date.now();
   const preview = input.preview.trim().slice(0, 300);
@@ -78,9 +81,9 @@ export function enqueueOutbound(world: World, input: {
   return world.tx((db) => {
     const id = newId();
     const proposalId = coreContext()?.proposalId ?? null;
-    db.prepare(`INSERT INTO core_outbound (id, module, action, payload, preview, detail, idempotent, proposal_id, state, attempts, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?)`)
-      .run(id, input.module, input.action, JSON.stringify(input.payload ?? null), preview, input.detail?.slice(0, 20_000) ?? null, input.idempotent ? 1 : 0, proposalId, iso(now), iso(now));
+    db.prepare(`INSERT INTO core_outbound (id, module, action, payload, preview, detail, idempotent, proposal_id, quiet, state, attempts, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?)`)
+      .run(id, input.module, input.action, JSON.stringify(input.payload ?? null), preview, input.detail?.slice(0, 20_000) ?? null, input.idempotent ? 1 : 0, proposalId, input.quiet ? 1 : 0, iso(now), iso(now));
     recordDomainEvent(world, { kind: "outbound.queued", subject: `outbound:${id}`, payload: { outboundId: id, module: input.module, action: input.action, preview }, now });
     return load(db, id);
   });
@@ -105,6 +108,7 @@ function end(world: World, db: DatabaseSync, outbound: Outbound, state: "done" |
     kind: `outbound.${state}`, subject: `outbound:${outbound.id}`, now,
     payload: { outboundId: outbound.id, module: outbound.module, action: outbound.action, preview: outbound.preview, ...(extra.error ? { error: extra.error.slice(0, 300) } : {}) },
   });
+  if (outbound.quiet && state === "done") return load(db, outbound.id);
   createNotice(db, {
     eventSeq: event.seq, kind: "outbound", now,
     payload: {

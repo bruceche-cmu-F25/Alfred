@@ -7,6 +7,10 @@
  * It is also the one place to search (⌘K comes here): words that name a page, a command or a conversation list
  * those above the bar, and Enter goes to the page or command they name; anything else Enter says to Alfred.
  *
+ * And it is where words about one thing on the page are written (shell/about.ts): a mail to answer, a draft to
+ * change. The thing sits in the bar before the field, the words go to it, and what comes of them shows on the page
+ * where the thing is, so the card stays down for that turn unless it has something the page cannot show.
+ *
  * The bar is a row of the page, not something floating over it, so nothing on the page is ever under it. Only the
  * card, the suggestions and what was found sit over the page, and only for a while.
  */
@@ -21,6 +25,7 @@ import { Markdown } from "../Markdown.tsx";
 import { describeReceipt, errorText } from "../receipts.ts";
 import { MicButton } from "../voice/MicButton.tsx";
 import { appendDictation } from "../voice/wav.ts";
+import type { About } from "./about.ts";
 import { newestRun, standing } from "./ask.ts";
 import { defaultPick, findItems, type FindSources } from "./find.ts";
 import { Figure } from "./Figure.tsx";
@@ -125,6 +130,11 @@ export interface AskBarProps {
   dock?: boolean;
   /** What the words can go to instead of being said: pages, commands, conversations. */
   find: FindSources;
+  /** The page in view (`mail.inbox`): a turn asked about a thing on it shows there, not in the card. */
+  page?: string;
+  /** The thing the next words are about, picked on the page. */
+  about?: About | null;
+  onAbout?(about: null): void;
   /** Sends the words: to the open conversation while it is recent, else as a new one. */
   onAsk(text: string): Promise<void>;
   /** Opens the conversation in Alfred's panel. */
@@ -134,7 +144,7 @@ export interface AskBarProps {
   onBack?(): void;
 }
 
-export function AskBar({ state, selected, figure, live, suggestions, dock, find, onAsk, onOpen, onProposal, onEvent, onBack }: AskBarProps) {
+export function AskBar({ state, selected, figure, live, suggestions, dock, find, page, about, onAbout, onAsk, onOpen, onProposal, onEvent, onBack }: AskBarProps) {
   const [draft, setDraft] = useState("");
   /** The found thing picked with the arrow keys; null while Enter does its default. */
   const [picked, setPicked] = useState<number | null>(null);
@@ -165,11 +175,17 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
   // The card comes up when the open conversation's newest turn moves: asked, waiting for you, done. One that was
   // already over when the bar appeared has been seen; one waiting for you has not been answered.
   const moved = run ? `${run.id}:${where}` : "";
+  // A turn about a thing on the page in view is followed there: its draft is written where the thing is. The card
+  // is for what the page cannot show: a question back, an answer in words, a failure.
+  const inPlace = !!run?.context?.selection && run.context.view === page && (where === "busy" || !!proposal);
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; if (where === "waiting") setCard(true); return; }
-    if (moved) setCard(true);
+    if (moved) setCard(!inPlace);
   }, [moved]);
+  // A thing was put in the bar: the cursor goes after it.
+  const aboutKey = about?.key;
+  useEffect(() => { if (aboutKey) { setError(null); field.current?.focus(); } }, [aboutKey]);
 
   // What it is doing now, from its steps as they happen.
   useEffect(() => onEvent((event) => {
@@ -224,6 +240,14 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
     setSending(true);
     setError(null);
     setDecided(null);
+    if (about) {
+      // Words about the thing in the bar go to it; it then leaves the bar.
+      about.send(goal)
+        .then(() => { if (text === draft) setDraft(""); onAbout?.(null); })
+        .catch((reason: Error) => setError(reason.message))
+        .finally(() => setSending(false));
+      return;
+    }
     onAsk(goal)
       .then(() => { if (text === draft) setDraft(""); setCard(true); })
       .catch((reason: Error) => setError(reason.message))
@@ -231,7 +255,7 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
   };
   // What the words name, listed above the bar with "ask Alfred" last, next to the field. Enter takes the row that is
   // lit: a page or a command the words name, else asking.
-  const found = focused && draft.trim() ? findItems(draft, find).slice(0, FOUND) : [];
+  const found = focused && draft.trim() && !about ? findItems(draft, find).slice(0, FOUND) : [];
   const asking = found.length;
   const lit = found.length ? picked ?? (defaultPick(found) < 0 ? asking : defaultPick(found)) : asking;
   const go = (index: number) => {
@@ -252,18 +276,21 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
       return;
     }
     if (event.key === "Enter" && lit < asking) { event.preventDefault(); go(lit); return; }
+    // Backing out of an empty field lets go of the thing it was about.
+    if (about && !draft && (event.key === "Escape" || event.key === "Backspace")) { event.preventDefault(); onAbout?.(null); return; }
     if (event.key !== "Escape") return;
     if (card && where === "over") setCard(false);
     else { setFocused(false); field.current?.blur(); if (dock && !draft) onBack?.(); }
   };
 
   const showCard = card && !!run;
-  const offer = focused && !draft.trim() && !sending && !showCard && where !== "busy" && suggestions.length > 0;
+  const chips = about ? about.chips ?? [] : suggestions;
+  const offer = focused && !draft.trim() && !sending && (about ? true : !showCard && where !== "busy") && chips.length > 0;
   return (
     <div className="ask" ref={root} data-dock={dock || undefined}>
-      {(showCard || offer || error || found.length > 0) && (
+      {((showCard && !about) || offer || error || found.length > 0) && (
         <div className="ask-over">
-          {showCard && (
+          {showCard && !about && (
             <AskCard key={run.id} run={run} live={words} doing={doing?.runId === run.id ? doing.label : undefined} receipts={receipts} proposal={proposal}
               decided={decided?.runId === run.id ? decided.text : undefined}
               onOpen={onOpen} onProposal={onProposal} onDecided={(text) => { if (text) setDecided({ runId: run.id, text }); }} onClose={() => setCard(false)} onHover={(over) => { hovered.current = over; }} />
@@ -271,7 +298,7 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
           {offer && (
             <div className="ask-chips" role="group" aria-label={t("chips.label")}>
               {/* Not taking the cursor out of the field on the way to being clicked. */}
-              {suggestions.map((text) => <button type="button" key={text} className="suggestion" onMouseDown={(event) => event.preventDefault()} onClick={() => send(undefined, text)}>{text}</button>)}
+              {chips.map((text) => <button type="button" key={text} className="suggestion" onMouseDown={(event) => event.preventDefault()} onClick={() => send(undefined, text)}>{text}</button>)}
             </div>
           )}
           {found.length > 0 && (
@@ -292,12 +319,18 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
         {dock
           ? <button type="button" className="icon-btn" onClick={onBack} aria-label={t("ask.back")} title={t("ask.back")}><Icon name="down" /></button>
           : <button type="button" className="ask-figure" onClick={onOpen} aria-label={t("fab.open", { key: `${MOD}.` })} title={t("fab.open", { key: `${MOD}.` })}><Figure state={figure} size={28} anchor /></button>}
+        {about && (
+          <span className="ask-about">
+            <span>{about.label}</span>
+            <button type="button" aria-label={t("ask.about.clear")} title={t("ask.about.clear")} onMouseDown={(event) => event.preventDefault()} onClick={() => onAbout?.(null)}><Icon name="close" /></button>
+          </span>
+        )}
         <input
           ref={field} value={draft} onChange={(event) => { setDraft(event.target.value); setPicked(null); }} onKeyDown={onKey} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-          placeholder={t(where === "busy" ? "composer.working" : "ask.placeholder")} aria-label={t("pal.label")} maxLength={8000} autoComplete="off" enterKeyHint="send"
+          placeholder={about ? about.placeholder : t(where === "busy" ? "composer.working" : "ask.placeholder")} aria-label={about ? about.label : t("pal.label")} maxLength={8000} autoComplete="off" enterKeyHint="send"
           role="combobox" aria-expanded={found.length > 0} aria-controls="ask-found" aria-activedescendant={found.length ? `ask-found-${lit}` : undefined}
         />
-        {!dock && !draft && !focused && <kbd aria-hidden="true">{MOD}K</kbd>}
+        {!dock && !draft && !focused && !about && <kbd aria-hidden="true">{MOD}K</kbd>}
         <MicButton onText={(text) => { setDraft((now) => appendDictation(now, text)); field.current?.focus(); }} />
         <button type="submit" className="send" disabled={!draft.trim() || sending} aria-label={t("composer.send")}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg>

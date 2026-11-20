@@ -38,8 +38,37 @@ export interface MailSource {
   canSend: boolean;
 }
 
+/** An email to send: what the `mail.send` operation takes, and so what a draft (a proposal's step) holds. */
+export interface SendInput {
+  account: string;
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  /** The message this answers: its thread, so Gmail keeps them together. */
+  replyTo?: { id: string; threadId: string };
+}
+
+/** An email the user sent from Alfred (their own, or Alfred's draft they accepted), and how sending it went. */
+export interface MailSent {
+  id: string;
+  account: string;
+  /** The message it answers, when it is a reply. */
+  replyTo: string | null;
+  to: string[];
+  subject: string;
+  /** The text, cut at 1500 characters. */
+  body: string;
+  /** `unknown`: Gmail gave no clear answer, and it is never sent again. */
+  state: "queued" | "sending" | "done" | "failed" | "unknown";
+  error: string | null;
+  at: string;
+}
+
 export interface MailSnapshot {
   /** The inbox's last two weeks, newest first (at most 100 per account). */
   messages: MailMessage[];
   sources: MailSource[];
+  /** What was sent from here in the last two weeks, oldest first (at most 30). */
+  sent: MailSent[];
 }

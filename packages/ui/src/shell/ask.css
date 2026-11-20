@@ -17,6 +17,12 @@
 .ask-form .send { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--accent-solid); color: var(--accent-ink); }
 .ask-form .send:disabled { opacity: 1; background: color-mix(in oklab, var(--field), var(--ink) 9%); color: var(--muted); }
 html.desktop .ask { -webkit-app-region: no-drag; }
+/* The thing the next words are about, picked on the page: in the bar, before the field. */
+.ask-about { flex: none; max-width: 46%; height: 28px; display: inline-flex; align-items: center; gap: 2px; padding: 0 4px 0 10px; border-radius: 999px; background: var(--alf-soft); color: var(--alf); font-size: .8125rem; font-weight: 500; white-space: nowrap; }
+.ask-about > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ask-about button { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: inherit; opacity: .7; }
+.ask-about button:hover { opacity: 1; background: var(--alf-soft); }
+.ask-about svg { width: 11px; height: 11px; }
 
 /* Over the page, above the bar: the card, then the suggestions or what was found, next to the field. */
 .ask-over { position: absolute; left: 0; right: 0; bottom: calc(100% + 10px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }

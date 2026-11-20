@@ -265,4 +265,11 @@ INSERT INTO core_automations_next (id, name, template, goal, schedule, enabled, 
 DROP TABLE core_automations;
 ALTER TABLE core_automations_next RENAME TO core_automations;
 `,
+}, {
+  // A change the user made themselves, in place (an event typed into the calendar page): that it went through is
+  // not news to them, so only its failing is told (outbound.ts).
+  id: "core:15",
+  sql: `
+ALTER TABLE core_outbound ADD COLUMN quiet INTEGER NOT NULL DEFAULT 0 CHECK (quiet IN (0, 1));
+`,
 }];

@@ -45,11 +45,38 @@ export interface CalendarSource {
   calendars: Array<{ id: string; name: string; k: string; writable: boolean; varied: boolean }>;
 }
 
+/** When an event is: a time span (instants) or whole days (local dates, the last one included). */
+export type CalendarWhen = { start: string; end: string } | { date: string; endDate: string };
+
+/** A change to the calendar that Google has not answered yet (typed in on the calendar page, or a proposal just
+ * accepted). The page draws it already, marked as on its way; when Google answers it is an event like any other, or,
+ * refused, it is gone and a notice says why. */
+export interface CalendarPending {
+  /** `<calendar id>:<event id>`: the event it changes, or the one it adds. */
+  id: string;
+  account: string;
+  calendarId: string;
+  added: boolean;
+  /** What it sets; what is left out stays as it is. */
+  title?: string;
+  when?: CalendarWhen;
+  location?: string;
+  /** The colour it will have, when that is known before Google answers. */
+  k?: string;
+  /** It deletes the event: the page leaves it out already. */
+  removed?: boolean;
+}
+
 export interface CalendarSnapshot {
   /** The home node's local date. */
   today: string;
-  /** From a week ago to five weeks ahead, by start. */
+  /** The days the mirror holds, inclusive: a week back to five weeks ahead. Outside them nothing is known. */
+  from: string;
+  to: string;
+  /** Every event touching those days, by start. */
   events: CalendarEvent[];
+  /** Changes on their way to Google, oldest first. */
+  pending: CalendarPending[];
   /** Empty until a Google account with calendar access is connected. */
   sources: CalendarSource[];
 }

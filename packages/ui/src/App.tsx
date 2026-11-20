@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { AwayDigest, Notice } from "@alfred/protocol";
 import { ApiError, api, deviceId } from "./api.ts";
 import { desktop } from "./desktop.ts";
 import { AlfredPanel, figureState } from "./shell/AlfredPanel.tsx";
+import type { About, Picked } from "./shell/about.ts";
 import { continues } from "./shell/ask.ts";
 import { AskBar } from "./shell/AskBar.tsx";
 import type { FindCommand, FindSources } from "./shell/find.ts";
@@ -308,6 +309,34 @@ export function App() {
       throw reason;
     });
   }, [conversations, runs, selected, go, view?.context]);
+  /** What the user picked on the page to say something about: the bar's next words go to it (shell/about.ts). */
+  const [about, setAbout] = useState<About | null>(null);
+  const pageKey = current?.key;
+  useEffect(() => setAbout(null), [pageKey]);
+  const attach = useCallback((next: About | null) => {
+    setAbout(next);
+    if (!next) return;
+    // The bar is where the words are written: it comes up if Alfred's panel or the phone's tabs are in its place.
+    if (phone) { setSheet(null); setAsking(true); }
+    else if (layout.alfred !== "closed") setLayout({ alfred: "closed" });
+  }, [phone, layout.alfred, setLayout]);
+  // The same page and facts are the same context, whichever render they came from.
+  const contextKey = view ? JSON.stringify(view.context) : "";
+  const context = useMemo(() => (contextKey ? JSON.parse(contextKey) as NonNullable<typeof view>["context"] : undefined), [contextKey]);
+  /** A question about one thing on the page. It joins the open conversation only while that is recent and at rest. */
+  const askPicked = useCallback(async (goal: string, picked: Picked) => {
+    const open = conversations?.find((conversation) => conversation.id === selected);
+    const target = open && !open.busy && !open.attention ? continues(open, Date.now()) : null;
+    const { run } = await api.submit(goal, target ?? undefined, context ? { ...context, selection: picked } : undefined);
+    if (run.conversationId !== selected) go({ selected: run.conversationId });
+    return run.id;
+  }, [conversations, selected, go, context]);
+  const revisePicked = useCallback(async (proposalId: string, text: string, picked: Picked) => {
+    const { run } = await api.revise(proposalId, text, context ? { ...context, selection: picked } : undefined);
+    if (run && run.conversationId !== selected) go({ selected: run.conversationId });
+    return run?.id ?? null;
+  }, [selected, go, context]);
+  const line = useMemo(() => ({ about: about?.key ?? null, attach, ask: askPicked, revise: revisePicked }), [about?.key, attach, askPicked, revisePicked]);
   /** The ask bar is where Alfred is talked to: its panel is closed and the page leaves it room. */
   const barHere = !phone && !bare && alfredMode === "closed";
   inCard.current = barHere || (phone && asking && !bare);
@@ -416,12 +445,12 @@ export function App() {
               </header>
             )}
             <div className="page-body">{current.render({
-              snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, focus: inboxFocus, onFocused, openConversation,
+              snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, focus: inboxFocus, onFocused, openConversation, line,
               dev: { session: route.session, onSession: openSession, live, highlighted, onEvent, pageTitle, automationTitle: automationOf },
             })}</div>
             {/* Under the page: the page's own controls are at its top, Alfred and search at its foot. */}
             {barHere && (
-              <AskBar state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find}
+              <AskBar state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find} page={current.key} about={about} onAbout={setAbout}
                 onAsk={ask} onOpen={showAlfred} onProposal={showProposal} onEvent={onEvent} />
             )}
           </>
@@ -446,8 +475,8 @@ export function App() {
         <Dock state={state} pages={pages} page={current?.key ?? ""} figure={figure} onPage={goPage}
           onAlfred={() => (asking || bare ? setSheet("alfred") : setAsking(true))} onConversations={() => setSheet("nav")}
           ask={asking && !bare ? (
-            <AskBar dock state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find}
-              onAsk={ask} onOpen={() => setSheet("alfred")} onProposal={showProposal} onEvent={onEvent} onBack={() => setAsking(false)} />
+            <AskBar dock state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find} page={current?.key} about={about} onAbout={setAbout}
+              onAsk={ask} onOpen={() => setSheet("alfred")} onProposal={showProposal} onEvent={onEvent} onBack={() => { setAsking(false); setAbout(null); }} />
           ) : undefined} />
       )}
 

@@ -324,6 +324,13 @@ test("proposals over HTTP: a run proposes, the user accepts once, or asks for a 
     assert.equal(revised.run.conversationId, second.conversationId);
     assert.match(revised.run.goal, /先别删，改成完成/);
     await home.idle();
+
+    // Changed from a page, about something picked there: the revising run knows, as a question from that page would.
+    const third = ((await (await fetch(`${base}/api/state`)).json()) as StateResponse).proposals[0];
+    const context = { view: "mail.inbox", selection: { id: "m1", title: "Leo: 合同第二版" } };
+    const fromPage = await (await post(base, `/api/proposals/${third.id}/revise`, { requestId: "change-2", text: "短一点", context })).json() as { run: { context: unknown } };
+    assert.deepEqual(fromPage.run.context, context);
+    await home.idle();
   } finally {
     server.close(); server.closeAllConnections();
     home.close();

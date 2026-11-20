@@ -16,6 +16,7 @@ import { Inbox } from "../Inbox.tsx";
 import { Settings } from "../Settings.tsx";
 import { Todos } from "../Todos.tsx";
 import { t, type Key } from "../i18n/index.ts";
+import type { PageLine } from "./about.ts";
 import { inboxItems, waitingCount } from "./inbox.ts";
 import type { IconName } from "./icons.tsx";
 
@@ -32,6 +33,8 @@ export interface PageProps {
   openConversation(conversationId: string, runId?: string): void;
   /** The Code page: its open session and what a conversation needs. */
   dev: Omit<DevProps, "state">;
+  /** The bar under the page: where words about a thing picked on this page are written. */
+  line: PageLine;
 }
 
 export interface PageDef {
@@ -169,7 +172,7 @@ const PAGES: PageDef[] = [
       return mail.unread.length ? t("head.mail.unread", { n: mail.unread.length }) : t("head.mail.clear");
     },
     suggestions: (snapshot) => unreadMail(snapshot).sources.length ? ["sug.mail.reply", "sug.mail.today", "sug.mail.important"] : [],
-    render: ({ snapshot }) => <Mail snapshot={snapshot as MailSnapshot | undefined} />,
+    render: ({ snapshot, state, line }) => <Mail snapshot={snapshot as MailSnapshot | undefined} state={state} line={line} />,
   },
   {
     key: "core.automations", get title() { return t("page.automations"); }, icon: "clock", k: "green", group: "modules",

@@ -272,7 +272,8 @@ export interface Proposal {
   stale?: boolean;
 }
 export interface ProposalRequest { requestId: string }
-export interface ReviseRequest { requestId: string; text: string }
+/** `context`: the page the change was asked from and what was picked there, as with a run. */
+export interface ReviseRequest { requestId: string; text: string; context?: ViewContext }
 export interface ProposalResponse { proposal: Proposal; replayed: boolean; run?: Run }
 
 /** A part of life things belong to (work, health…), shared by the modules that sort by it; `k` is its colour slot. */

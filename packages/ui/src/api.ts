@@ -99,7 +99,8 @@ export const api = {
   /** The user's decision on a proposal. A retry with the same request id gets the same answer. */
   accept: (id: string, requestId = newRequestId()) => post<ProposalResponse>(`/api/proposals/${id}/accept`, { requestId }),
   decline: (id: string) => post<ProposalResponse>(`/api/proposals/${id}/decline`, { requestId: newRequestId() }),
-  revise: (id: string, text: string) => post<ProposalResponse>(`/api/proposals/${id}/revise`, { requestId: newRequestId(), text }),
+  /** `context`: the page it was changed from and what was picked there, as with a question. */
+  revise: (id: string, text: string, context?: ViewContext) => post<ProposalResponse>(`/api/proposals/${id}/revise`, { requestId: newRequestId(), text, ...(context ? { context } : {}) }),
   /** The user's preferences that are not secrets, shared by every device (for now, the language). */
   settings: (patch: Partial<UserSettings>) => post<UserSettings>("/api/settings", { requestId: newRequestId(), patch }),
   /** A module's read that is too big for the state (one mail's body). */

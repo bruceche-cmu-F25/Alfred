@@ -7,18 +7,11 @@
 import { enqueueOutbound, localeOf, userLocale, type Outbound, type World } from "@alfred/core";
 import { defineOp, defineTool, Type, type Delivered, type GoogleSession, type ModuleServices } from "@alfred/module-kit";
 import { getMail } from "./index.ts";
+import type { SendInput } from "./types.ts";
+
+export type { SendInput } from "./types.ts";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-
-export interface SendInput {
-  account: string;
-  to: string[];
-  cc: string[];
-  subject: string;
-  body: string;
-  /** The message this answers: its thread, so Gmail keeps them together. */
-  replyTo?: { id: string; threadId: string };
-}
 
 const ADDRESS = /^[^\s@<>,;:"()[\]\\]+@[^\s@<>,;:"()[\]\\]+\.[^\s@<>,;:"()[\]\\]+$/;
 /** Plain addresses only: a name with commas or a line break could add a recipient or a header nobody saw. */

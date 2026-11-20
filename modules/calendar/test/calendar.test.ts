@@ -105,7 +105,7 @@ test("an account that cannot be read keeps its last events and says why; one dis
   assert.match(describeEvents(w, "2026-11-19", "2026-11-19"), /Could not read me@example\.com just now/);
 
   await syncCalendar(w, { google: fakeGoogle({}, { accounts: () => [] }) }, undefined, NOW);
-  assert.deepEqual((calendarModule.snapshot!(w) as CalendarSnapshot), { today: (calendarModule.snapshot!(w) as CalendarSnapshot).today, events: [], sources: [] });
+  assert.deepEqual((calendarModule.snapshot!(w) as CalendarSnapshot), { today: "2026-11-19", from: "2026-11-12", to: "2026-12-24", events: [], pending: [], sources: [] });
   assert.match(describeEvents(w, "2026-11-19", "2026-11-19"), /not connected/);
   await syncCalendar(w, {}, undefined, NOW);
 });

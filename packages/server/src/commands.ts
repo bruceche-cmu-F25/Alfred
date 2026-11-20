@@ -95,7 +95,9 @@ const OPS: readonly HarnessOp[] = [
     run: (home, input) => ({ proposal: declineProposal(home.world, input.id) }),
   }),
   define({
-    name: "proposal.revise", input: Type.Object({ id: Id, text: Said }),
+    // `context`: the page it was changed from and what was picked there (a mail), so that page can show the new version
+    // being written where the old one was.
+    name: "proposal.revise", input: Type.Object({ id: Id, text: Said, context: Type.Optional(Type.Unknown()) }),
     // The proposal is superseded, and a run in its conversation is asked to propose again with the change.
     run(home, input, { requestId }) {
       const superseded = supersedeProposal(home.world, input.id, input.text);
@@ -104,7 +106,11 @@ const OPS: readonly HarnessOp[] = [
       const goal = userLocale(home.world) === "zh"
         ? `修改你之前的提议「${superseded.title}」：${input.text.trim()}\n原来的提议：${superseded.summary}\n步骤：${steps.join("；")}\n请按修改意见重新提议（用 propose），不要直接改。`
         : `Change your earlier proposal "${superseded.title}": ${input.text.trim()}\nThe proposal was: ${superseded.summary}\nSteps: ${steps.join("; ")}\nPropose again with the change (use propose); do not make the changes directly.`;
-      const { run } = submitRun(home.world, { requestId: `${requestId}.revise`, goal, profile: profileFor(home.world, superseded.conversationId), conversationId: superseded.conversationId ?? undefined });
+      const profile = profileFor(home.world, superseded.conversationId);
+      const { run } = submitRun(home.world, {
+        requestId: `${requestId}.revise`, goal, profile, conversationId: superseded.conversationId ?? undefined,
+        ...(input.context !== undefined && profile === ASSISTANT_PROFILE ? { context: input.context } : {}),
+      });
       return { proposal: superseded, run };
     },
   }),

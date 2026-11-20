@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { acceptProposal, CORE_MIGRATIONS, listOpenProposals, listOutbound, openWorld, updateSettings, type World } from "@alfred/core";
-import { applyStep, assistantTools, deliverQueued, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
-import { buildRaw, checkAddress, mailModule, syncMail } from "../src/index.ts";
+import { applyStep, assistantTools, deliverQueued, invokeOp, runTools, ServiceError, type GoogleService } from "@alfred/module-kit";
+import { buildRaw, checkAddress, mailModule, syncMail, type MailSnapshot } from "../src/index.ts";
 
 const world = (): World => openWorld(":memory:", [...CORE_MIGRATIONS, ...mailModule.migrations]);
 const signal = new AbortController().signal;
@@ -115,4 +115,27 @@ test("no permission to send: not proposable, and an accepted email whose permiss
   await deliverQueued(w, mailModule, { google: readOnly.google }, signal);
   assert.equal(readOnly.sent.length, 0);
   assert.equal(listOutbound(w)[0].state, "failed");
+});
+
+test("the mail page hears what was sent from here: Alfred's draft once accepted, and a reply the user wrote themself", async () => {
+  const w = world();
+  const { google, sent } = fakeGmail();
+  await syncMail(w, { google });
+  const page = () => (mailModule.snapshot!(w) as MailSnapshot).sent.map((mail) => [mail.replyTo, mail.to.join(), mail.body, mail.state]);
+  await propose(w, { reply_to: "m1", body: "Friday works." });
+  assert.deepEqual(page(), [], "a draft is not sent mail");
+  accept(w);
+  assert.deepEqual(page(), [["m1", "leo@studio.example", "Friday works.", "queued"]]);
+  await deliverQueued(w, mailModule, { google }, signal);
+  assert.deepEqual(page(), [["m1", "leo@studio.example", "Friday works.", "done"]]);
+
+  // The user's own words, sent by their click: the same operation a proposal's yes runs, with no proposal.
+  const own = { account: "me@example.com", to: ["leo@studio.example"], cc: [], subject: "Re: 合同第二版", body: "One more thing: who signs first?", replyTo: { id: "m1", threadId: "t1" } };
+  assert.ok((invokeOp(w, [mailModule], { op: "mail.send", requestId: "own-1", input: own }).result as { queued?: string }).queued);
+  invokeOp(w, [mailModule], { op: "mail.send", requestId: "own-1", input: own });
+  await deliverQueued(w, mailModule, { google }, signal);
+  assert.equal(sent.length, 2, "a retried click does not send twice");
+  assert.equal(bodyOf(decode(sent[1].body.raw)), "One more thing: who signs first?");
+  assert.deepEqual(page().map((mail) => mail[3]), ["done", "done"]);
+  assert.match(String((invokeOp(w, [mailModule], { op: "mail.send", requestId: "own-2", input: { ...own, to: ["Leo <leo@studio.example>"] } }).result as { error?: string }).error), /plain email addresses/);
 });
