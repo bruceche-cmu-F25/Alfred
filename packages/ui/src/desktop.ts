@@ -16,6 +16,8 @@ export interface DesktopBridge {
   onFocusComposer(listener: () => void): () => void;
   /** Main window: whether it is shown and focused, as the app sees it. */
   onAttention(listener: (attending: boolean) => void): () => void;
+  /** Main window: whether it is full screen (no window buttons then). Absent in older app builds. */
+  onFullScreen?(listener: (full: boolean) => void): () => void;
   /** Presence window: notices for Alfred to say (the welcome, results, questions, proposals). `visiting` when the
    * user hid the figure and it is shown only to say these; the page calls `settle` once it is done. */
   onSay(listener: (notices: Notice[], visiting: boolean) => void): () => void;

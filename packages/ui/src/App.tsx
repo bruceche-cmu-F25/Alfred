@@ -28,6 +28,13 @@ import { useOutlet } from "./outlet.ts";
 import { welcomeLines } from "./welcome.ts";
 
 if (desktop) document.documentElement.classList.add("desktop");
+desktop?.onFullScreen?.((full) => document.documentElement.classList.toggle("full-screen", full));
+// An iPhone or iPad zooms the page in when a field whose text is under 16px takes focus, and leaves it zoomed: the
+// page is then wider than the screen. A top scale of 1 stops that there, and pinching still zooms. (Only there:
+// on Android the same line would take pinching away.)
+if (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
+  document.querySelector('meta[name="viewport"]')?.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover");
+}
 
 const DEV_PAGE = "core.dev";
 
@@ -473,7 +480,7 @@ export function App() {
 
       {phone && sheet !== "alfred" && (
         <Dock state={state} pages={pages} page={current?.key ?? ""} figure={figure} onPage={goPage}
-          onAlfred={() => (asking || bare ? setSheet("alfred") : setAsking(true))} onConversations={() => setSheet("nav")}
+          onAlfred={() => (asking || bare ? setSheet("alfred") : setAsking(true))} onMenu={() => setSheet("nav")}
           ask={asking && !bare ? (
             <AskBar dock state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find} page={current?.key} about={about} onAbout={setAbout}
               onAsk={ask} onOpen={() => setSheet("alfred")} onProposal={showProposal} onEvent={onEvent} onBack={() => { setAsking(false); setAbout(null); }} />

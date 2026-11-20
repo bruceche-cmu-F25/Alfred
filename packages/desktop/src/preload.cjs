@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("alfredDesktop", {
   onFocusRun: (listener) => listen("focus-run", (_event, runId) => listener(String(runId))),
   onFocusComposer: (listener) => listen("focus-composer", () => listener()),
   onAttention: (listener) => listen("attention", (_event, attending) => listener(Boolean(attending))),
+  onFullScreen: (listener) => listen("full-screen", (_event, full) => listener(Boolean(full))),
   onSay: (listener) => listen("say", (_event, notices, visiting) => listener(Array.isArray(notices) ? notices : [], Boolean(visiting))),
   toggleMain: () => ipcRenderer.send("toggle-main"),
   openMain: (runId) => ipcRenderer.send("open-main", typeof runId === "string" ? runId : null),

@@ -50,6 +50,7 @@ export const zh = {
   "top.daily": "日常",
   "top.dev": "开发",
   "nav.conversations": "对话",
+  "nav.menu": "菜单",
   "nav.newConversation": "新对话",
   "nav.noConversations": "还没有对话。",
   "nav.attention": "{n} 件需要你",

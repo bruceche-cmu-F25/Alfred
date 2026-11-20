@@ -66,10 +66,10 @@ ul.ask-did li::before { content: "✓ "; }
 
 /* A phone: the bar takes the place of the dock's tabs, beside the dock's own figure; the card and the suggestions
    sit above the dock, the card's tail pointing down at that figure. */
-.ask[data-dock] { flex: 1; min-width: 0; width: auto; margin: 9px 0 0 6px; position: static; }
+.ask[data-dock] { flex: 1; min-width: 0; width: auto; margin: 5px 0 0 6px; position: static; }
 .ask[data-dock] .ask-form { padding: 4px 5px 4px 4px; box-shadow: none; }
 .ask[data-dock]::before { display: none; }
-.ask[data-dock] .ask-over { position: fixed; left: 10px; right: 10px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+.ask[data-dock] .ask-over { position: fixed; left: 10px; right: 10px; bottom: calc(var(--dock-h) + 10px + env(safe-area-inset-bottom, 0px)); }
 .ask[data-dock] .ask-card { transform-origin: calc(100% - 28px) calc(100% + 24px); }
 .ask[data-dock] .ask-card::after { left: auto; right: 22px; }
 

@@ -141,6 +141,10 @@ function createMain(): BrowserWindow {
   const attention = () => sayAttention(window);
   for (const change of ["focus", "blur", "show", "hide", "minimize", "restore"] as const) window.on(change as "focus", attention);
   window.webContents.on("did-finish-load", attention);
+  // Full screen hides the window buttons: the page drops the room it keeps for them.
+  const fullScreen = () => { if (!window.isDestroyed()) window.webContents.send("full-screen", window.isFullScreen()); };
+  for (const change of ["enter-full-screen", "leave-full-screen"] as const) window.on(change as "enter-full-screen", fullScreen);
+  window.webContents.on("did-finish-load", fullScreen);
   window.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: "deny" }; });
   window.webContents.on("will-navigate", (event, url) => { if (!sameOrigin(url)) { event.preventDefault(); openExternal(url); } });
   void window.loadURL(`${client.base}/`);

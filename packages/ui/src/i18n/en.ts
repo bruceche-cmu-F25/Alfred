@@ -51,6 +51,7 @@ export const en: Record<keyof typeof zh, string> = {
   "top.daily": "Daily",
   "top.dev": "Code",
   "nav.conversations": "Conversations",
+  "nav.menu": "Menu",
   "nav.newConversation": "New conversation",
   "nav.noConversations": "No conversations yet.",
   "nav.attention": "{n} {n|thing needs|things need} you",
