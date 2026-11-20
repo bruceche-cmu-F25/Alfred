@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { Automation, StateResponse } from "@alfred/protocol";
+import type { Automation, Run, StateResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { automationTitle, scheduleText, whenText } from "./automationText.ts";
+import { AutomationHistory } from "./AutomationHistory.tsx";
 import { Linked } from "./Linked.tsx";
 import { plainText } from "./markdown.ts";
 import { Icon } from "./shell/icons.tsx";
@@ -84,8 +85,9 @@ function AutomationForm({ automation, onDone }: { automation?: Automation; onDon
   );
 }
 
-function AutomationRow({ automation, onOpenConversation }: { automation: Automation; onOpenConversation(conversationId: string, runId?: string): void }) {
+function AutomationRow({ automation, recent, onOpenConversation }: { automation: Automation; recent: Run[]; onOpenConversation(conversationId: string, runId?: string): void }) {
   const [editing, setEditing] = useState(false);
+  const [history, setHistory] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,19 +125,19 @@ function AutomationRow({ automation, onOpenConversation }: { automation: Automat
         <small>{automation.enabled && automation.nextAt ? t("auto.next", { when: whenText(automation.nextAt) }) : t("auto.off")}</small>
       </div>
       <div className="auto-last" data-state={automation.lastRun?.state}>
-        {automation.conversationId && automation.lastRun
-          ? <button type="button" className="link" onClick={() => onOpenConversation(automation.conversationId!, automation.lastRun!.id)} aria-label={`${lastText(automation)} · ${t("auto.open")}`}>{lastText(automation)}</button>
-          : <span>{lastText(automation)}</span>}
+        <span>{lastText(automation)}</span>
         {automation.lastRun?.reply && <small><Linked text={plainText(automation.lastRun.reply)} /></small>}
+        {automation.lastRun && <button type="button" className="link" aria-expanded={!!history} onClick={() => setHistory(history ? null : "latest")}>{t("auto.history")}</button>}
       </div>
       <div className="auto-actions">
         <button type="button" className="switch" role="switch" aria-checked={automation.enabled} disabled={busy} aria-label={t("auto.toggle", { name: title })}
           onClick={() => act(() => api.updateAutomation(automation.id, { enabled: !automation.enabled }))} />
         <button type="button" className="ghost small" disabled={busy}
-          onClick={() => act(() => api.runAutomation(automation.id), (run) => onOpenConversation(run.conversationId, run.id))}>{t("auto.runNow")}</button>
+          onClick={() => act(() => api.runAutomation(automation.id), (run) => setHistory(run.id))}>{t("auto.runNow")}</button>
         <button type="button" className="ghost small" disabled={busy} onClick={() => setEditing(true)}>{t("auto.edit")}</button>
         <button type="button" className={confirming ? "ghost small danger" : "ghost small"} disabled={busy} onClick={remove}>{t(confirming ? "auto.confirmDelete" : "auto.delete")}</button>
       </div>
+      {history && <AutomationHistory key={history} automation={automation} recent={recent} onOpenConversation={onOpenConversation} />}
       {error && <p className="problem small auto-error" role="alert">{error}</p>}
     </li>
   );
@@ -150,7 +152,7 @@ export function Automations({ state, onOpenConversation }: { state: StateRespons
       <p className="auto-note quiet">{t("auto.note")}</p>
       {automations.length === 0 && !adding && <p className="quiet empty-list">{t("auto.sum.empty")}</p>}
       <ul className="auto-list">
-        {automations.map((automation) => <AutomationRow key={automation.id} automation={automation} onOpenConversation={onOpenConversation} />)}
+        {automations.map((automation) => <AutomationRow key={automation.id} automation={automation} recent={state.runs} onOpenConversation={onOpenConversation} />)}
         {adding && <li className="auto-row editing"><AutomationForm onDone={() => setAdding(false)} /></li>}
       </ul>
       {!adding && (

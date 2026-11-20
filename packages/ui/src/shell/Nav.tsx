@@ -1,3 +1,4 @@
+import { ConversationStatus } from "./ConversationStatus.tsx";
 import type { Conversation, StateResponse } from "@alfred/protocol";
 import { api, type Connection } from "../api.ts";
 import { getLocale, intlLocale, t } from "../i18n/index.ts";
@@ -64,7 +65,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
     api.updateConversation(conversation.id, { archived: true }).then(() => { if (selected === conversation.id) onSelect(null); }).catch(() => {});
   };
   // Everyday conversations here; development sessions are listed under their projects in the Code group.
-  const daily = state.conversations.filter((conversation) => !conversation.projectId);
+  const daily = state.conversations.filter((conversation) => !conversation.projectId && !conversation.briefOnly);
   const groups: Array<[string, PageDef[]]> = [
     [t("nav.g.work"), mode === "dev" ? [] : pages.filter((item) => item.group === "work")],
     [t("nav.g.modules"), mode === "dev" ? [] : pages.filter((item) => item.group === "modules")],
@@ -105,9 +106,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
                   <li key={conversation.id}>
                     <button type="button" className="conv" aria-current={session === conversation.id ? "true" : undefined}
                       onClick={() => onSession(conversation.id)} title={conversation.lastGoal ?? conversation.title}>
-                      <span className="st" aria-hidden="true">
-                        {conversation.attention > 0 ? <span className="mark" data-k="warm" /> : conversation.busy > 0 ? <span className="pulse" /> : <span className="mark dim" />}
-                      </span>
+                      <ConversationStatus conversation={conversation} />
                       <span className="ct">{conversation.title}</span>
                       <span className="time">{when(conversation.updatedAt)}</span>
                     </button>
@@ -132,9 +131,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
           <li key={conversation.id}>
             <button type="button" className="conv" aria-current={selected === conversation.id ? "true" : undefined}
               onClick={() => onSelect(conversation.id)} onDoubleClick={() => rename(conversation)} title={conversation.lastGoal ?? conversation.title}>
-              <span className="st" aria-hidden="true">
-                {conversation.attention > 0 ? <span className="mark" data-k="warm" /> : conversation.busy > 0 ? <span className="pulse" /> : <span className="mark dim" />}
-              </span>
+              <ConversationStatus conversation={conversation} />
               <span className="ct">{conversation.title}</span>
               {conversation.attention > 0
                 ? <span className="badge attention" aria-label={t("nav.attention", { n: conversation.attention })}>{conversation.attention}</span>

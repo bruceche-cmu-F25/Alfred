@@ -1,6 +1,6 @@
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useMemo, type CSSProperties, type ReactNode, type Ref } from "react";
 import { OutLink } from "./Linked.tsx";
-import { parseMarkdown, type Block, type Inline } from "./markdown.ts";
+import { inboxReadingBlocks, parseMarkdown, type Block, type Inline } from "./markdown.ts";
 import "./markdown.css";
 
 function inline(nodes: Inline[]): ReactNode[] {
@@ -59,7 +59,10 @@ function blocks(list: Block[], tight = false): ReactNode[] {
 
 /** A reply, drawn from the Markdown it was written in (markdown.ts). Nothing in it is HTML from the model: every
  * element here is made from the parsed tree. */
-export function Markdown({ text, className }: { text: string; className?: string }) {
-  const tree = useMemo(() => parseMarkdown(text), [text]);
-  return <div className={className ? `md ${className}` : "md"}>{blocks(tree)}</div>;
+export function Markdown({ text, className, ref, reading = false }: { text: string; className?: string; ref?: Ref<HTMLDivElement>; reading?: boolean }) {
+  const tree = useMemo(() => {
+    const parsed = parseMarkdown(text);
+    return reading ? inboxReadingBlocks(parsed) : parsed;
+  }, [text, reading]);
+  return <div ref={ref} className={className ? `md ${className}` : "md"}>{blocks(tree)}</div>;
 }

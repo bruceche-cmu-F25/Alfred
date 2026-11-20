@@ -5,12 +5,12 @@ import { t } from "../i18n/dict.ts";
 import type { IconName } from "./icons.tsx";
 
 export interface FindCommand { id: string; label: string; icon: IconName; hint?: string; run(): void }
-export interface FindItem extends FindCommand { kind: "page" | "command" | "conversation" }
+export interface FindItem extends FindCommand { unread?: boolean; kind: "page" | "command" | "conversation" }
 export interface FindSources {
   pages: ReadonlyArray<{ key: string; title: string; icon: IconName }>;
   /** Extra commands, e.g. "new conversation", "close Alfred". */
   commands: readonly FindCommand[];
-  conversations: ReadonlyArray<Pick<Conversation, "id" | "title">>;
+  conversations: ReadonlyArray<Pick<Conversation, "id" | "title" | "unreadReplyId" | "briefOnly">>;
   onPage(key: string): void;
   onSelect(id: string): void;
 }
@@ -25,8 +25,8 @@ export function findItems(query: string, { pages, commands, conversations, onPag
       kind: "page" as const, id: `page:${page.key}`, label: t("pal.go", { title: page.title }), icon: page.icon, hint: n < 9 ? `⌥${n + 1}` : undefined, run: () => onPage(page.key),
     })),
     ...commands.filter((command) => match(command.label)).map((command) => ({ ...command, kind: "command" as const })),
-    ...conversations.filter((conversation) => match(conversation.title)).slice(0, q ? 8 : 5).map((conversation) => ({
-      kind: "conversation" as const, id: `conv:${conversation.id}`, label: conversation.title, icon: "chat" as const, hint: t("pal.conversation"), run: () => onSelect(conversation.id),
+    ...conversations.filter((conversation) => !conversation.briefOnly && match(conversation.title)).slice(0, q ? 8 : 5).map((conversation) => ({
+      kind: "conversation" as const, id: `conv:${conversation.id}`, label: conversation.title, unread: !!conversation.unreadReplyId, icon: "chat" as const, hint: t("pal.conversation"), run: () => onSelect(conversation.id),
     })),
   ];
 }

@@ -2,7 +2,7 @@
  * retry after a dropped connection can never do the same thing twice.
  */
 import type {
-  Automation, Schedule,
+  Automation, AutomationHistory, Schedule,
   Conversation, ConversationDetail, CoreEvent, DeviceInfo, FileInfo, DeviceKind, DeviceScope, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
   Project, SessionChanges, SessionMode, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
@@ -92,6 +92,7 @@ export const api = {
   /** A file for the next message: kept on the home node, which says what it is (an image, a PDF, text) or refuses it. */
   upload: (file: Blob, name: string) => call<FileInfo>(`/api/files?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
+  readConversationReply: (id: string, runId: string) => post<Record<string, never>>(`/api/conversations/${id}/read`, { runId }),
   updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode; forgetCommand?: string }) =>
     post<Conversation>(`/api/conversations/${id}`, { requestId: newRequestId(), ...change }),
   /** Words into the run now working; rejects with 409 when it is not. */
@@ -133,6 +134,7 @@ export const api = {
     post<Automation>("/api/automations", { requestId: newRequestId(), ...input }),
   updateAutomation: (id: string, patch: { name?: string; goal?: string; schedule?: Schedule; enabled?: boolean }) =>
     post<Automation>(`/api/automations/${id}`, { requestId: newRequestId(), patch }),
+  automationRuns: (id: string, before?: string) => call<AutomationHistory>(`/api/automations/${id}/runs${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   runAutomation: (id: string) => post<Run>(`/api/automations/${id}/run`, { requestId: newRequestId() }),
   deleteAutomation: (id: string) => post<Record<string, never>>(`/api/automations/${id}/delete`, { requestId: newRequestId() }),
   /** Remote access and devices: on this machine the switch and the list, on another device just itself. */

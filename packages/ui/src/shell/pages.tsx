@@ -13,6 +13,7 @@ import { Calendar } from "../Calendar.tsx";
 import { Mail } from "../Mail.tsx";
 import { automationTitle, whenText } from "../automationText.ts";
 import { Dev, sessionsOf, type DevProps } from "../Dev.tsx";
+import type { NamePreference } from "../InboxEntry.tsx";
 import { Inbox } from "../Inbox.tsx";
 import { Links } from "../Links.tsx";
 import { Settings } from "../Settings.tsx";
@@ -22,7 +23,7 @@ import type { PageLine } from "./about.ts";
 import { inboxItems, waitingCount } from "./inbox.ts";
 import type { IconName } from "./icons.tsx";
 
-export interface PageProps {
+export interface PageProps extends NamePreference {
   snapshot: unknown;
   /** Subjects (like `todo:abc`) Alfred changed in the last few seconds. */
   fresh: ReadonlySet<string>;
@@ -30,6 +31,7 @@ export interface PageProps {
   areas: Area[];
   /** Core pages only: the whole state, and ways to reach the rest of the workspace. */
   state: StateResponse;
+  onEnterInbox?: () => void;
   focus: string | null;
   onFocused(): void;
   openConversation(conversationId: string, runId?: string): void;
@@ -123,7 +125,9 @@ const PAGES: PageDef[] = [
       const waiting = waitingCount(state), any = inboxItems(state).length > 0;
       return waiting ? ["sug.inbox.urgent", "sug.inbox.what"] : any ? ["sug.inbox.what"] : ["sug.inbox.today"];
     },
-    render: ({ state, focus, onFocused, openConversation, line }) => <Inbox state={state} focus={focus} onFocused={onFocused} onOpenConversation={openConversation} line={line} />,
+    render: ({ state, name, saveName, onEnterInbox, focus, onFocused, openConversation, line }) => (
+      <Inbox state={state} name={name} saveName={saveName} onEnter={onEnterInbox} focus={focus} onFocused={onFocused} onOpenConversation={openConversation} line={line} />
+    ),
   },
   {
     key: "calendar.week", get title() { return t("page.calendar"); }, icon: "cal", k: "now", group: "work",
@@ -220,7 +224,7 @@ const PAGES: PageDef[] = [
   {
     key: "core.settings", get title() { return t("page.settings"); }, icon: "gear", k: "gray", group: "system",
     summary: () => t("page.settings.summary"),
-    render: () => <Settings />,
+    render: ({ name, saveName }) => <Settings name={name} saveName={saveName} />,
   },
 ];
 

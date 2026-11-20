@@ -31,6 +31,7 @@
   },
   "exports": {
     "./welcome": "./src/welcome.ts",
+    "./inbox": "./src/shell/inbox.ts",
     "./notice": "./src/noticeText.ts",
     "./figure": "./src/entity/tesseract.js",
     "./i18n": "./src/i18n/dict.ts",

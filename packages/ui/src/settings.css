@@ -101,6 +101,10 @@
 .model-answer { display: flex; flex-direction: column; gap: 8px; }
 .model-input { flex: 1; min-width: 200px; min-height: 34px; padding: 0 12px; border-radius: 10px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-size: .875rem; }
 .model-input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.set-preferred-name .model-input { width: 12em; min-width: 0; }
+@container page (max-width: 520px) {
+  .set-preferred-name .set-end { grid-column: 1 / -1; grid-row: 3; margin-top: 8px; }
+}
 
 /* A subscription's usage under its row: one line per limit window (ModelSettings.tsx). Lines up with the name, past
    the logo. */

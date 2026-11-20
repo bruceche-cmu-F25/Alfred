@@ -110,7 +110,7 @@ try {
 
   step("A result while the main window is not in front is said by the figure on this Mac");
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().endsWith(":7481/"))?.hide());
-  const first = await (await fetch(`${base}/api/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: "e2e-notify", goal: "加一个待办：给自行车打气" }) })).json() as SubmitRunResponse;
+  const first = await (await fetch(`${base}/api/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: "e2e-notify", goal: "加一个待办：给自行车打气，做完告诉我。" }) })).json() as SubmitRunResponse;
   const notified = await waitFor("the result notice presented", async () => {
     const notice = (await state()).notices.find((candidate) => candidate.payload.runId === first.run.id);
     return notice && notice.state === "presented" ? notice : null;

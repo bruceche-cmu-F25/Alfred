@@ -6,6 +6,7 @@ import { t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
 import { Diff } from "./Diff.tsx";
 import { Linked } from "./Linked.tsx";
+import { ConversationReply } from "./ConversationReply.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { MicButton } from "./voice/MicButton.tsx";
@@ -111,7 +112,9 @@ function CommandStep({ step }: { step: Step }) {
 
 const STEP_MARK: Record<string, string> = { started: "…", done: "✓", failed: "✗", declined: "—" };
 
-export function Request({ run, request }: { run: Run; request: RunRequest }) {
+export function Request({ run, request, showQuestion = true, onAnswered }: {
+  run: Run; request: RunRequest; showQuestion?: boolean; onAnswered?(): void;
+}) {
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -119,13 +122,13 @@ export function Request({ run, request }: { run: Run; request: RunRequest }) {
     if (!value.trim() || busy) return;
     setBusy(true);
     setError(null);
-    api.respond(run.id, request.id, value.trim()).catch((reason: Error) => { setError(reason.message); setBusy(false); });
+    api.respond(run.id, request.id, value.trim()).then(() => onAnswered?.()).catch((reason: Error) => { setError(reason.message); setBusy(false); });
   };
   const permission = request.kind === "permission";
   const command = request.detailKind === "command";
   return (
-    <div className="request" data-kind={request.kind} role="group" aria-label={t(permission ? "req.permission" : "req.input")}>
-      <p className="request-question"><Linked text={request.question} /></p>
+    <div className="request" data-notice-item={`r:${run.id}`} data-kind={request.kind} role="group" aria-label={t(permission ? "req.permission" : "req.input")}>
+      {showQuestion && <p className="request-question"><Linked text={request.question} /></p>}
       {request.detail && (command ? <pre className="request-command">{request.detail}</pre> : <Diff patch={request.detail} />)}
       <div className="request-options">
         {permission ? (
@@ -153,7 +156,7 @@ export function Request({ run, request }: { run: Run; request: RunRequest }) {
   );
 }
 
-function Turn({ run, receipts, activity, files, live, highlighted, askedOn, startedBy, latest }: { run: Run; receipts: CoreEvent[]; activity: CoreEvent[]; files?: FileInfo[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string; latest: boolean }) {
+function Turn({ run, receipts, activity, files, live, highlighted, askedOn, startedBy, latest, unread }: { run: Run; unread: boolean; receipts: CoreEvent[]; activity: CoreEvent[]; files?: FileInfo[]; live?: string; highlighted: boolean; askedOn?: string; startedBy?: string; latest: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = (action: () => Promise<unknown>) => {
@@ -184,7 +187,7 @@ function Turn({ run, receipts, activity, files, live, highlighted, askedOn, star
 
   return (
     <li className="turn" data-highlighted={highlighted || undefined} id={`run-${run.id}`}>
-      {askedOn && <p className="asked-on">{t("conv.askedFrom", { page: askedOn })}</p>}
+      {askedOn && <p className="asked-on">{askedOn}</p>}
       {/* An automation's run: nobody said anything; say which automation started it, and when. */}
       {startedBy ? <p className="asked-on auto-from" title={run.goal}>{startedBy}</p> : <p className="said"><Linked text={run.goal} /></p>}
       <SentFiles files={files} />
@@ -192,7 +195,7 @@ function Turn({ run, receipts, activity, files, live, highlighted, askedOn, star
       <div className="reply-row">
         <span className="turn-dot" data-phase={dot} data-latest={latest || undefined} aria-hidden="true" />
         <div className="reply-col">
-          <div className="reply" data-state={run.state}>
+          <div className="reply" data-state={run.state} data-notice-item={outcome ? `result:${run.id}` : undefined}>
             {runSteps.length > 0 && (
               <ol className="steps" aria-label={t("run.steps")}>
                 {runSteps.map((step) => step.command ? <CommandStep key={step.id} step={step} /> : (
@@ -203,12 +206,12 @@ function Turn({ run, receipts, activity, files, live, highlighted, askedOn, star
             {answers.map((event) => (
               <p className="answered small" key={event.id}>{String(event.payload.question)} → {event.payload.kind === "permission" ? t(event.payload.answer === "allow" ? "run.allowed" : event.payload.answer === "always" ? "run.always" : "run.denied") : String(event.payload.answer)}</p>
             ))}
-            {run.request && <Request run={run} request={run.request} />}
+            {run.request && <Request key={run.request.id} run={run} request={run.request} />}
             {working && !run.request && (label || !live) && (
               <p className="working" role="status"><span className="working-label">{label ?? t("run.writing")}</span><span className="elapsed">{took(elapsed).replace(/\.\d/, "")}</span></p>
             )}
             {live && !outcome && <Markdown className="reply-text live" text={live} />}
-            {outcome?.reply && <Markdown className="reply-text" text={outcome.reply} />}
+            {outcome?.reply && <ConversationReply text={outcome.reply} conversationId={run.conversationId} runId={run.id} unread={unread} />}
             {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
             {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
             {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}
@@ -429,8 +432,12 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   const startedBy = (run: Run) => run.automationId
     ? t("auto.fromAt", { name: automationTitle(run.automationId) ?? t("auto.removed"), at: new Date(run.createdAt).toTimeString().slice(0, 5) })
     : undefined;
-  const askedOn = (run: Run, previous: Run | undefined) =>
-    run.context && run.context.view !== previous?.context?.view ? pageTitle(run.context.view) ?? run.context.title ?? run.context.view : undefined;
+  // Leaving the page is said too: a question asked with Alfred across the window is not about the page before it.
+  const askedOn = (run: Run, previous: Run | undefined) => {
+    if (run.automationId || run.context?.view === previous?.context?.view) return undefined;
+    if (run.context) return t("conv.askedFrom", { page: pageTitle(run.context.view) ?? run.context.title ?? run.context.view });
+    return previous ? t("conv.askedHere") : undefined;
+  };
   const offer = !draft.trim() && !working && !sending && suggestions.length > 0 && (!slim || runs.length === 0);
 
   return (
@@ -444,7 +451,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
       ) : (
         <ol className="turns" ref={list} onScroll={onScroll}>
           {runs.map((run, index) => (
-            <Turn key={run.id} run={run} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
+            <Turn key={run.id} run={run} unread={detail?.conversation.unreadReplyId === run.id} receipts={detail?.receipts[run.id] ?? []} activity={detail?.activity[run.id] ?? []}
               files={detail?.files?.[run.id]} live={liveOf(run)} highlighted={highlighted.has(run.id)} askedOn={askedOn(run, runs[index - 1])} startedBy={startedBy(run)} latest={index === runs.length - 1} />
           ))}
         </ol>

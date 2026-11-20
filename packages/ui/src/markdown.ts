@@ -368,6 +368,37 @@ export function parseMarkdown(text: string): Block[] {
 const inlineText = (nodes: Inline[]): string => nodes.map((node) =>
   typeof node === "string" ? node : node.kind === "code" ? node.text : node.kind === "break" ? "\n" : inlineText(node.children)).join("");
 
+function readingLabel(children: Inline[]): { title: Inline[]; body: Inline[] } | null {
+  const [label, ...body] = children;
+  if (!label || typeof label === "string" || label.kind !== "strong") return null;
+  const labelText = inlineText(label.children);
+  if (labelText.includes("\n") || !/[\p{L}\p{N}\p{S}]/u.test(labelText)) return null;
+
+  const title: Inline[] = [label];
+  if (!/[:：]$/.test(labelText)) {
+    const after = body[0];
+    if (typeof after !== "string" || !/^[:：]/.test(after)) return null;
+    title.push(after[0]!);
+    if (after.length === 1) body.shift();
+    else body[0] = after.slice(1);
+  }
+  return /[\p{L}\p{N}\p{S}]/u.test(inlineText(body)) ? { title, body } : null;
+}
+
+/** A bold label followed by its paragraph can serve as a section heading in an Inbox article.
+ * Work on top-level blocks so quoted mail, lists, tables and code keep their authored structure. */
+export function inboxReadingBlocks(blocks: Block[]): Block[] {
+  const result: Block[] = [];
+  let labelLevel = 1;
+  for (const block of blocks) {
+    if (block.kind === "heading") labelLevel = Math.min(block.level + 1, 6);
+    const label = block.kind === "p" ? readingLabel(block.children) : null;
+    if (label) result.push({ kind: "heading", level: labelLevel, children: label.title }, { kind: "p", children: label.body });
+    else result.push(block);
+  }
+  return result;
+}
+
 function blockText(block: Block): string {
   switch (block.kind) {
     case "p": case "heading": return inlineText(block.children);

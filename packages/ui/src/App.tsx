@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { AwayDigest, Notice } from "@alfred/protocol";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import type { AwayDigest, Notice, StateResponse } from "@alfred/protocol";
 import { ApiError, api, deviceId } from "./api.ts";
 import { desktop } from "./desktop.ts";
 import { AlfredPanel, figureState } from "./shell/AlfredPanel.tsx";
@@ -10,7 +10,7 @@ import type { FindCommand, FindSources } from "./shell/find.ts";
 import { Dock } from "./shell/Dock.tsx";
 import { Says } from "./shell/Says.tsx";
 import type { FigureState } from "./entity/tesseract.js";
-import { noticeLines } from "./noticeText.ts";
+import { inboxTarget, noticeLines } from "./noticeText.ts";
 import type { Outcome, Said } from "./speech/useSpeech.ts";
 import { Icon } from "./shell/icons.tsx";
 import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
@@ -22,8 +22,9 @@ import { Palette } from "./shell/Palette.tsx";
 import { Pair } from "./Pair.tsx";
 import { detectLocale, getLocale, setLocale, t, useLocale, type Locale } from "./i18n/index.ts";
 import { getScheme, setAppearance } from "./scheme.ts";
-import { useAlfred } from "./useAlfred.ts";
+import { useAlfred, type Alfred } from "./useAlfred.ts";
 import { handed } from "./handed.ts";
+import { WindowAttention } from "./ConversationReply.tsx";
 import { useOutlet } from "./outlet.ts";
 import { welcomeLines } from "./welcome.ts";
 
@@ -60,31 +61,45 @@ function useAttention(): boolean {
 }
 
 /** The open page, conversation and development session live in the address (#p=todo.list&c=<id>&s=<id>), so a reload keeps them. */
-type Route = { page: string | null; selected: string | null; session: string | null };
-function useRoute(): Route & { go(patch: Partial<Route>): void } {
+type Route = { page: string | null; selected: string | null; session: string | null; item: string | null };
+function useRoute() {
   const read = (): Route => {
     const params = new URLSearchParams(location.hash.slice(1));
-    return { page: params.get("p"), selected: params.get("c"), session: params.get("s") };
+    return { page: params.get("p"), selected: params.get("c"), session: params.get("s"), item: params.get("item") };
   };
   const [route, setRoute] = useState(read);
+  const latest = useRef(route);
   useEffect(() => {
-    const update = () => setRoute(read());
+    const update = () => { latest.current = read(); setRoute(latest.current); };
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
   }, []);
   const go = useCallback((patch: Partial<Route>) => {
-    setRoute((current) => {
-      const next = { ...current, ...patch };
-      const params = new URLSearchParams();
-      if (next.page) params.set("p", next.page);
-      if (next.selected) params.set("c", next.selected);
-      if (next.session) params.set("s", next.session);
-      const hash = params.toString();
-      history.replaceState(null, "", hash ? `#${hash}` : location.pathname);
-      return next;
-    });
+    const next = { ...latest.current, ...patch };
+    const params = new URLSearchParams();
+    if (next.page) params.set("p", next.page);
+    if (next.selected) params.set("c", next.selected);
+    if (next.session) params.set("s", next.session);
+    if (next.page === "core.inbox" && next.item) params.set("item", next.item);
+    const hash = params.toString();
+    history.replaceState(null, "", hash ? `#${hash}` : location.pathname);
+    latest.current = next;
+    setRoute(next);
+    return next;
   }, []);
+
   return { ...route, go };
+}
+
+/** A run can stay selected while its panel is closed. Only a visible result counts as read. */
+function noticeItemVisible(item: string): boolean {
+  if (document.visibilityState !== "visible" || !document.hasFocus()) return false;
+  return Array.from(document.querySelectorAll<HTMLElement>(`[data-notice-item="${CSS.escape(item)}"]`)).some((element) => {
+    const r = element.getBoundingClientRect();
+    const left = Math.max(0, r.left), right = Math.min(innerWidth, r.right);
+    const top = Math.max(0, r.top), bottom = Math.min(innerHeight, r.bottom);
+    return right > left && bottom > top && element.contains(document.elementFromPoint((left + right) / 2, (top + bottom) / 2));
+  });
 }
 
 /** A notice is shown in one place only, and the home node says where (docs/design/attention.md): this window shows
@@ -92,24 +107,23 @@ function useRoute(): Route & { go(patch: Partial<Route>): void } {
  * screen, so seeing it counts as being told; a result or a question elsewhere is said by Alfred (shell/Says.tsx),
  * leading there.
  */
-function useNotices(notices: Notice[], selected: string | null, onPresented: (notice: Notice) => void, inCard: { current: boolean }): { shown: Notice[]; remove(notice: Notice): void; acknowledge(notice: Notice): void } {
+function useNotices(notices: Notice[], onPresented: (notice: Notice) => void, ready: boolean): { shown: Notice[]; remove(notice: Notice): void; acknowledge(notice: Notice): void } {
   const [shown, setShown] = useState<Notice[]>([]);
   const handled = useRef(new Set<string>());
-  const attending = useAttention();
+  const attending = useContext(WindowAttention);
   useOutlet(attending);
 
   useEffect(() => {
-    if (!attending) return;
+    if (!attending || !ready) return;
     for (const notice of notices) {
       if (handled.current.has(notice.id)) continue;
       const mine = handed(notice, deviceId);
       if (!mine) continue;
-      const here = notice.payload.conversationId === selected;
       const show = () => {
-        if ((notice.kind === "run_result" && here)) return api.acknowledge(notice.id).then(() => {});
-        if (notice.kind === "run_request" && here) return; // answered inline; answering closes it
-        // The ask bar's card already shows it with its buttons; said again above it, it would be said twice. It waits in 通知.
-        if (notice.kind === "proposal" && here && inCard.current) return;
+        if (notice.kind === "run_result" && noticeItemVisible(`result:${notice.payload.runId}`))
+          return api.acknowledge(notice.id).then(() => {});
+        const target = inboxTarget(notice);
+        if (target && noticeItemVisible(target)) return; // Its own actions are already in view.
         setShown((current) => current.some((item) => item.id === notice.id) ? current : [...current, notice]);
       };
       handled.current.add(notice.id);
@@ -119,12 +133,12 @@ function useNotices(notices: Notice[], selected: string | null, onPresented: (no
         // It is no longer this window's to show. If it is handed here again, it is shown then.
         .catch(() => { handled.current.delete(notice.id); });
     }
-  }, [notices, attending, selected, onPresented]);
+  }, [notices, attending, ready, onPresented]);
 
-  // A card about the conversation now open has said what it had to say.
+  // Another device may have already handled an item while its card was on screen.
   useEffect(() => {
-    setShown((current) => current.filter((notice) => notice.payload.conversationId !== selected || notice.kind === "run_interrupted"));
-  }, [selected]);
+    setShown((current) => current.filter((notice) => notices.some((remaining) => remaining.id === notice.id)));
+  }, [notices]);
 
   const remove = useCallback((notice: Notice) => setShown((current) => current.filter((item) => item.id !== notice.id)), []);
   // A question is closed by answering it.
@@ -136,13 +150,13 @@ function useNotices(notices: Notice[], selected: string | null, onPresented: (no
 const STAY_MS: Record<string, number> = { welcome: 15_000, run_result: 12_000, run_interrupted: 20_000 };
 
 /** What Alfred says in the app about a notice; the button is what can be done here. */
-function noticeSaid(notice: Notice): Said {
+function noticeSaid(notice: Notice, name: string | null, inInbox: boolean): Said {
   if (notice.kind === "welcome") {
-    const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, null);
-    return { title: greeting, body: summary, mood: "hello", action: t("common.gotIt") };
+    const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, name);
+    return { title: inInbox ? t("inbox.k.away") : greeting, body: summary, mood: "hello", action: t("common.gotIt") };
   }
   const { title, body, mood } = noticeLines(notice);
-  const action = notice.kind === "run_interrupted" ? t("common.continue") : notice.kind === "proposal" ? t("notice.look")
+  const action = notice.kind === "proposal" ? t("notice.look")
     : notice.kind === "run_request" ? t("notice.answer") : t("notice.view");
   return { title, body, mood, action };
 }
@@ -160,9 +174,37 @@ function useSettled<T>(value: T, ms: number): T {
 
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
-/** The workspace: sidebar, one page at a time, and Alfred beside it (or across it, or folded to a button). */
 export function App() {
-  const { state, connection, error, unpaired, fresh, live, onEvent } = useAlfred();
+  const attending = useAttention();
+  const alfred = useAlfred();
+  const { state, error, unpaired } = alfred;
+  useLocale(); // re-render in the new language when it changes
+
+  // The language is the user's, on the home node: follow it; if no device has set it yet, set it from this one's.
+  const savedLocale = state?.settings?.locale;
+  const askedLocale = useRef(false);
+  useEffect(() => {
+    if (!state) return;
+    if (savedLocale) setLocale(savedLocale);
+    else if (!askedLocale.current) { askedLocale.current = true; api.settings({ locale: detectLocale() }).catch(() => {}); }
+  }, [state, savedLocale]);
+  // Another device that is not paired (or was revoked): pair first; a reload then starts with its token.
+  if (unpaired) return <Pair onPaired={() => location.reload()} />;
+  if (!state) {
+    return (
+      <main className="boot">
+        <p className="wordmark">Alfred</p>
+        <p className="quiet">{error ? t("boot.error", { error }) : t("boot.connecting")}</p>
+      </main>
+    );
+  }
+
+  return <WindowAttention.Provider value={attending}><Workspace state={state} alfred={alfred} /></WindowAttention.Provider>;
+}
+
+/** The workspace: sidebar, one page at a time, and Alfred beside it. */
+function Workspace({ state, alfred }: { state: StateResponse; alfred: Alfred }) {
+  const { connection, fresh, live, onEvent } = alfred;
   const route = useRoute();
   const selected = route.selected;
   const [layout, setLayout] = useLayout();
@@ -174,22 +216,27 @@ export function App() {
   const [palette, setPalette] = useState(false);
   const [greeting, setGreeting] = useState(true);
   const [highlighted, setHighlighted] = useState<ReadonlySet<string>>(new Set());
-  const [inboxFocus, setInboxFocus] = useState<string | null>(null);
-  useLocale(); // re-render in the new language when it changes
-
-  // The language is the user's, on the home node: follow it; if no device has set it yet, set it from this one's.
-  const savedLocale = state?.settings?.locale;
-  const askedLocale = useRef(false);
-  useEffect(() => {
-    if (!state) return;
-    if (savedLocale) setLocale(savedLocale);
-    else if (!askedLocale.current) { askedLocale.current = true; api.settings({ locale: detectLocale() }).catch(() => {}); }
-  }, [state, savedLocale]);
+  const inboxFocus = route.item;
   const switchLanguage = useCallback(() => {
     const next: Locale = getLocale() === "zh" ? "en" : "zh";
     setLocale(next);
     api.settings({ locale: next }).catch(() => {});
   }, []);
+  const pages = availablePages(state);
+  const current = pages.find((page) => page.key === route.page) ?? pages[0];
+  const inInbox = current?.key === "core.inbox";
+  const savedName = state.settings?.preferredName ?? null;
+  const [name, setName] = useState(savedName);
+  useEffect(() => setName(savedName), [savedName]);
+  // Use the confirmed response immediately, even before the settings event reaches this window.
+  const saveName = async (next: string) => {
+    const saved = await api.settings({ preferredName: next });
+    setName(saved.preferredName);
+  };
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const welcoming = inInbox && !inboxFocus && !inboxOpen;
+  useEffect(() => { if (!inInbox) setInboxOpen(false); }, [inInbox]);
+  const navigationPages = welcoming ? pages.map((page) => page === current ? { ...page, badge: undefined } : page) : pages;
   const navStart = useRef(layout.navW);
 
   useEffect(() => { const timer = window.setTimeout(() => setGreeting(false), 2600); return () => window.clearTimeout(timer); }, []);
@@ -202,9 +249,7 @@ export function App() {
     const runId = String(notice.payload.runId ?? "");
     if (runId) highlight(runId);
   }, [highlight]);
-  /** The ask bar is on screen: its card shows what the open conversation's newest turn left, proposals included. */
-  const inCard = useRef(false);
-  const { shown, remove: unshow, acknowledge } = useNotices(state?.notices ?? [], selected, onPresented, inCard);
+  const { shown, remove: unshow, acknowledge } = useNotices(state.notices, onPresented, !welcoming);
   /** Alfred's look while it is telling the user something. */
   const [speaking, setSpeaking] = useState<FigureState | null>(null);
 
@@ -216,7 +261,7 @@ export function App() {
 
   /** Opens a development session on the Code page. */
   const openSession = useCallback((id: string | null) => {
-    route.go({ page: DEV_PAGE, session: id });
+    route.go({ page: DEV_PAGE, session: id, item: null });
     setSheet(null);
   }, [route]);
 
@@ -227,12 +272,23 @@ export function App() {
     showAlfred();
   }, [route, showAlfred, state?.conversations, openSession]);
 
-  const showProposal = useCallback((proposalId: string) => {
-    route.go({ page: "core.inbox" });
-    setInboxFocus(`p:${proposalId}`);
+  /** A conversation picked from the sidebar's list: going to it. With Alfred out of sight it opens across the whole
+   * page; with the panel already beside a page it only changes conversation there, so what Alfred is looking at stays.
+   * Elsewhere (the inbox, an automation, the ask bar) a conversation opens beside the page it was opened from. */
+  const selectFromList = useCallback((id: string | null) => {
+    select(id);
+    const development = !!id && !!state?.conversations.find((conversation) => conversation.id === id)?.projectId;
+    if (!phone && !development && layout.alfred === "closed") setLayout({ alfred: "wide" });
+  }, [select, phone, layout.alfred, setLayout, state?.conversations]);
+
+  const showInboxItem = useCallback((item: string) => {
+    setInboxOpen(true);
+    route.go({ page: "core.inbox", item });
     setSheet(null);
     if (layout.alfred === "wide") setLayout({ alfred: "open" });
   }, [route, layout.alfred, setLayout]);
+
+  const showProposal = useCallback((id: string) => showInboxItem(`p:${id}`), [showInboxItem]);
 
   const openRun = useCallback((runId: string, conversationId?: string) => {
     // A run that left a proposal open: the decision is made in the inbox.
@@ -254,10 +310,15 @@ export function App() {
       window.setTimeout(() => document.getElementById(`run-${runId}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 300);
     }
   }, [select, highlight]);
-  const onFocused = useCallback(() => setInboxFocus(null), []);
+  const onFocused = useCallback(() => {
+    setInboxOpen(true);
+    setSheet(null);
+    if (layout.alfred === "wide") setLayout({ alfred: "open" });
+    route.go({ item: null });
+  }, [route.go, layout.alfred, setLayout]);
 
   const goPage = useCallback((key: string) => {
-    route.go({ page: key });
+    route.go({ page: key, item: null });
     setSheet(null);
     if (layout.alfred === "wide") setLayout({ alfred: "open" });
   }, [route, layout.alfred, setLayout]);
@@ -271,8 +332,6 @@ export function App() {
     else setLayout({ alfred: layout.alfred === "closed" ? "open" : "closed" });
   }, [phone, layout.alfred, setLayout]);
 
-  const pages = state ? availablePages(state) : [];
-  const current = pages.find((page) => page.key === route.page) ?? pages[0];
   // A bare page (Code) takes the room Alfred's panel would; on a phone the panel is a sheet anyway.
   const bare = !!current?.bare;
   const alfredMode = phone ? (sheet === "alfred" ? "open" : "closed") : bare ? "closed" : layout.alfred;
@@ -298,7 +357,7 @@ export function App() {
     if (key) goPage(key);
   };
   // The page a question is asked from, unless Alfred spans the window and the page is out of sight.
-  const view = state && (phone || layout.alfred !== "wide") ? pageView(current, state) : undefined;
+  const view = !welcoming && (phone || layout.alfred !== "wide") ? pageView(current, state) : undefined;
   const pageTitle = (key: string) => pages.find((page) => page.key === key)?.title;
   const automationOf = (id: string) => { const found = state?.automations?.find((automation) => automation.id === id); return found ? automationTitle(found) : undefined; };
 
@@ -347,7 +406,6 @@ export function App() {
   const line = useMemo(() => ({ about: about?.key ?? null, attach, ask: askPicked, revise: revisePicked }), [about?.key, attach, askPicked, revisePicked]);
   /** The ask bar is where Alfred is talked to: its panel is closed and the page leaves it room. */
   const barHere = !phone && !bare && alfredMode === "closed";
-  inCard.current = barHere || (phone && asking && !bare);
   /** From the palette: the answer comes out of the ask bar when it is there, else in the panel. */
   const askAnywhere = useCallback((text: string) => {
     if (phone && !bare) setAsking(true);
@@ -368,7 +426,7 @@ export function App() {
   const settledFigure = useSettled(state ? figureState(state, selected, live, greeting) : "rest", 250);
   const figure = speaking ?? settledFigure;
 
-  // Keyboard: ⌘K search and ask, anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌥1–9 the pages (not while typing).
+  // Keyboard: ⌘K search and ask, anywhere; ⌘. Alfred; ⌘\ the sidebar; ⌘, Settings; ⌥1–9 the pages (not while typing).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
@@ -383,6 +441,7 @@ export function App() {
       }
       if (mod && event.key === ".") { event.preventDefault(); toggleAlfred(); return; }
       if (mod && event.key === "\\") { event.preventDefault(); toggleNav(); return; }
+      if (mod && event.key === ",") { event.preventDefault(); goPage("core.settings"); return; }
       if (event.altKey && !mod && /^Digit[1-9]$/.test(event.code) && !editable(event.target)) {
         const page = pages[Number(event.code.slice(5)) - 1];
         if (page) { event.preventDefault(); goPage(page.key); }
@@ -391,17 +450,6 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleAlfred, toggleNav, goPage, pages]);
-
-  // Another device that is not paired (or was revoked): pair first; a reload then starts with its token.
-  if (unpaired) return <Pair onPaired={() => location.reload()} />;
-  if (!state) {
-    return (
-      <main className="boot">
-        <p className="wordmark">Alfred</p>
-        <p className="quiet">{error ? t("boot.error", { error }) : t("boot.connecting")}</p>
-      </main>
-    );
-  }
 
   // Sidebar divider: drag to resize; drag past the fold point to fold it to icons (keeping the width it had).
   const navDrag = dragHandle(size.nav, "right", (width) => {
@@ -433,12 +481,12 @@ export function App() {
     <div className="workspace" data-nav={phone ? undefined : navMode} data-alfred={alfredMode} data-phone={phone || undefined}
       data-sheet={sheet ?? undefined} style={{ "--nav-px": `${size.nav}px`, "--alf-px": `${size.alf}px` } as CSSProperties}>
       {!phone && <Topbar navOpen={navMode === "full"} onNav={toggleNav} mode={mode} onMode={hasDev ? switchMode : undefined} onLanguage={switchLanguage}
-        heading={current && alfredMode !== "wide" ? { title: current.title, icon: current.icon, k: current.k, summary: bare ? undefined : current.summary?.(state.modules[moduleOf(current)], state) } : undefined}
+        heading={current && alfredMode !== "wide" ? { title: current.title, icon: current.icon, k: current.k, summary: bare || welcoming ? undefined : current.summary?.(state.modules[moduleOf(current)], state) } : undefined}
         system={pages.filter((page) => page.group === "system")} page={current?.key ?? ""} onPage={goPage} />}
       {(phone ? sheet === "nav" : navMode === "full") && (
-        <Nav state={state} pages={pages} page={current?.key ?? ""} mode={phone ? "all" : mode} selected={selected} session={bare ? route.session : null}
+        <Nav state={state} pages={navigationPages} page={alfredMode === "wide" ? "" : current?.key ?? ""} mode={phone ? "all" : mode} selected={selected} session={bare ? route.session : null}
           onSession={openSession} connection={connection}
-          onPage={goPage} onSelect={(id) => { setSheet(null); select(id); }} onClose={phone ? () => setSheet(null) : undefined} onLanguage={switchLanguage} />
+          onPage={goPage} onSelect={(id) => { setSheet(null); selectFromList(id); }} onClose={phone ? () => setSheet(null) : undefined} onLanguage={switchLanguage} />
       )}
       {phone && sheet === "nav" && <div className="scrim" onClick={() => setSheet(null)} />}
 
@@ -449,11 +497,12 @@ export function App() {
             {!bare && phone && (
               <header className="page-head">
                 <h1><Icon name={current.icon} />{current.title}</h1>
-                {current.summary && <p className="page-sub">{current.summary(state.modules[moduleOf(current)], state)}</p>}
+                {!welcoming && current.summary && <p className="page-sub">{current.summary(state.modules[moduleOf(current)], state)}</p>}
               </header>
             )}
             <div className="page-body">{current.render({
-              snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, focus: inboxFocus, onFocused, openConversation, line,
+              snapshot: state.modules[moduleOf(current)], fresh, areas: state.areas ?? [], state, name, saveName,
+              onEnterInbox: welcoming ? () => setInboxOpen(true) : undefined, focus: inboxFocus, onFocused, openConversation, line,
               dev: { session: route.session, onSession: openSession, live, highlighted, onEvent, pageTitle, automationTitle: automationOf },
             })}</div>
             {/* Under the page: the page's own controls are at its top, Alfred and search at its foot. */}
@@ -480,7 +529,7 @@ export function App() {
       )}
 
       {phone && sheet !== "alfred" && (
-        <Dock state={state} pages={pages} page={current?.key ?? ""} figure={figure} onPage={goPage}
+        <Dock state={state} pages={navigationPages} page={current?.key ?? ""} figure={figure} onPage={goPage}
           onAlfred={() => (asking || bare ? setSheet("alfred") : setAsking(true))} onMenu={() => setSheet("nav")}
           ask={asking && !bare ? (
             <AskBar dock state={state} selected={selected} figure={figure} live={live} suggestions={view?.suggestions ?? []} find={find} page={current?.key} about={about} onAbout={setAbout}
@@ -492,17 +541,19 @@ export function App() {
         <Palette pages={pages} conversations={state.conversations} onPage={goPage} onSelect={select} onAsk={askAnywhere} onClose={() => setPalette(false)} actions={commands} />
       )}
 
-      <Says<Notice>
-        items={shown} id={(notice) => notice.id} lines={noticeSaid} stayMs={(notice) => STAY_MS[notice.kind] ?? 25_000}
+      {!welcoming && <Says<Notice>
+        items={shown} id={(notice) => notice.id} lines={(notice) => noticeSaid(notice, name, inInbox)} stayMs={(notice) => STAY_MS[notice.kind] ?? 25_000}
         remove={unshow} onMood={setSpeaking} done={(notice, outcome: Outcome) => {
           if (outcome === "timeout") return; // left in 通知, not acknowledged
+          const item = inboxTarget(notice);
+          if (item) {
+            if (outcome === "open") showInboxItem(item);
+            return; // The item closes when the user handles it in the Inbox.
+          }
           acknowledge(notice);
-          if (outcome !== "open") return;
-          if (notice.kind === "run_interrupted") api.resume(String(notice.payload.runId)).catch(() => {});
-          else if ((notice.kind === "proposal" || notice.kind === "outbound") && notice.payload.proposalId) showProposal(String(notice.payload.proposalId));
-          else if (notice.payload.runId) openRun(String(notice.payload.runId), String(notice.payload.conversationId ?? "") || undefined);
+          if (outcome === "open" && notice.payload.runId) openRun(String(notice.payload.runId), String(notice.payload.conversationId ?? "") || undefined);
         }}
-      />
+      />}
     </div>
   );
 }

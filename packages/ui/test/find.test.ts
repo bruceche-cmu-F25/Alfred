@@ -32,3 +32,10 @@ test("a question asked before is asked again, not taken for a search for the old
   assert.deepEqual(found.map((item) => item.id), ["conv:c1"], "the old conversation is offered");
   assert.equal(defaultPick(found), -1, "but Enter asks");
 });
+
+
+test("chat search skips a brief-only transcript and finds a brief with a follow-up", () => {
+  const chats = [{ id: "automatic", title: "Morning brief", briefOnly: true }, { id: "discussed", title: "Morning brief", briefOnly: false }];
+  const found = findItems("Morning brief", { ...sources, conversations: chats });
+  assert.deepEqual(found.map((item) => item.id), ["conv:discussed"]);
+});

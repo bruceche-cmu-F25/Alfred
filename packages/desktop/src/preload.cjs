@@ -17,7 +17,6 @@ function listen(channel, handler) {
 contextBridge.exposeInMainWorld("alfredDesktop", {
   deviceId: arg("device"),
   role: arg("role"),
-  userName: arg("user") || null,
   onFocusRun: (listener) => listen("focus-run", (_event, runId) => listener(String(runId))),
   onFocusComposer: (listener) => listen("focus-composer", () => listener()),
   onAttention: (listener) => listen("attention", (_event, attending) => listener(Boolean(attending))),

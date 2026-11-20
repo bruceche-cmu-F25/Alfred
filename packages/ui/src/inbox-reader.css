@@ -1,0 +1,24 @@
+/* The report in the Inbox detail pane. Keep wide tables and code scrollable inside the reading column. */
+.inbox-result-reading {
+  width: 100%;
+  font-size: 1rem;
+  max-width: 78ch;
+  min-width: 0;
+}
+.inbox-result-reading > .md {
+  gap: 0;
+  color: var(--copy);
+  font-size: 1rem;
+  line-height: 1.65;
+}
+.inbox-result-reading > .md > * + * { margin-block-start: .85em; }
+.inbox-result-reading > .md > .md-h {
+  color: var(--ink);
+  line-height: 1.35;
+  font-weight: 650;
+}
+.inbox-result-reading > .md > .md-h[data-level="1"] { font-size: 1.125rem; }
+.inbox-result-reading > .md > .md-h:not(:first-child) { margin-block-start: 1.4em; }
+.inbox-result-reading > .md > .md-h + * { margin-block-start: .3em; }
+.inbox-result-reading > .md > :is(ul, ol) { gap: .35em; }
+.inbox-result-reading > .md > :is(ul, ol)[data-loose] { gap: .6em; }

@@ -1,7 +1,7 @@
 /** How automations are worded, in the current language: their names, schedules and times. Pure, so the inbox's read
  * model and the pages share it. */
 import type { Automation, Schedule } from "@alfred/protocol";
-import { t, type Key } from "./i18n/index.ts";
+import { intlLocale, t, type Key } from "./i18n/index.ts";
 
 export const pad = (n: number) => String(n).padStart(2, "0");
 export const hhmm = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -32,3 +32,10 @@ export function whenText(iso: string, now: number = Date.now()): string {
   if (Math.abs(days) < 7) return t("auto.dayAt", { day: t("todo.weekdays").split(",")[date.getDay()], at });
   return t("auto.dayAt", { day: `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`, at });
 }
+
+/** Keep an edition's calendar date visible even when the inbox is opened another day. */
+export function editionDate(at: string): string {
+  return new Date(at).toLocaleDateString(intlLocale(), { year: "numeric", month: "short", day: "numeric" });
+}
+
+export const editionTitle = (name: string, at: string) => t("auto.edition", { name, date: editionDate(at) });

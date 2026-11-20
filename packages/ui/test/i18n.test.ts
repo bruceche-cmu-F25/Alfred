@@ -13,7 +13,7 @@ test("both languages have every key, and none is empty", () => {
 test("placeholders and English plurals", () => {
   assert.equal(translate("en", "page.inbox.waiting", { n: 1 }), "1 thing needs you");
   assert.equal(translate("en", "page.inbox.waiting", { n: 3 }), "3 things need you");
-  assert.equal(translate("zh", "page.inbox.waiting", { n: 3 }), "3 件等你决定");
+  assert.equal(translate("zh", "page.inbox.waiting", { n: 3 }), "3 件需要你处理");
   assert.equal(translate("en", "inbox.steps", { n: 1 }), "Accepting does this");
   assert.equal(translate("en", "inbox.steps", { n: 2 }), "Accepting does these 2 things");
   assert.equal(translate("en", "nav.archive", { title: "Trip" }), "Archive “Trip”");

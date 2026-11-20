@@ -7,7 +7,7 @@ import { MicButton } from "../voice/MicButton.tsx";
 import { appendDictation } from "../voice/wav.ts";
 import type { PageDef } from "./pages.tsx";
 
-type Item = FindCommand;
+type Item = FindCommand & { unread?: boolean };
 
 export interface PaletteProps {
   pages: PageDef[];
@@ -64,7 +64,7 @@ export function Palette({ pages, conversations, actions, onPage, onSelect, onAsk
           {items.map((item, n) => (
             <li key={item.id}>
               <button type="button" id={`pal-${n}`} role="option" aria-selected={n === index} onMouseMove={() => setIndex(n)} onClick={() => choose(item)}>
-                <Icon name={item.icon} /><span>{item.label}</span>{item.hint && <kbd>{item.hint}</kbd>}
+                <Icon name={item.icon} /><span>{item.label}</span>{item.unread && <i className="mark" data-k="alfred" role="img" aria-label={t("nav.unreadReply")} />}{item.hint && <kbd>{item.hint}</kbd>}
               </button>
             </li>
           ))}

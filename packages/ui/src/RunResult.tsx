@@ -1,0 +1,43 @@
+import { useEffect, useState } from "react";
+import type { Run, RunState } from "@alfred/protocol";
+import { api } from "./api.ts";
+import { Markdown } from "./Markdown.tsx";
+import { t, type Key } from "./i18n/index.ts";
+import { errorText } from "./receipts.ts";
+
+const stateLabel: Record<RunState, Key> = {
+  queued: "run.queued", running: "run.running", cancelling: "run.cancelling",
+  waiting_permission: "auto.waiting", waiting_input: "auto.waiting", completed: "auto.completed",
+  failed: "auto.failed", cancelled: "auto.cancelled", interrupted: "auto.interrupted",
+};
+export const resultStatus = (state: RunState) => t(stateLabel[state]);
+
+/** The full persisted reply, also for a notice older than the recent runs in /state. */
+export function RunResult({ runId, run, preview, reading = false }: { runId: string; run?: Run; preview?: string; reading?: boolean }) {
+  const [fetched, setFetched] = useState<Run | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (run) return;
+    let current = true;
+    setError(null);
+    api.run(runId).then(({ run }) => { if (current) setFetched(run); })
+      .catch((reason: Error) => { if (current) setError(reason.message); });
+    return () => { current = false; };
+  }, [runId, run, attempt]);
+  const className = reading ? "run-reading inbox-result-reading" : "run-reading";
+  const result = run ?? (fetched?.id === runId ? fetched : null);
+  if (!result) return <div className={className}>
+    {preview && <p>{preview}</p>}
+    {error ? <p className="problem small" role="alert">{error} <button className="link" type="button" onClick={() => setAttempt(attempt + 1)}>{t("archive.retry")}</button></p>
+      : <p className="quiet small" role="status">{t("auto.loading")}</p>}
+  </div>;
+  const reply = result.outcome?.reply;
+  return <div className={className}>
+    {reply && <Markdown text={reply} reading={reading} />}
+    {result.state !== "completed" && <p className={result.state === "failed" || result.state === "interrupted" ? "problem" : "quiet"} role="status">
+      {result.state === "interrupted" ? t("run.interrupted") : resultStatus(result.state)} {errorText(result.outcome?.error)}
+    </p>}
+    {result.state === "completed" && !reply && <p className="quiet">{t("auto.emptyResult")}</p>}
+  </div>;
+}

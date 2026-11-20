@@ -21,6 +21,7 @@ import { Request } from "../Conversation.tsx";
 import type { FigureState } from "../entity/tesseract.js";
 import { t } from "../i18n/index.ts";
 import { outcomeText } from "../Inbox.tsx";
+import { ConversationReply } from "../ConversationReply.tsx";
 import { Markdown } from "../Markdown.tsx";
 import { describeReceipt, errorText } from "../receipts.ts";
 import { MicButton } from "../voice/MicButton.tsx";
@@ -51,11 +52,11 @@ function Decide({ proposal, onLook, onDecided }: { proposal: Proposal; onLook():
     action().catch((reason: Error) => setError(reason.message)).finally(() => setBusy(false));
   };
   return (
-    <div className="ask-decide">
+    <div className="ask-decide" data-notice-item={`p:${proposal.id}`}>
       <ol>{proposal.steps.map((step, n) => <li key={n}>{step.preview}</li>)}</ol>
       <div className="turn-actions">
         {!proposal.stale && (
-          <button type="button" disabled={busy} onClick={() => act(() => api.accept(proposal.id).then(({ proposal: done }) => onDecided(outcomeText(done.state, done.outcome?.error))))}>
+          <button type="button" disabled={busy} onClick={() => act(() => api.accept(proposal.id).then(({ proposal: done }) => onDecided(outcomeText(done))))}>
             {proposal.steps.length > 1 ? t("inbox.acceptN", { n: proposal.steps.length }) : t("inbox.accept")}
           </button>
         )}
@@ -69,6 +70,7 @@ function Decide({ proposal, onLook, onDecided }: { proposal: Proposal; onLook():
 
 interface CardProps {
   run: Run;
+  unread: boolean;
   live?: string;
   /** What it is doing right now, from its steps. */
   doing?: string;
@@ -84,7 +86,7 @@ interface CardProps {
 }
 
 /** The newest turn: what was asked, in one quiet line, and Alfred's side of it. */
-function AskCard({ run, live, doing, receipts, proposal, decided, onOpen, onProposal, onDecided, onClose, onHover }: CardProps) {
+function AskCard({ run, unread, live, doing, receipts, proposal, decided, onOpen, onProposal, onDecided, onClose, onHover }: CardProps) {
   const body = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const where = standing(run);
@@ -94,11 +96,11 @@ function AskCard({ run, live, doing, receipts, proposal, decided, onOpen, onProp
   return (
     <div className="ask-card" role="status" aria-live="polite" data-state={proposal ? "waiting" : where} onPointerEnter={() => onHover(true)} onPointerLeave={() => onHover(false)}>
       <p className="ask-asked">{run.goal}</p>
-      <div className="ask-body" ref={body}>
-        {run.request && <Request run={run} request={run.request} />}
+      <div className="ask-body" ref={body} data-notice-item={outcome ? `result:${run.id}` : undefined}>
+        {run.request && <Request key={run.request.id} run={run} request={run.request} />}
         {where === "busy" && !live && <p className="working" role="status"><span className="working-label">{doing ?? t(run.state === "queued" ? "run.queued" : "run.thinking")}</span></p>}
         {live && !outcome && <Markdown className="reply-text live" text={live} />}
-        {outcome?.reply && <Markdown className="reply-text" text={outcome.reply} />}
+        {outcome?.reply && <ConversationReply text={outcome.reply} conversationId={run.conversationId} runId={run.id} unread={unread} />}
         {run.state === "failed" && <p className="problem">{t("run.failed")} {errorText(outcome?.error)}</p>}
         {run.state === "cancelled" && <p className="quiet">{t("run.cancelled")}</p>}
         {run.state === "interrupted" && <p className="problem">{t("run.interrupted")}</p>}
@@ -298,7 +300,7 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
         <div className="ask-over">
           {!about && attachments.items.length > 0 && <div className="ask-files"><AttachChips attachments={attachments} /></div>}
           {showCard && !about && (
-            <AskCard key={run.id} run={run} live={words} doing={doing?.runId === run.id ? doing.label : undefined} receipts={receipts} proposal={proposal}
+            <AskCard key={run.id} run={run} unread={state.conversations.find((chat) => chat.id === run.conversationId)?.unreadReplyId === run.id} live={words} doing={doing?.runId === run.id ? doing.label : undefined} receipts={receipts} proposal={proposal}
               decided={decided?.runId === run.id ? decided.text : undefined}
               onOpen={onOpen} onProposal={onProposal} onDecided={(text) => { if (text) setDecided({ runId: run.id, text }); }} onClose={() => setCard(false)} onHover={(over) => { hovered.current = over; }} />
           )}
@@ -310,10 +312,10 @@ export function AskBar({ state, selected, figure, live, suggestions, dock, find,
           )}
           {found.length > 0 && (
             <ul className="ask-found" id="ask-found" role="listbox" aria-label={t("pal.label")}>
-              {[...found, { id: "ask", label: t("pal.ask", { text: draft.trim() }), icon: "chat" as const, hint: undefined }].map((item, n) => (
+              {[...found, { id: "ask", label: t("pal.ask", { text: draft.trim() }), icon: "chat" as const, hint: undefined, unread: false }].map((item, n) => (
                 <li key={item.id}>
                   <button type="button" id={`ask-found-${n}`} role="option" aria-selected={n === lit} onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setPicked(n)} onClick={() => go(n)}>
-                    <Icon name={item.icon} /><span>{item.label}</span><kbd>{n === lit ? "↵" : item.hint}</kbd>
+                    <Icon name={item.icon} /><span>{item.label}</span>{item.unread && <i className="mark" data-k="alfred" role="img" aria-label={t("nav.unreadReply")} />}<kbd>{n === lit ? "↵" : item.hint}</kbd>
                   </button>
                 </li>
               ))}

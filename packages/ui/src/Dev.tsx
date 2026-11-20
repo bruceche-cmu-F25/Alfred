@@ -1,3 +1,4 @@
+import { ConversationStatus } from "./shell/ConversationStatus.tsx";
 /** The Code page: development sessions in the user's projects (docs/design/dev-mode.md).
  *
  * With no session open it is the new-session screen: one composer, with the project and the permission mode chosen
@@ -279,7 +280,7 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
             <p className="dev-box-label">{t("dev.recent")}</p>
             {recent.map((conversation) => (
               <button type="button" key={conversation.id} className="dev-recent" onClick={() => onSession(conversation.id)}>
-                <span className="st" aria-hidden="true">{conversation.attention > 0 ? <span className="mark" data-k="warm" /> : conversation.busy > 0 ? <span className="pulse" /> : <span className="mark dim" />}</span>
+                <ConversationStatus conversation={conversation} />
                 <span className="t">{conversation.title}</span>
                 <span className="p">{nameOf(conversation.projectId)}</span>
                 <span className="time">{when(conversation.updatedAt)}</span>

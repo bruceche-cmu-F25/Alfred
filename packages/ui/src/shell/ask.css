@@ -64,14 +64,15 @@ ul.ask-did li::before { content: "✓ "; }
 /* A narrow page: the key hint goes first. */
 @container page (max-width: 420px) { .ask-form kbd { display: none; } }
 
-/* A phone: the bar takes the place of the dock's tabs, beside the dock's own figure; the card and the suggestions
-   sit above the dock, the card's tail pointing down at that figure. */
-.ask[data-dock] { flex: 1; min-width: 0; width: auto; margin: 5px 0 0 6px; position: static; }
-.ask[data-dock] .ask-form { padding: 4px 5px 4px 4px; box-shadow: none; }
+/* A phone: the bar takes the place of the dock's pill, a bubble as that was, beside the dock's own figure; the card
+   and the suggestions sit above the dock, the card's tail pointing down at that figure. */
+.ask[data-dock] { flex: 1; min-width: 0; width: auto; margin: 0; position: static; }
+.ask[data-dock] .ask-form { min-height: 52px; padding: 4px 8px 4px 6px; border-color: transparent; box-shadow: 0 1px 2px oklch(0 0 0 / .06), 0 8px 24px oklch(0 0 0 / .14), inset 0 0 0 1px var(--line-soft); }
+.ask[data-dock] .ask-form:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--alf-soft), 0 8px 24px oklch(0 0 0 / .14); }
 .ask[data-dock]::before { display: none; }
-.ask[data-dock] .ask-over { position: fixed; left: 10px; right: 10px; bottom: calc(var(--dock-h) + 10px + env(safe-area-inset-bottom, 0px)); }
-.ask[data-dock] .ask-card { transform-origin: calc(100% - 28px) calc(100% + 24px); }
-.ask[data-dock] .ask-card::after { left: auto; right: 22px; }
+.ask[data-dock] .ask-over { position: fixed; left: 12px; right: 12px; bottom: calc(var(--dock-h) + 4px + env(safe-area-inset-bottom, 0px)); }
+.ask[data-dock] .ask-card { transform-origin: calc(100% - 31px) calc(100% + 24px); }
+.ask[data-dock] .ask-card::after { left: auto; right: 25px; }
 
 /* A question in the card: the card is its box already. */
 .ask-card .request { padding: 0; border: 0; border-radius: 0; background: none; }

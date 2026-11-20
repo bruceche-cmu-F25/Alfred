@@ -20,6 +20,7 @@ import type { AwayDigest, Notice } from "@alfred/protocol";
 import { desktop, type FigureSide } from "../desktop.ts";
 import { createFigure, type Figure, type FigureState } from "../entity/tesseract.js";
 import { setLocale, t, useLocale } from "../i18n/index.ts";
+import { waitingCount } from "../shell/inbox.ts";
 import { noticeLines } from "../noticeText.ts";
 import { SpeechCard } from "../speech/SpeechCard.tsx";
 import { useSpeech, type Said } from "../speech/useSpeech.ts";
@@ -34,9 +35,9 @@ const STAY_DEFAULT_MS = 25_000;
 /** Pointer travel before a press becomes a drag rather than a click. */
 const DRAG_PX = 4;
 
-function linesOf(notice: Notice): Said {
+function linesOf(notice: Notice, preferredName: string | null): Said {
   if (notice.kind === "welcome") {
-    const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, desktop?.userName ?? null);
+    const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, preferredName);
     return { title: greeting, body: summary, mood: "hello", action: t("presence.action.look") };
   }
   const { title, body, mood, action } = noticeLines(notice);
@@ -89,11 +90,10 @@ function Presence() {
   const speech = useSpeech<Notice>({
     items: queue,
     id: (notice) => notice.id,
-    lines: linesOf,
+    lines: (notice) => linesOf(notice, state?.settings?.preferredName ?? null),
     stayMs: (notice) => STAY_MS[notice.kind] ?? STAY_DEFAULT_MS,
     done: (notice, outcome) => {
       desktop?.noticeDone(notice.id, outcome);
-      if (outcome === "open") desktop?.openMain(notice.payload.runId ? String(notice.payload.runId) : undefined);
     },
     remove: (notice) => setQueue((rest) => rest.filter((item) => item.id !== notice.id)),
     leaving: () => visitingRef.current,
@@ -152,7 +152,7 @@ function Presence() {
   }, [dragging, tilt]);
 
   const working = state?.runs.some((run) => BUSY.has(run.state)) ?? false;
-  const waiting = state?.notices.some((notice) => notice.kind !== "welcome") ?? false;
+  const waiting = !!state && waitingCount(state) > 0;
   // Talking: its words' look. Touched: it looks up at you. Otherwise amber when something waits, turning while it works.
   const mood: FigureState = speech.mood ?? (dragging || pointing ? "hello" : waiting ? "notice" : working ? "work" : "rest");
   useEffect(() => { figure.current?.setState(mood); }, [mood]);

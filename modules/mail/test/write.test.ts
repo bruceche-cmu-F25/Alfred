@@ -75,7 +75,10 @@ test("a reply, accepted: sent once in its thread, threaded for every mail progra
   await syncMail(w, { google });
   updateSettings(w, { locale: "zh" });
   await propose(w, { reply_to: "m1", body: "可以，周五前签好发你。" });
-  assert.equal(accept(w).state, "executed");
+  const accepted = accept(w);
+  assert.equal(accepted.state, "executed");
+  assert.equal(accepted.outcome?.deliveryQueued, true);
+  assert.equal(sent.length, 0, "approval did not confirm Gmail delivery");
   assert.equal(listOutbound(w)[0].preview, "回复 leo@studio.example：Re: 合同第二版");
 
   await deliverQueued(w, mailModule, { google }, signal);
@@ -100,6 +103,8 @@ test("when Gmail's answer is unclear the email is not sent again: the user is as
     await deliverQueued(w, mailModule, { google }, signal);
     assert.equal(sent.length, 1);
     assert.equal(listOutbound(w)[0].state, state);
+    const receipt = listNotices(w).find((notice) => notice.kind === "outbound")!;
+    assert.equal(receipt.payload.account, "me@example.com", "the user can check the sending account");
   }
 });
 

@@ -11,20 +11,24 @@ function duration(ms: number, locale: Locale): string {
   return rest ? translate(locale, "away.hoursMinutes", { h: hours, m: rest }) : translate(locale, "away.hours", { n: hours });
 }
 
-/** The welcome, from the digest the home node recorded, never from guesses. In `locale` (default: the current one). */
-export function welcomeLines(digest: AwayDigest, name: string | null, locale: Locale = getLocale()): { greeting: string; summary: string } {
+/** A recap only has a place in the inbox when it reports work or a decision still waiting. */
+export function awayUpdate(digest: AwayDigest, locale: Locale, resultName?: string | null): string {
   const say = (key: Parameters<typeof translate>[1], vars?: Record<string, string | number>) => translate(locale, key, vars);
-  const greeting = name ? say("welcome.greetingName", { name }) : say("welcome.greeting");
-  const away = say("welcome.away", { duration: duration(digest.awayMs, locale) });
   const parts: string[] = [];
-  const { completed, failed, interrupted, goals } = digest.runs;
-  if (completed) parts.push(completed === 1 && goals[0] ? say("welcome.doneOne", { goal: goals[0] }) : say("welcome.doneN", { n: completed }));
+  const { completed, failed, interrupted, results } = digest.runs;
+  const name = resultName ?? results?.[0]?.name;
+  if (completed) parts.push(completed === 1 && name ? say("welcome.doneOne", { name }) : say("welcome.doneN", { n: completed }));
   if (failed) parts.push(say("welcome.failed", { n: failed }));
   if (interrupted) parts.push(say("welcome.interrupted", { n: interrupted }));
-  if (!completed) {
-    const todo = digest.changes.todo ?? 0;
-    if (todo) parts.push(say("welcome.todos", { n: todo }));
-  }
+  if (!completed && digest.changes.todo) parts.push(say("welcome.todos", { n: digest.changes.todo }));
   if (digest.waiting) parts.push(say("welcome.waiting", { n: digest.waiting }));
-  return { greeting, summary: parts.length ? say("welcome.summary", { away, parts: parts.join(say("clause.sep")) }) : say("welcome.quiet", { away }) };
+  return parts.join(say("clause.sep"));
+}
+
+/** The greeting keeps its away duration, including on a quiet return. */
+export function welcomeLines(digest: AwayDigest, name: string | null, locale: Locale = getLocale()): { greeting: string; summary: string } {
+  const greeting = name ? translate(locale, "welcome.greetingName", { name }) : translate(locale, "welcome.greeting");
+  const away = translate(locale, "welcome.away", { duration: duration(digest.awayMs, locale) });
+  const parts = awayUpdate(digest, locale);
+  return { greeting, summary: parts ? translate(locale, "welcome.summary", { away, parts }) : translate(locale, "welcome.quiet", { away }) };
 }

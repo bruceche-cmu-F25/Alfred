@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseInline, parseMarkdown, plainText } from "../src/markdown.ts";
+import { inboxReadingBlocks, parseInline, parseMarkdown, plainText } from "../src/markdown.ts";
 
 test("bold, italic, strike and code inside a line", () => {
   assert.deepEqual(parseInline("**Today (PT):** AGAI 6–7am"), [{ kind: "strong", children: ["Today (PT):"] }, " AGAI 6–7am"]);
@@ -88,4 +88,30 @@ test("a reply as plain text, for a notification", () => {
   assert.equal(plainText("**Today (PT):** AGAI 6–7am\n\n## Mail\n- [reply](https://example.com) to *Leo*\n- `rent` due"), "Today (PT): AGAI 6–7am\nMail\n• reply to Leo\n• rent due");
   assert.equal(plainText("1. one\n2. two"), "1. one\n2. two");
   assert.equal(plainText(""), "");
+});
+
+
+test("Inbox reading separates bold section labels while preserving the saved order, punctuation and inline markup", () => {
+  const parsed = parseMarkdown("**Today [PT](https://example.com):** [Design](https://example.com), then `lunch`.\n\n**截止**：中午前；下午提醒。\n\n**Mail**:[RSVP](https://example.org)");
+  const saved = structuredClone(parsed);
+  assert.deepEqual(inboxReadingBlocks(parsed), [
+    { kind: "heading", level: 1, children: parseInline("**Today [PT](https://example.com):**") },
+    { kind: "p", children: parseInline(" [Design](https://example.com), then `lunch`.") },
+    { kind: "heading", level: 1, children: [...parseInline("**截止**"), "："] },
+    { kind: "p", children: ["中午前；下午提醒。"] },
+    { kind: "heading", level: 1, children: [...parseInline("**Mail**"), ":"] },
+    { kind: "p", children: parseInline("[RSVP](https://example.org)") },
+  ]);
+  assert.deepEqual(parsed, saved);
+});
+
+test("Inbox reading keeps headings and nested Markdown, and leaves unlabeled prose and empty labels alone", () => {
+  const blocks = parseMarkdown("## Authored\n\n**重点：**正文\n\nBody: **inline:** text.\n\n**Just bold** text.\n\n**Alone:**\n\n**：** text\n\n> **Quote:** quoted\n\n- **Item:** listed\n\n| Title |\n| --- |\n| **Cell:** value |\n\n~~~\n**Code:** literal\n~~~");
+  const read = inboxReadingBlocks(blocks);
+  assert.deepEqual(read.slice(0, 3), [
+    blocks[0],
+    { kind: "heading", level: 3, children: parseInline("**重点：**") },
+    { kind: "p", children: ["正文"] },
+  ]);
+  assert.deepEqual(read.slice(3), blocks.slice(2));
 });

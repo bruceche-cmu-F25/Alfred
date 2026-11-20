@@ -4,7 +4,7 @@
  * knowing when the user locks the screen and comes back.
  * The home node runs under launchd, so none of Alfred's work depends on it.
  */
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -15,8 +15,9 @@ import {
 } from "electron";
 import type { AwayDigest, Notice, PresenceResponse, StateResponse } from "@alfred/protocol";
 import { detectLocale, translate, type Key, type Locale } from "@alfred/ui/i18n";
-import { noticeLines } from "@alfred/ui/notice";
-import { welcomeLines } from "@alfred/ui/welcome";
+import { waitingCount } from "@alfred/ui/inbox";
+import { inboxTarget, inboxUrl, noticeLines } from "@alfred/ui/notice";
+import { awayUpdate, welcomeLines } from "@alfred/ui/welcome";
 import { BrowserPane } from "./browser.ts";
 import { HomeClient } from "./client.ts";
 import { ensureHomeNode, healthy, homeNodeConfig, restartHomeNode, stopHomeNode, type HomeNodeMode } from "./home-node.ts";
@@ -82,18 +83,7 @@ function saveSettings(): void {
   writeFileSync(join(app.getPath("userData"), "settings.json"), JSON.stringify(settings));
 }
 
-/** The first name macOS knows for this user, for greetings. Local only. */
-function firstName(): string | null {
-  try {
-    const full = execFileSync("/usr/bin/id", ["-F"], { encoding: "utf8" }).trim();
-    return full.split(/\s+/)[0] || null;
-  } catch {
-    return null;
-  }
-}
-
 let DEVICE = "";
-let USER: string | null = null;
 /** The user's language: their setting on the home node once it is known, the system's until then. */
 let LOCALE: Locale = detectLocale(app.getLocale());
 const say = (key: Key, vars?: Record<string, string | number>) => translate(LOCALE, key, vars);
@@ -102,7 +92,6 @@ function windowArgs(role: "main" | "presence"): string[] {
   return [
     `--alfred-device=${encodeURIComponent(role === "main" ? `${DEVICE}.window` : `${DEVICE}.figure`)}`,
     `--alfred-role=${role}`,
-    `--alfred-user=${encodeURIComponent(USER ?? "")}`,
   ];
 }
 
@@ -131,7 +120,7 @@ function sayAttention(window: BrowserWindow | null = main, locked: boolean = scr
   window.webContents.send("attention", !locked && window.isVisible() && window.isFocused());
 }
 
-function createMain(): BrowserWindow {
+function createMain(path = "/"): BrowserWindow {
   const window = new BrowserWindow({
     width: 1120, height: 760, minWidth: 720, minHeight: 480, show: false, title: "Alfred",
     titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 19 }, // centred in the 52 px top bar (styles.css --top-h)
@@ -155,7 +144,7 @@ function createMain(): BrowserWindow {
   pane = new BrowserPane(window, { own: client.base, onState: (state) => { if (!window.isDestroyed()) window.webContents.send("browser-state", state); } });
   // A page that reloads (or leaves the session) no longer holds a place for the pane.
   window.webContents.on("did-start-navigation", (_event, _url, inPage, mainFrame) => { if (mainFrame && !inPage) pane?.hide(); });
-  void window.loadURL(`${client.base}/`);
+  void window.loadURL(`${client.base}${path}`);
   return window;
 }
 
@@ -285,8 +274,10 @@ function createPresence(): BrowserWindow {
   return window;
 }
 
-function showMain(options: { runId?: string; composer?: boolean } = {}): void {
-  if (!main || main.isDestroyed()) main = createMain();
+function showMain(options: { runId?: string; inbox?: string | null; composer?: boolean } = {}): void {
+  const path = options.inbox !== undefined ? inboxUrl(options.inbox) : null;
+  if (!main || main.isDestroyed()) main = createMain(path ?? "/");
+  else if (path && main.webContents.getURL() !== client.base + path) void main.loadURL(client.base + path);
   const window = main;
   const reveal = () => {
     window.show();
@@ -319,14 +310,14 @@ function acknowledge(id: string): void {
   client.post(`/api/notices/${id}/acknowledge`, {}).catch(() => {});
 }
 
-async function greet(notice: Notice): Promise<void> {
+async function greet(notice: Notice, preferredName: string | null): Promise<void> {
   if (handled.has(notice.id)) return;
   handled.add(notice.id);
   if (!(await present(notice))) return;
   if (speak([notice])) return;
   // No figure to say it: greet with a notification instead.
-  const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, USER, LOCALE);
-  notify(greeting, summary, () => { acknowledge(notice.id); showMain(); });
+  const { greeting, summary } = welcomeLines(notice.payload as unknown as AwayDigest, preferredName, LOCALE);
+  notify(greeting, summary, () => openNotice(notice));
 }
 
 /** Alfred says these from the figure. If the user hid the figure, it comes out just to say them and hides again
@@ -346,7 +337,20 @@ function noticeDone(id: string, outcome: string): void {
   const notice = spoken.get(id);
   spoken.delete(id);
   if (!notice || outcome === "timeout") return;
+  if (outcome === "open") { openNotice(notice); return; }
   if (notice.kind === "welcome" || noticeLines(notice, LOCALE).closesOnOpen) acknowledge(id);
+}
+
+/** Native card and notification clicks follow the same item as the web and phone. */
+function openNotice(notice: Notice): void {
+  if (notice.kind === "welcome" && awayUpdate(notice.payload as unknown as AwayDigest, LOCALE)) {
+    showMain({ inbox: `n:${notice.id}` });
+    return;
+  }
+  const item = inboxTarget(notice);
+  if (item) { showMain({ inbox: item }); return; }
+  if (notice.kind === "welcome" || noticeLines(notice, LOCALE).closesOnOpen) acknowledge(notice.id);
+  showMain({ runId: typeof notice.payload.runId === "string" ? notice.payload.runId : undefined });
 }
 
 function notify(title: string, body: string, onClick: () => void): void {
@@ -366,7 +370,7 @@ async function handleNotices(state: StateResponse): Promise<void> {
   const mine = state.notices.filter((notice) => notice.state === "claimed" && notice.claimedBy === DEVICE && !handled.has(notice.id));
   const presented: Notice[] = [];
   for (const notice of mine) {
-    if (notice.kind === "welcome") { await greet(notice); continue; }
+    if (notice.kind === "welcome") { await greet(notice, state.settings?.preferredName ?? null); continue; }
     handled.add(notice.id);
     if (await present(notice)) presented.push(notice);
     else handled.delete(notice.id); // not said: if it is handed to this Mac again, it is said then
@@ -375,18 +379,17 @@ async function handleNotices(state: StateResponse): Promise<void> {
   // No figure to say them: system notifications.
   if (presented.length === 1) {
     const [notice] = presented;
-    const { title, body, closesOnOpen } = noticeLines(notice, LOCALE);
-    notify(title, body, () => { if (closesOnOpen) acknowledge(notice.id); showMain({ runId: String(notice.payload.runId ?? "") }); });
+    const { title, body } = noticeLines(notice, LOCALE);
+    notify(title, body, () => openNotice(notice));
   } else {
-    notify("Alfred", say("mac.several", { n: presented.length }), () => { presented.filter((notice) => noticeLines(notice, LOCALE).closesOnOpen).forEach((notice) => acknowledge(notice.id)); showMain(); });
+    notify("Alfred", say("mac.several", { n: presented.length }), () => showMain({ inbox: null }));
   }
 }
 
 let refreshing: Promise<void> | null = null;
 /** The Dock shows how many things wait for the user (questions, interruptions), like unread messages. */
 function dockBadge(state: StateResponse): void {
-  const waiting = state.conversations.reduce((sum, conversation) => sum + conversation.attention, 0)
-    + (state.proposals ?? []).filter((proposal) => !proposal.stale).length;
+  const waiting = waitingCount(state);
   app.dock?.setBadge(waiting ? String(waiting) : "");
 }
 
@@ -414,7 +417,7 @@ function refresh(): Promise<void> {
 
 function reportPresence(kind: "active" | "away"): void {
   client.post<PresenceResponse>("/api/presence", { client: DEVICE, kind })
-    .then((result) => { if (result.returned && result.notice) void greet(result.notice); })
+    .then((result) => { if (result.returned) void refresh(); })
     .catch(() => { /* the node is down; the next report catches up */ });
 }
 
@@ -623,7 +626,6 @@ app.on("will-quit", () => globalShortcut.unregisterAll());
 
 app.whenReady().then(async () => {
   DEVICE = deviceId();
-  USER = firstName();
   loadSettings();
   appMenu();
   wireIpc();

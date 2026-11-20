@@ -365,7 +365,7 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
       if (draft.kind === "own") return sendOwn({ key: draft.key, at: draft.at, input: { ...draft.input, body } });
       if (body === draft.input.body.trim()) {
         const { proposal } = await api.accept(draft.proposal.id);
-        if (proposal.state !== "executed") throw new Error(outcomeText(proposal.state, proposal.outcome?.error));
+        if (proposal.state !== "executed") throw new Error(outcomeText(proposal));
         if (!draft.input.replyTo) setSaid(t("mail.sent.queued"));
         return;
       }

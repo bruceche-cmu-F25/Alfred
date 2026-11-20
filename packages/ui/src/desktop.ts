@@ -10,8 +10,6 @@ export interface DesktopBridge {
   /** The name this window is handed notices under. */
   deviceId: string;
   role: "main" | "presence";
-  /** The user's first name from macOS, for greetings. */
-  userName: string | null;
   onFocusRun(listener: (runId: string) => void): () => void;
   onFocusComposer(listener: () => void): () => void;
   /** Main window: whether it is shown and focused, as the app sees it. */

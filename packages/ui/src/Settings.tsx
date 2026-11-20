@@ -11,6 +11,7 @@ import { api } from "./api.ts";
 import { Accounts } from "./Accounts.tsx";
 import { Connectors } from "./Connectors.tsx";
 import { Devices } from "./Devices.tsx";
+import type { NamePreference } from "./InboxEntry.tsx";
 import { General } from "./General.tsx";
 import { ModelSettings } from "./ModelSettings.tsx";
 import { Skills } from "./Skills.tsx";
@@ -31,7 +32,7 @@ const TABS: Array<{ id: Tab; icon: IconName; home?: true }> = [
 const KEY = "alfred.settings.tab";
 const saved = (): Tab => { try { const value = localStorage.getItem(KEY); return TABS.some((tab) => tab.id === value) ? value as Tab : "general"; } catch { return "general"; } };
 
-export function Settings() {
+export function Settings({ name, saveName }: NamePreference) {
   useLocale();
   /** Null until known; an older home node without remote access answers 404, which is treated as the Mac. */
   const [remote, setRemote] = useState<RemoteResponse | null | "old">(null);
@@ -73,7 +74,7 @@ export function Settings() {
           </button>
         ))}
       </div>
-      {pane("general", <General />)}
+      {pane("general", <General name={name} saveName={saveName} />)}
       {pane("models", <ModelSettings />)}
       {pane("accounts", <Accounts />)}
       {pane("skills", <Skills />)}
