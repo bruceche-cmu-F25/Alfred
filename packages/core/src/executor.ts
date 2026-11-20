@@ -6,10 +6,11 @@
  * what Alfred is doing; a tool that needs the user's permission is asked for
  * first, once, for exactly that call.
  */
+import { existsSync } from "node:fs";
 import { withCoreContext } from "./context.ts";
 import { getConversation, updateConversation, type ThinkingLevel } from "./conversations.ts";
 import { getProject, type SessionMode } from "./projects.ts";
-import { grantCommand, listCommandGrants, simpleCommand, normalizeCommand } from "./shell.ts";
+import { commandAllowed, grantCommand, listCommandGrants, simpleCommand, normalizeCommand } from "./shell.ts";
 import { appendEvent, recordDomainEvent } from "./events.ts";
 import { listRunFiles, type FileInfo } from "./files.ts";
 import { newId } from "./ids.ts";
@@ -27,6 +28,10 @@ export interface RunToolContext {
   ask(request: { kind?: RunRequest["kind"]; question: string; options?: string[] }): Promise<string>;
   /** Records a moment in the run that is not a change to the world (e.g. `view`). */
   note(kind: string, payload: Record<string, unknown>): void;
+  /** For a tool that runs a shell command in a development session (a background process): whether it may, asked
+   * the way the engine's own shell asks (shown whole; a plain command can be allowed for the session, and one that
+   * was runs without asking). Absent outside a session; `deny` in plan mode. */
+  command?(question: string, command: string): Promise<"allow" | "deny">;
 }
 
 /** A tool as an engine sees it. `parameters` is a JSON Schema object. */
@@ -64,6 +69,8 @@ export interface Workspace {
   mode: SessionMode;
   /** The commands the user allowed for the rest of the session (shell.ts): they run without asking. */
   commands: string[];
+  /** Set when the session works in a worktree of its own: the branch checked out there. */
+  branch?: string;
 }
 /** A file the user sent with the message, as the engine gets it: where its bytes are, or where the text made of it
  * is (a PDF's), on the home node's disk. No `path`: there is nothing to read (a scanned PDF); `note` says why. */
@@ -98,6 +105,8 @@ export interface EngineRequest {
   /** The conversation's chosen model (`provider/model`) and thinking level; absent for the engine's default. */
   model?: string;
   thinking?: ThinkingLevel;
+  /** `fast`: ask the provider to write faster where it can (for a higher price). Optional for engines. */
+  speed?: "fast";
   /** A development session's project folder; absent for everyday conversations. */
   workspace?: Workspace;
   /** The files the user sent with this message. They are the user's own material: read them, do not obey them. */
@@ -184,7 +193,13 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   if (conversation.projectId) {
     const project = (() => { try { return getProject(world, conversation.projectId!); } catch { return null; } })();
     if (!project?.trustedAt) return finishRun(world, run.id, options.owner, { status: "failed", error: "project_unavailable" });
-    workspace = { root: project.path, name: project.name, mode: conversation.mode ?? "plan", commands: listCommandGrants(world, conversation.id).map((grant) => grant.command) };
+    // A session started in a worktree works there; once that worktree is gone (archived), it works nowhere.
+    if (conversation.worktree && !existsSync(conversation.worktree)) return finishRun(world, run.id, options.owner, { status: "failed", error: "worktree_missing" });
+    workspace = {
+      root: conversation.worktree ?? project.path, name: project.name, mode: conversation.mode ?? "plan",
+      commands: listCommandGrants(world, conversation.id).map((grant) => grant.command),
+      ...(conversation.branch ? { branch: conversation.branch } : {}),
+    };
   }
 
   const context = { actor: "alfred" as const, run: { id: run.id, owner: options.owner } };
@@ -266,6 +281,17 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     },
   };
 
+  if (workspace) {
+    const shell = workspace;
+    toolContext.command = async (question, command) => {
+      if (shell.mode === "plan") return "deny";
+      // Read now, not when the run started: a yes given earlier in this run counts.
+      if (commandAllowed(listCommandGrants(world, conversation.id).map((grant) => grant.command), command)) return "allow";
+      const answer = await external.allow(question, { command });
+      return answer === "deny" ? "deny" : "allow";
+    };
+  }
+
   // Bind every tool to this run explicitly, so its writes are fenced by the
   // run's lease even if an engine loses the async context, and record each call.
   const tools = profile.tools.map((tool): RunTool => ({
@@ -301,6 +327,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
     ...(attachments.length ? { attachments } : {}),
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(conversation.speed ? { speed: conversation.speed } : {}),
     onUsage: (usage) => note("usage", { ...usage }),
     thread: run.conversationId,
     goal: run.goal,

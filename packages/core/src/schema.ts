@@ -292,6 +292,21 @@ CREATE TABLE core_files (
 CREATE INDEX core_files_run ON core_files(run_id);
 `,
 }, {
+  // A development session in a worktree of its own (docs/design/dev-mode.md 4.2, D5): the folder it works in instead of
+  // the project's, and the branch checked out there.
+  id: "core:17",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN worktree TEXT;
+ALTER TABLE core_conversations ADD COLUMN branch TEXT;
+`,
+}, {
+  // How fast a conversation's model writes (conversations.ts `speed`): null standard, `fast` where the provider
+  // offers it for a higher price.
+  id: "core:18",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN speed TEXT CHECK (speed IS NULL OR speed IN ('fast'));
+`,
+}, {
   // Older clients could resume from the conversation without acknowledging the interruption.
   // A run may have stopped again since; only the interruption after its last resume is current.
   id: "core:19",

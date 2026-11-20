@@ -11,15 +11,16 @@
  * words into a working run (they go to the engine, not the world).
  */
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
-  acceptProposal, addProject, commandReplay, coreContext, createAutomation, declineProposal, deleteAutomation, getConversation, getProject,
-  ProjectError, removeProject, requestCancel, resumeRun, revokeCommand, runAutomationNow, startSession, submitRun, supersedeProposal, trustProject,
-  updateAutomation, updateConversation, updateSettings, userLocale, withCoreContext, type SessionMode, type ThinkingLevel, type World,
+  acceptProposal, addProject, listRunReceipts, listRuns, commandReplay, coreContext, createAutomation, declineProposal, deleteAutomation, getConversation, getProject,
+  ProjectError, recordCommit, recordPublished, removeProject, requestCancel, resumeRun, revokeCommand, runAutomationNow, sessionRoot, startSession, submitRun, supersedeProposal, trustProject,
+  updateAutomation, updateConversation, updateSettings, userLocale, withCoreContext, type SessionMode, type Speed, type ThinkingLevel, type World,
 } from "@alfred/core";
 import { applyStep, OpInputError, opInput, runOp, Type, UnknownOpError, type Static, type TSchema } from "@alfred/module-kit";
 import type { Home } from "./home.ts";
 import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE } from "./profiles.ts";
-import { snapshot } from "./workspace.ts";
+import { branchName, commitFiles, createWorktree, publish, removeWorktree, restoreWorktree, snapshot, WorkspaceError, workspaceChanges, type ChangedFile } from "./workspace.ts";
 
 interface Extra<X> {
   /** The command's request id, for a command that starts a run of its own under it. */
@@ -51,6 +52,15 @@ export function profileFor(world: World, conversationId: string | undefined | nu
   if (!projectId) return ASSISTANT_PROFILE;
   if (!getProject(world, projectId).trustedAt) throw new ProjectError("untrusted");
   return DEVELOPER_PROFILE;
+}
+
+/** The files a session's runs changed, from their receipts, oldest first. */
+export function sessionWrites(home: Home, conversationId: string): ChangedFile[] {
+  const runs = listRuns(home.world, { conversationId, limit: 500 }).reverse();
+  const receipts = listRunReceipts(home.world, runs.map((run) => run.id));
+  return runs.flatMap((run) => receipts[run.id] ?? []).filter((event) => event.kind === "file.changed").map((event) => ({
+    path: String(event.payload.path), added: Number(event.payload.added) || 0, removed: Number(event.payload.removed) || 0, created: event.payload.created === true,
+  }));
 }
 
 const Id = Type.String({ minLength: 1, maxLength: 64 });
@@ -119,32 +129,89 @@ const OPS: readonly HarnessOp[] = [
   // Conversations. An everyday one starts with its first message (a run); a development session is started here.
   define({
     name: "conversation.start", unnumbered: true,
-    input: Type.Object({ projectId: Id, title: Said, mode: Type.Optional(Type.Union([Type.Literal("plan"), Type.Literal("ask"), Type.Literal("edits")])) }),
+    input: Type.Object({
+      projectId: Id, title: Said, mode: Type.Optional(Type.Union([Type.Literal("plan"), Type.Literal("ask"), Type.Literal("edits")])),
+      /** In a worktree of its own, on a new branch, instead of the project's folder. */
+      worktree: Type.Optional(Type.Boolean()),
+    }),
     async prepare(home, input) {
       // Nothing runs in a folder, not even git, before the user has trusted it.
       const folder = getProject(home.world, input.projectId);
       if (!folder.trustedAt) throw new ProjectError("untrusted");
+      if (input.worktree) {
+        const made = await createWorktree(folder.path, home.worktreeDir(folder.id, randomBytes(6).toString("hex")), branchName(input.title));
+        // A fresh checkout of HEAD: that commit is what its changes are measured against.
+        return { base: made.base, worktree: { path: made.path, branch: made.branch } };
+      }
       // The snapshot the session's changes are measured against, taken before it can change anything.
-      return snapshot(folder.path);
+      return { base: await snapshot(folder.path), worktree: null };
     },
-    run: (home, input, { prepared: base }) => startSession(home.world, { projectId: input.projectId, title: input.title, mode: input.mode, base }),
+    run: (home, input, { prepared }) => startSession(home.world, { projectId: input.projectId, title: input.title, mode: input.mode, base: prepared.base, worktree: prepared.worktree }),
   }),
   define({
     name: "conversation.update", unnumbered: true,
     input: Type.Object({
       id: Id, title: Type.Optional(Type.String()), archived: Type.Optional(Type.Boolean()),
       model: Type.Optional(Type.Union([Type.String(), Type.Null()])), thinking: Type.Optional(Type.Union([Type.String(), Type.Null()])), mode: Type.Optional(Type.String()),
+      speed: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       /** A command allowed for the rest of the session, taken back: it asks again. */
       forgetCommand: Type.Optional(Type.String({ maxLength: 300 })),
+      /** Archiving a session whose worktree has uncommitted changes: `keep` leaves the folder as it is, `discard`
+       * removes it with them. Without one, that archive is refused (`git_dirty`, with the count) for the user to choose. */
+      worktree: Type.Optional(Type.Union([Type.Literal("keep"), Type.Literal("discard")])),
     }),
+    // A session that leaves: its processes and terminal stop, and its worktree goes unless there is work in it.
+    // One that comes back gets its worktree again, on its branch.
+    async prepare(home, input) {
+      if (input.archived === undefined) return;
+      const conversation = getConversation(home.world, input.id);
+      if (!conversation.projectId || (conversation.archivedAt !== null) === input.archived) return;
+      const project = (() => { try { return getProject(home.world, conversation.projectId!); } catch { return null; } })();
+      if (input.archived) {
+        if (conversation.worktree && project && input.worktree !== "keep") await removeWorktree(project.path, conversation.worktree, input.worktree === "discard");
+        home.processes.stopSession(conversation.id);
+        home.terminals.close(conversation.id);
+      } else if (conversation.worktree && conversation.branch && project && !existsSync(conversation.worktree)) {
+        await restoreWorktree(project.path, conversation.worktree, conversation.branch);
+      }
+    },
     // Which models, levels and modes there are is the core's to say.
     run: (home, input) => {
       if (input.forgetCommand !== undefined) revokeCommand(home.world, input.id, input.forgetCommand);
       return updateConversation(home.world, input.id, {
         title: input.title, archived: input.archived, model: input.model,
-        thinking: input.thinking as ThinkingLevel | null | undefined, mode: input.mode as SessionMode | undefined,
+        thinking: input.thinking as ThinkingLevel | null | undefined, speed: input.speed as Speed | null | undefined, mode: input.mode as SessionMode | undefined,
       });
     },
+  }),
+
+  // A development session's work, handed on: committed in its folder, then pushed with a pull request. The device
+  // shows the user what is sent and asks each time before it sends `session.publish` (outward, not undone).
+  define({
+    name: "session.commit",
+    input: Type.Object({ id: Id, message: Type.String({ pattern: "\\S", maxLength: 5000 }) }),
+    async prepare(home, input) {
+      const conversation = getConversation(home.world, input.id);
+      const root = sessionRoot(home.world, conversation);
+      if (!root || !existsSync(root)) throw new WorkspaceError("not_git", "This session has no folder to commit in");
+      // The session's own changes, the ones its panel lists; nothing else the user has in the folder.
+      const changes = await workspaceChanges(root, conversation.base, sessionWrites(home, conversation.id));
+      if (!changes.files.length) throw new WorkspaceError("nothing", "There is nothing to commit");
+      const commit = await commitFiles(root, changes.files.map((file) => file.path), input.message.trim());
+      // Measured from here on: what is left in the folder is what was there before the session, or is still to do.
+      return { commit, base: await snapshot(root), files: changes.files.length };
+    },
+    run: (home, input, { prepared }) => recordCommit(home.world, input.id, { commit: prepared.commit, base: prepared.base, message: input.message, files: prepared.files }),
+  }),
+  define({
+    name: "session.publish",
+    input: Type.Object({ id: Id, title: Type.String({ pattern: "\\S", maxLength: 256 }), body: Type.Optional(Type.String({ maxLength: 20_000 })) }),
+    async prepare(home, input) {
+      const root = sessionRoot(home.world, getConversation(home.world, input.id));
+      if (!root || !existsSync(root)) throw new WorkspaceError("not_git", "This session has no folder to push from");
+      return publish(root, { title: input.title.trim(), body: input.body ?? "" });
+    },
+    run: (home, input, { prepared }) => ({ ...prepared, conversation: recordPublished(home.world, input.id, prepared) }),
   }),
 
   // Projects. http.ts lets only the home node's own machine send these: a folder path means something only there.

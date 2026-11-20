@@ -11,6 +11,7 @@
  *   GET  /api/state                         StateResponse
  *   GET  /api/events?after=<seq>            text/event-stream: `core` events (data: CoreEvent, with ids, replayed
  *                                           after a drop) and `live` updates (data: LiveUpdate, never replayed)
+ *   GET  /api/conversations/archived        { conversations: ArchivedConversation[] }, most recently archived first
  *   GET  /api/conversations/:id             ConversationDetail
  *   POST /api/conversations                 StartSessionRequest -> Conversation (a development session in a trusted project)
  *   POST /api/conversations/:id             UpdateConversationRequest -> Conversation
@@ -142,7 +143,15 @@ export interface Conversation {
   /** The commands the user allowed for the rest of a development session; each runs without asking, also with more
    * arguments after it. Absent from a home node older than this field. */
   commands?: string[];
+  /** `fast`: the model writes faster where its provider offers it (fastSpeed), at a higher price; null is standard. */
+  speed?: "fast" | null;
+  /** A development session's own git worktree (a path on the home node), when it was started in one. */
+  worktree?: string | null;
+  /** The branch checked out in that worktree. */
+  branch?: string | null;
 }
+
+export type ArchivedConversation = Pick<Conversation, "id" | "title" | "projectId"> & { archivedAt: string };
 
 /** What a development session may do in its folder without asking: `plan` reads only; `ask` changes files, asking
  * each time with the diff; `edits` changes files inside the project without asking. Outside it, always asks. */
@@ -152,7 +161,46 @@ export interface SessionChanges {
   branch: string | null;
   base: string | null;
   files: Array<{ path: string; added: number; removed: number; created: boolean }>;
+  /** The session's folder is not there (an archived session's worktree was removed). */
+  gone?: boolean;
 }
+
+/** Where a development session's branch stands, for committing and opening a pull request. */
+export interface SessionBranch {
+  branch: string | null;
+  /** The repository's main branch; no pull request is opened from it. */
+  main: string | null;
+  /** Commits not pushed yet. */
+  ahead: number;
+  /** Whether the branch has been pushed (has an upstream). */
+  upstream: boolean;
+  /** Whether there is a remote called origin. */
+  remote: boolean;
+}
+export interface SessionPullRequest { pr: { url: string; number: number; state: string } | null }
+/** POST /api/conversations/:id/commit { requestId, message } -> Conversation (git_nothing, git_failed with git's words).
+ *  POST /api/conversations/:id/publish { requestId, title, body } -> SessionPublished: pushes the branch to origin
+ *  and opens a pull request unless one is open (git_default_branch, git_no_remote, git_no_gh, git_failed). */
+export interface SessionPublished { branch: string; url: string | null; created: boolean }
+
+/** A background process in a development session (a dev server). */
+export interface SessionProcess {
+  id: string;
+  command: string;
+  name: string;
+  by: "alfred" | "user";
+  startedAt: string;
+  /** Null while it runs. */
+  exit: number | null;
+  endedAt: string | null;
+  /** The local address it printed, if any. */
+  url: string | null;
+}
+/** GET  /api/conversations/:id/processes              SessionProcesses
+ *  POST /api/conversations/:id/processes              { command, name? } -> SessionProcess (this machine only)
+ *  GET  /api/conversations/:id/processes/:pid/logs    { process, text }
+ *  POST /api/conversations/:id/processes/:pid/stop    stops it (an ended one is forgotten) */
+export interface SessionProcesses { processes: SessionProcess[] }
 
 /** A folder on the home node Alfred may work in. Sessions start only once the user trusts it. */
 export interface Project {
@@ -373,7 +421,8 @@ export interface AwayDigest {
   waiting: number;
 }
 
-export interface ErrorResponse { error: string; code?: string }
+/** `count`: how many, when the refusal is about a number of things (files a worktree has not committed). */
+export interface ErrorResponse { error: string; code?: string; count?: number }
 
 /** Connected accounts (docs/design/settings-and-connections.md). No secret ever appears here.
  *
@@ -688,3 +737,13 @@ export interface SkillSearchResult {
 }
 export interface SkillSearchResponse { results: SkillSearchResult[] }
 export interface SkillUpdatesResponse { /** Ids of the skills with a newer version. */ updates: string[]; /** Ids that could not be asked about. */ failed: string[] }
+
+/** Whether a model can write faster for a higher price, and how its provider is asked: Anthropic's fast mode
+ * (`speed: "fast"`, on the models that take it without a beta), OpenAI's priority processing (`service_tier`).
+ * Anywhere else the setting is kept but changes nothing. */
+export function fastSpeed(provider: string | undefined, id: string | undefined): "anthropic" | "openai" | null {
+  if (!provider || !id) return null;
+  if (provider === "anthropic" && /^claude-(opus-5-5|fable-5-2|mythos-5-2)\b/.test(id)) return "anthropic";
+  if (provider === "openai" && /^gpt-5/.test(id)) return "openai";
+  return null;
+}

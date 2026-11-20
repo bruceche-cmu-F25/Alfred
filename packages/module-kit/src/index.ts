@@ -295,11 +295,9 @@ export function applyStep(world: World, modules: readonly AlfredModule[], step: 
   return result;
 }
 
-/** Tools every run gets from the harness itself: asking the user, proposing changes for later, and
- * opening a module's view on the user's device.
- */
-export function assistantTools(world: World, modules: readonly AlfredModule[]): RunTool[] {
-  const tools: RunTool[] = [{
+/** Shared by interactive sessions. Asking a question requires no access to personal modules. */
+export function askUserTool(): RunTool {
+  return {
     name: "ask_user",
     label: "Ask",
     description: "Ask the user a short question when you cannot go on without their choice. Offer 2–4 short options when you can. Returns their answer. Use it only when a wrong guess would matter.",
@@ -313,7 +311,12 @@ export function assistantTools(world: World, modules: readonly AlfredModule[]): 
       const answer = await context.ask({ question: String(params.question ?? ""), options: Array.isArray(params.options) ? params.options.map(String) : [] });
       return `The user answered: ${answer}`;
     },
-  }];
+  };
+}
+
+/** The everyday assistant's tools for questions, proposals, automations and opening views. */
+export function assistantTools(world: World, modules: readonly AlfredModule[]): RunTool[] {
+  const tools = [askUserTool()];
   const proposable = modules.flatMap((module) => module.tools).filter((tool) => tool.pin && tool.level !== "read");
   if (proposable.length) {
     tools.push({

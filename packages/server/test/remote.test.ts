@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { addProject, CORE_MIGRATIONS, deviceForToken, listDevices, listEvents, openWorld, pairDevice, revokeDevice, startSession, submitRun, trustProject, type EnginePort } from "@alfred/core";
 import { todoModule } from "@alfred/module-todo";
-import type { OutletsResponse, PairingCode, RemoteResponse, StateResponse } from "@alfred/protocol";
+import type { ArchivedConversation, OutletsResponse, PairingCode, RemoteResponse, StateResponse, SubmitRunResponse } from "@alfred/protocol";
 import { createHttpServer, createIngressServer, openHome, PushService, RemoteAccess, Tailscale, type Home, type Runner } from "../src/index.ts";
 
 const DNS = "mini.tail1234.ts.net";
@@ -314,12 +314,27 @@ test("a paired device stays out of development sessions until the user lets it i
       assert.equal(reply.body.code, "needs_dev", path);
     }
     // Everyday conversations are as before.
-    assert.equal((await ask(ingress, "/api/runs", { headers: as, body: { requestId: "p-10", goal: "hello" } })).status, 202);
+    const daily = await ask(ingress, "/api/runs", { headers: as, body: { requestId: "p-10", goal: "hello" } });
+    assert.equal(daily.status, 202);
+    const dailyId = (daily.body as unknown as SubmitRunResponse).run.conversationId;
+    assert.equal((await ask(ingress, `/api/conversations/${dailyId}`, { headers: as, body: { archived: true } })).status, 200);
+    assert.equal((await ask(local, `/api/conversations/${session.id}`, { body: { archived: true } })).status, 200);
+    const archive = async () => (await ask(ingress, "/api/conversations/archived", { headers: as })).body.conversations as ArchivedConversation[];
+    assert.deepEqual((await archive()).map((chat) => chat.id), [dailyId]);
+    assert.equal((await ask(ingress, `/api/conversations/${dailyId}`, { headers: as, body: { archived: false } })).status, 200);
+    assert.deepEqual(await archive(), []);
     // A device cannot give itself the scope.
     assert.equal((await ask(ingress, `/api/devices/${device.id}/scope`, { headers: as, body: { scope: "dev", enabled: true } })).body.code, "local_only");
 
     const granted = (await ask(local, `/api/devices/${device.id}/scope`, { body: { scope: "dev", enabled: true } })).body as Extract<RemoteResponse, { local: true }>;
     assert.deepEqual(granted.devices[0].scopes, ["dev"]);
+    const [archived] = await archive();
+    assert.equal(archived.id, session.id);
+    assert.equal(archived.projectId, project.id);
+    assert.equal(archived.title, session.title);
+    assert.ok(archived.archivedAt);
+    assert.equal((await ask(ingress, `/api/conversations/${session.id}`, { headers: as, body: { archived: false } })).status, 200);
+    assert.deepEqual(await archive(), []);
     assert.equal((await ask(ingress, `/api/conversations/${session.id}`, { headers: as })).status, 200);
     const now = (await ask(ingress, "/api/state", { headers: as })).body as unknown as StateResponse;
     assert.ok(now.runs.some((candidate) => candidate.id === run.id));

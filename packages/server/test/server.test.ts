@@ -463,14 +463,20 @@ test("a development session: add and trust a folder, start a session, and its ru
     const session = await created.json() as { id: string; projectId: string };
     assert.equal(session.projectId, project.id);
 
-    const submitted = await (await post(base, "/api/runs", { requestId: "dev-1", goal: "Where is checkout?", conversationId: session.id, context: { view: "todo.list" } })).json() as SubmitRunResponse;
+    const submitted = await (await post(base, "/api/runs", { requestId: "dev-1", goal: "把我的生日改成 9 月 21 日", conversationId: session.id, context: { view: "todo.list" } })).json() as SubmitRunResponse;
     assert.equal(submitted.run.profile, "developer");
     await home.idle();
     const detail = await (await fetch(`${base}/api/conversations/${session.id}`)).json() as ConversationDetail;
     assert.equal(detail.runs[0].state, "completed");
     assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask", commands: [] });
     assert.equal(seen[0].context, undefined, "a session is not asked from a page");
-    assert.ok(!seen[0].tools.includes("show_view"));
+    assert.ok(seen[0].tools.includes("ask_user"));
+    for (const tool of todoModule.tools) {
+      assert.ok(!seen[0].tools.includes(tool.name), `project run received personal tool ${tool.name}`);
+    }
+    for (const tool of ["propose", "automation_add", "automation_update", "show_view"]) {
+      assert.ok(!seen[0].tools.includes(tool), `project run received assistant tool ${tool}`);
+    }
     assert.match(seen[0].instructions, /ask mode: you can change files/, "the run is told what its mode lets it do");
     assert.doesNotMatch(seen[0].instructions, /cannot change files/);
 
@@ -673,8 +679,11 @@ test("calendar and mail changes over HTTP: proposed by a run, delivered right af
     const all = profiles(home.world, [todoModule, calendarModule, mailModule]);
     for (const profile of Object.values(all)) {
       assert.ok(!profile.tools.some((tool) => ["calendar_add", "calendar_move", "calendar_respond", "mail_send"].includes(tool.name)), "no profile calls them directly");
-      // They are reached only through `propose`, so that is where a run reads their parameters.
-      const calls = JSON.stringify(profile.tools.find((tool) => tool.name === "propose")!.parameters);
+      // They are reached only through `propose`, so that is where a run reads their parameters. (A development
+      // session has neither: it is about its project's code.)
+      const propose = profile.tools.find((tool) => tool.name === "propose");
+      if (!propose) continue;
+      const calls = JSON.stringify(propose.parameters);
       for (const name of ["reply_to", "end_date", "response"]) assert.ok(calls.includes(`"${name}"`), `propose says how to call them (${name})`);
     }
     await post(base, "/api/runs", { requestId: "w-1", goal: "Hold tomorrow for the plan and tell Ana" });

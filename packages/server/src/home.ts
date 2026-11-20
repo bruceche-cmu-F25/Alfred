@@ -13,6 +13,7 @@ import { moduleMigrations, type AlfredModule, type ModuleServices } from "@alfre
 import { Outlets, watchAttention, type Reach } from "./attention.ts";
 import { FileStore, type FileStoreOptions } from "./files.ts";
 import { Terminals } from "./terminals.ts";
+import { Processes } from "./processes.ts";
 import { Desk } from "./desk.ts";
 import { modulePasses } from "./passes.ts";
 import { AUTOMATION_PROFILE, profiles } from "./profiles.ts";
@@ -54,6 +55,10 @@ export interface Home {
   files: FileStore;
   /** The user's own terminals, one per development session (this machine only). */
   terminals: Terminals;
+  /** Background processes in development sessions (dev servers), started by Alfred or the user. */
+  processes: Processes;
+  /** Where a development session's worktree is made: one folder per session, under the data directory. */
+  worktreeDir(projectId: string, conversationKey: string): string;
   /** Requests to the Mac app (what is in its browser pane); the app comes and takes them. */
   desk: Desk;
   /** Starts executing queued runs if it is not already. */
@@ -129,9 +134,10 @@ export function openHome(options: HomeOptions): Home {
   const files = new FileStore({ dataDir: options.dataDir, world, log: options.log, ...(options.readPdf ? { readPdf: options.readPdf } : {}) });
   const terminals = options.terminals ?? new Terminals({ log: options.log });
   const desk = new Desk();
+  const processes = new Processes();
   const drain = createRunDrain(world, options.engine, {
     owner,
-    profiles: profiles(world, options.modules, terminals, desk),
+    profiles: profiles(world, options.modules, { terminals, desk, processes }),
     attach: (list) => files.attach(list),
     onLive: (update) => live.emit("update", update),
     onEngineError: (run: Run, error) => options.log?.(`run ${run.id} failed in the engine: ${error instanceof Error ? error.message : String(error)}`),
@@ -169,6 +175,8 @@ export function openHome(options: HomeOptions): Home {
     live,
     files,
     terminals,
+    processes,
+    worktreeDir: (projectId, key) => join(options.dataDir, "worktrees", projectId, key),
     desk,
     outlets,
     reach(list) {
@@ -187,6 +195,7 @@ export function openHome(options: HomeOptions): Home {
       passes.close();
       files.close();
       terminals.closeAll();
+      processes.stopAll();
       desk.close();
       attention.close();
       world.close();

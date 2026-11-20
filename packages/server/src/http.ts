@@ -16,23 +16,23 @@ import type { AddressInfo } from "node:net";
 import { extname, join, normalize, sep } from "node:path";
 import {
   AREAS, getSettings, listOpenProposals, userLocale, withCoreContext, listAutomations, type World,
-  acknowledgeNotice, answerRequest, claimNotice, getConversation, markConversationReplyRead, getRun, listAutomationRuns, getAutomation, latestEventSeq, listConversations, listEvents, listNotices,
+  acknowledgeNotice, answerRequest, claimNotice, getConversation, markConversationReplyRead, getRun, listAutomationRuns, getAutomation, latestEventSeq, listConversations, listArchivedConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
-  getProject, listProjects, getFile, listRunFiles, isSession, runInSession, sessionEvent, sessionIds,
+  getProject, listProjects, getFile, listRunFiles, isSession, runInSession, sessionEvent, sessionIds, sessionRoot,
 } from "@alfred/core";
 import { invokeOp, runQuery } from "@alfred/module-kit";
 import type {
   ConversationDetail, CoreEvent, ModelsResponse, NoticeRequest, OpRequest, OutletReport, OutletsResponse, PairRequest, PresenceRequest, ProposalResponse, PushInfo, PushResult,
-  RemoteResponse, RespondRequest, StateResponse, SteerRequest, SubmitRunRequest, SessionChanges,
+  RemoteResponse, RespondRequest, StateResponse, SteerRequest, SubmitRunRequest, SessionBranch, SessionChanges, SessionProcesses, SessionPullRequest,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
 import type { Home } from "./home.ts";
 import { DEVELOPER_PROFILE } from "./profiles.ts";
-import { command, profileFor } from "./commands.ts";
+import { command, profileFor, sessionWrites } from "./commands.ts";
 import { handleConnections } from "./connections-http.ts";
 import { handleSkills } from "./skills-http.ts";
-import { workspaceChanges, workspaceDiff, type ChangedFile } from "./workspace.ts";
+import { branchState, pullRequest, workspaceChanges, workspaceDiff } from "./workspace.ts";
 import type { GoogleConnections } from "./google.ts";
 import type { McpConnectors, ModelAccounts, Skills } from "@alfred/engine-pi";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
@@ -119,15 +119,6 @@ function state(home: Home, peer: Peer): StateResponse {
     automations: listAutomations(home.world),
     projects: listProjects(home.world),
   };
-}
-
-/** The files a session's runs changed, from their receipts, oldest first. */
-function sessionWrites(home: Home, conversationId: string): ChangedFile[] {
-  const runs = listRuns(home.world, { conversationId, limit: 500 }).reverse();
-  const receipts = listRunReceipts(home.world, runs.map((run) => run.id));
-  return runs.flatMap((run) => receipts[run.id] ?? []).filter((event) => event.kind === "file.changed").map((event) => ({
-    path: String(event.payload.path), added: Number(event.payload.added) || 0, removed: Number(event.payload.removed) || 0, created: event.payload.created === true,
-  }));
 }
 
 function conversationDetail(home: Home, id: string): ConversationDetail {
@@ -327,6 +318,9 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     return;
   }
   if (method === "POST" && path === "/api/conversations") { needDev(true); return send(res, 201, (await ask("conversation.start")).result); }
+  if (method === "GET" && path === "/api/conversations/archived") {
+    return send(res, 200, { conversations: listArchivedConversations(home.world, { includeSessions: dev }) });
+  }
   // Projects: only from the home node's own machine (dispatch refuses other devices).
   if (method === "POST" && path === "/api/projects") return send(res, 200, (await ask("project.add")).result);
   const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
@@ -383,22 +377,54 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     if (!action) {
       const project = getProject(home.world, found.projectId);
       if (!project.trustedAt) throw new HttpError(409, "This folder is not trusted yet", "untrusted");
-      return send(res, 200, home.terminals.open(id, project.path, body));
+      return send(res, 200, home.terminals.open(id, sessionRoot(home.world, found) ?? project.path, body));
     }
     if (action === "input") { home.terminals.write(id, typeof body.data === "string" ? body.data : ""); return send(res, 200, {}); }
     if (action === "resize") { home.terminals.resize(id, body.cols, body.rows); return send(res, 200, {}); }
     home.terminals.close(id);
     return send(res, 200, {});
   }
-  // A development session's changes since its snapshot, and one file's diff.
-  const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff)$/.exec(path);
-  if (session && method === "GET") {
+  // A development session's changes since its snapshot, and one file's diff; where its branch stands (and its pull
+  // request, which asks GitHub); committing them, and pushing them with a pull request.
+  const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff|branch|pr|commit|publish)$/.exec(path);
+  if (session) {
     needDev(true);
     const found = getConversation(home.world, session[1]);
     if (!found.projectId) throw new HttpError(404, "Not a development session");
-    const root = getProject(home.world, found.projectId).path;
+    if (method === "POST" && (session[2] === "commit" || session[2] === "publish")) return send(res, 200, (await ask(`session.${session[2]}`, { id: found.id })).result);
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    const root = sessionRoot(home.world, found);
+    if (!root || !existsSync(root)) {
+      if (session[2] === "changes") return send(res, 200, { branch: found.branch, base: found.base, files: [], gone: true } satisfies SessionChanges);
+      throw new HttpError(409, "This session's folder is not there", "git_gone");
+    }
     if (session[2] === "diff") return send(res, 200, { diff: await workspaceDiff(root, found.base, url.searchParams.get("path") ?? "") });
+    if (session[2] === "branch") return send(res, 200, await branchState(root) satisfies SessionBranch);
+    if (session[2] === "pr") {
+      const branch = (await branchState(root)).branch;
+      return send(res, 200, { pr: branch ? await pullRequest(root, branch) : null } satisfies SessionPullRequest);
+    }
     return send(res, 200, await workspaceChanges(root, found.base, sessionWrites(home, found.id)) satisfies SessionChanges);
+  }
+  // Background processes in a development session. Starting one is the user's own command, so only this machine
+  // may (like the terminal); seeing, reading and stopping them is a development session's business.
+  const proc = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/processes(?:\/([A-Za-z0-9_-]{1,64})(?:\/(logs|stop))?)?$/.exec(path);
+  if (proc) {
+    needDev(true);
+    const [, id, processId, action] = proc;
+    const found = getConversation(home.world, id);
+    if (!found.projectId) throw new HttpError(404, "Not a development session");
+    if (method === "GET" && !processId) return send(res, 200, { processes: home.processes.list(id) } satisfies SessionProcesses);
+    if (method === "GET" && action === "logs") return send(res, 200, home.processes.logs(id, processId, Number(url.searchParams.get("lines")) || 400));
+    if (method === "POST" && action === "stop") { await readJson(req); home.processes.stop(id, processId); return send(res, 200, {}); }
+    if (method === "POST" && !processId) {
+      if (!peer.local) throw new HttpError(403, LOCAL_ONLY, "local_only");
+      const body = await readJson<{ command?: unknown; name?: unknown }>(req);
+      const root = sessionRoot(home.world, found);
+      if (!root || typeof body.command !== "string") throw new HttpError(400, "command is required");
+      return send(res, 201, home.processes.start(id, { command: body.command, cwd: root, name: typeof body.name === "string" ? body.name : undefined, by: "user" }));
+    }
+    throw new HttpError(405, "Method not allowed");
   }
 
   if (method === "GET" && path === "/api/models") {

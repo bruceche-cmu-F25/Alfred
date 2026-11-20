@@ -89,6 +89,8 @@ const REFUSALS: Record<string, Refusal> = {
   RemoteError: { otherwise: 409 },
   PushError: { otherwise: 400 },
   UploadError: { by: { too_big: 413, unsupported: 415 }, otherwise: 400, code: "file_" },
+  WorkspaceError: { by: { not_git: 400, no_commit: 400, nothing: 400 }, otherwise: 409, code: "git_" },
+  ProcessError: { by: { missing: 404, too_many: 409 }, otherwise: 400, code: "process_" },
   TerminalError: { by: { missing: 404, unavailable: 503, too_many: 409 }, otherwise: 400, code: "terminal_" },
   VoiceError: { by: { unavailable: 503, busy: 429 }, otherwise: 502, code: "voice_" },
   GoogleError: { by: { unknown_account: 404, no_client: 409, busy: 429 }, otherwise: 502, code: "" },
@@ -107,7 +109,9 @@ export function statusOf(error: unknown): { status: number; body: ErrorResponse 
   if (refusal) {
     const code = (error as { code?: unknown }).code;
     const said = refusal.code !== undefined && code !== undefined ? { code: `${refusal.code}${String(code)}` } : {};
-    return { status: refusal.by?.[String(code)] ?? refusal.otherwise, body: { error: message, ...said } };
+    // How many, when the refusal is about a number of things (files not committed).
+    const count = (error as { count?: unknown }).count;
+    return { status: refusal.by?.[String(code)] ?? refusal.otherwise, body: { error: message, ...said, ...(typeof count === "number" ? { count } : {}) } };
   }
   // A proposal says the state it is in, and that is its code.
   if (name === "ProposalStateError") {

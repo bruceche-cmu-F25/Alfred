@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  addProject, answerRequest, claimNextRun, finishRun, markConversationReplyRead, startSession, trustProject, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, heartbeatRun, listConversations, listEvents, listNotices,
+  addProject, answerRequest, claimNextRun, finishRun, markConversationReplyRead, startSession, trustProject, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, heartbeatRun, listArchivedConversations, listConversations, listEvents, listNotices,
   openWorld, recordDomainEvent, requestCancel, RunError, submitRun, sweepRuns, updateConversation, updateSettings,
   type EnginePort, type RunProfile, type RunTool, type World,
 } from "../src/index.ts";
@@ -112,6 +112,23 @@ test("conversations can be renamed and archived, and say what needs the user", (
   assert.ok(archived.archivedAt);
   assert.deepEqual(listEvents(w).events.map((event) => event.kind).filter((kind) => kind.startsWith("conversation.")),
     ["conversation.created", "conversation.renamed", "conversation.archived"]);
+});
+
+test("the archive includes older conversations and restoring one brings it back to the recent list once", () => {
+  const w = world();
+  const add = (title: string, now: number) => submitRun(w, { requestId: title, goal: title, profile: "tasks", now }).run.conversationId;
+  const older = add("older", 1), newer = add("newer", 2);
+  updateConversation(w, older, { archived: true, now: 3 });
+  updateConversation(w, newer, { archived: true, now: 4 });
+  for (let i = 0; i < 101; i++) add(`active-${i}`, i + 5);
+  const archive = () => listArchivedConversations(w, { includeSessions: false }).map((row) => row.id);
+  assert.deepEqual(archive(), [newer, older]);
+  const restored = updateConversation(w, older, { archived: false, now: 200 });
+  assert.equal(restored.archivedAt, null);
+  assert.equal(listConversations(w)[0].id, older);
+  assert.deepEqual(archive(), [newer]);
+  assert.equal(updateConversation(w, older, { archived: false, now: 201 }).updatedAt, restored.updatedAt);
+  assert.equal(listEvents(w, { limit: 500 }).events.filter((event) => event.kind === "conversation.restored").length, 1);
 });
 
 test("different conversations run side by side; one conversation runs in order", async () => {

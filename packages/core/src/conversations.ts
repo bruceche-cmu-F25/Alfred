@@ -3,6 +3,7 @@
  * proceed side by side. It is not an engine session: engines come and go,
  * the conversation stays.
  */
+import { isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { appendEvent, type CoreEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
@@ -19,6 +20,8 @@ export interface Conversation {
   model: string | null;
   /** How hard the model thinks; null for the default. */
   thinking: ThinkingLevel | null;
+  /** `fast`: faster writing where the model's provider offers it, at a higher price; null for standard. */
+  speed: Speed | null;
   /** Runs queued or in progress. */
   busy: number;
   /** Runs that need the user: a question waiting, or interrupted. */
@@ -37,6 +40,11 @@ export interface Conversation {
   base: string | null;
   /** The commands the user allowed for the rest of a development session (shell.ts). */
   commands: string[];
+  /** A development session's own git worktree (an absolute path on the home node), when it was started in one; null
+   * when it works in the project's folder itself. */
+  worktree: string | null;
+  /** The branch checked out in that worktree. */
+  branch: string | null;
 }
 
 export class ConversationError extends Error {
@@ -51,6 +59,8 @@ export class ConversationError extends Error {
 export const CONVERSATION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const SPEEDS = ["fast"] as const;
+export type Speed = (typeof SPEEDS)[number];
 const MODEL = /^[A-Za-z0-9._-]{1,60}\/[A-Za-z0-9._:@\/-]{1,139}$/;
 
 /** A title from what the user first asked: the start of it, on one line. */
@@ -73,6 +83,7 @@ function toConversation(row: Record<string, unknown>): Conversation {
   return {
     id: row.id as string, title: row.title as string, createdAt: row.created_at as string, updatedAt: row.updated_at as string,
     archivedAt: row.archived_at as string | null, model: row.model as string | null, thinking: row.thinking as ThinkingLevel | null,
+    speed: (row.speed as Speed | null) ?? null,
     busy: row.busy as number, attention: row.attention as number,
     unreadReplyId: (row.unread_reply_id as string | null) ?? null,
     briefOnly: row.brief_only === 1,
@@ -81,30 +92,83 @@ function toConversation(row: Record<string, unknown>): Conversation {
     mode: (row.mode as SessionMode | null) ?? null,
     base: (row.base as string | null) ?? null,
     commands: (JSON.parse((row.commands as string | undefined) ?? "[]") as Array<{ command: string }>).map((grant) => grant.command),
+    worktree: (row.worktree as string | null) ?? null,
+    branch: (row.branch as string | null) ?? null,
   };
 }
 
 /** Only inside a world transaction. */
-export function createConversation(db: DatabaseSync, input: { title: string; now: number; projectId?: string; mode?: SessionMode; base?: string | null }): string {
+export function createConversation(db: DatabaseSync, input: { title: string; now: number; projectId?: string; mode?: SessionMode; base?: string | null; worktree?: SessionWorktree | null }): string {
   const id = newId();
-  db.prepare("INSERT INTO core_conversations (id, title, created_at, updated_at, project_id, mode, base) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, input.title.slice(0, 200), iso(input.now), iso(input.now), input.projectId ?? null, input.projectId ? input.mode ?? "ask" : null, input.base ?? null);
+  const worktree = input.projectId ? input.worktree ?? null : null;
+  db.prepare("INSERT INTO core_conversations (id, title, created_at, updated_at, project_id, mode, base, worktree, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(id, input.title.slice(0, 200), iso(input.now), iso(input.now), input.projectId ?? null, input.projectId ? input.mode ?? "ask" : null, input.base ?? null,
+      worktree?.path ?? null, worktree?.branch ?? null);
   appendEvent(db, {
     kind: "conversation.created", subject: `conversation:${id}`, runId: null, now: input.now,
-    payload: { title: input.title.slice(0, 200), ...(input.projectId ? { projectId: input.projectId } : {}) },
+    payload: { title: input.title.slice(0, 200), ...(input.projectId ? { projectId: input.projectId } : {}), ...(worktree ? { branch: worktree.branch } : {}) },
   });
   return id;
 }
 
+/** Where a development session's worktree is and which branch it has checked out. */
+export interface SessionWorktree { path: string; branch: string }
+
+const COMMIT = /^[0-9a-f]{4,64}$/;
+const BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._\/-]{1,200}$/;
+
 /** A development session in a trusted project, created before its first message (an everyday conversation is
- * created by its first message instead). The title comes from what the user is about to ask. */
-export function startSession(world: World, input: { projectId: string; title: string; mode?: SessionMode; base?: string | null; now?: number }): Conversation {
+ * created by its first message instead). The title comes from what the user is about to ask. `worktree`: the
+ * worktree made for it (the home node makes it before this; the session then works there, not in the project). */
+export function startSession(world: World, input: { projectId: string; title: string; mode?: SessionMode; base?: string | null; worktree?: SessionWorktree | null; now?: number }): Conversation {
   const now = input.now ?? Date.now();
   const project = getProject(world, input.projectId);
   if (!project.trustedAt) throw new ProjectError("untrusted");
   if (input.mode !== undefined && !SESSION_MODES.includes(input.mode)) throw new ConversationError("invalid", "Unknown permission mode");
-  if (input.base !== undefined && input.base !== null && !/^[0-9a-f]{4,64}$/.test(input.base)) throw new ConversationError("invalid", "A base is a commit id");
-  const id = world.tx((db) => createConversation(db, { title: titleFrom(input.title), now, projectId: project.id, mode: input.mode, base: input.base }));
+  if (input.base !== undefined && input.base !== null && !COMMIT.test(input.base)) throw new ConversationError("invalid", "A base is a commit id");
+  if (input.worktree && (!isAbsolute(input.worktree.path) || !BRANCH.test(input.worktree.branch))) throw new ConversationError("invalid", "A worktree is an absolute path and a branch");
+  const id = world.tx((db) => createConversation(db, { title: titleFrom(input.title), now, projectId: project.id, mode: input.mode, base: input.base, worktree: input.worktree }));
+  return getConversation(world, id);
+}
+
+/** The folder a development session works in: its worktree, or its project's folder. Null for an everyday
+ * conversation, or when its project was removed. */
+export function sessionRoot(world: World, conversation: Pick<Conversation, "projectId" | "worktree">): string | null {
+  if (!conversation.projectId) return null;
+  if (conversation.worktree) return conversation.worktree;
+  try { return getProject(world, conversation.projectId).path; } catch { return null; }
+}
+
+/** The user committed a development session's changes (from its changes panel): from now on its changes are
+ * measured from `base`, the folder as it stood just after the commit. */
+export function recordCommit(world: World, id: string, input: { commit: string; base: string | null; message: string; files: number; now?: number }): Conversation {
+  const now = input.now ?? Date.now();
+  if (!COMMIT.test(input.commit) || (input.base !== null && !COMMIT.test(input.base))) throw new ConversationError("invalid", "A commit id is hexadecimal");
+  world.tx((db) => {
+    const row = db.prepare("SELECT project_id FROM core_conversations WHERE id = ?").get(id);
+    if (!row) throw new ConversationError("missing");
+    if (!row.project_id) throw new ConversationError("invalid", "Only a development session commits");
+    db.prepare("UPDATE core_conversations SET base = ?, updated_at = ? WHERE id = ?").run(input.base, iso(now), id);
+    appendEvent(db, {
+      kind: "conversation.committed", subject: `conversation:${id}`, runId: null, now,
+      payload: { commit: input.commit, message: input.message.split("\n")[0].slice(0, 200), files: input.files },
+    });
+  });
+  return getConversation(world, id);
+}
+
+/** The user pushed a development session's branch and opened (or updated) its pull request. */
+export function recordPublished(world: World, id: string, input: { branch: string; url: string | null; created: boolean; now?: number }): Conversation {
+  const now = input.now ?? Date.now();
+  world.tx((db) => {
+    const row = db.prepare("SELECT project_id FROM core_conversations WHERE id = ?").get(id);
+    if (!row) throw new ConversationError("missing");
+    if (!row.project_id) throw new ConversationError("invalid", "Only a development session publishes");
+    appendEvent(db, {
+      kind: input.created ? "conversation.pr_opened" : "conversation.pushed", subject: `conversation:${id}`, runId: null, now,
+      payload: { branch: input.branch.slice(0, 200), ...(input.url ? { url: input.url.slice(0, 500) } : {}) },
+    });
+  });
   return getConversation(world, id);
 }
 
@@ -164,16 +228,27 @@ export function listConversations(world: World, options: { includeArchived?: boo
     .all(options.includeArchived ? 1 : 0, limit).map(toConversation);
 }
 
+/** The archive only needs enough metadata to identify and restore a conversation. */
+export function listArchivedConversations(world: World, options: { includeSessions: boolean }) {
+  return world.db.prepare(`SELECT id, title, project_id, archived_at FROM core_conversations
+    WHERE archived_at IS NOT NULL AND (? OR project_id IS NULL)
+    ORDER BY archived_at DESC, rowid DESC`).all(Number(options.includeSessions)).map((row) => ({
+      id: row.id as string, title: row.title as string, projectId: row.project_id as string | null,
+      archivedAt: row.archived_at as string,
+    }));
+}
+
 export function updateConversation(
   world: World,
   id: string,
-  change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode; now?: number },
+  change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; speed?: Speed | null; mode?: SessionMode; now?: number },
 ): Conversation {
   const now = change.now ?? Date.now();
   if (change.model !== undefined && change.model !== null && !MODEL.test(change.model)) throw new ConversationError("invalid", "A model is written provider/model");
   if (change.thinking !== undefined && change.thinking !== null && !THINKING_LEVELS.includes(change.thinking)) throw new ConversationError("invalid", "Unknown thinking level");
+  if (change.speed !== undefined && change.speed !== null && !SPEEDS.includes(change.speed)) throw new ConversationError("invalid", "Unknown speed");
   world.tx((db) => {
-    const row = db.prepare("SELECT title, archived_at, model, thinking, project_id, mode FROM core_conversations WHERE id = ?").get(id);
+    const row = db.prepare("SELECT title, archived_at, model, thinking, speed, project_id, mode FROM core_conversations WHERE id = ?").get(id);
     if (!row) throw new ConversationError("missing");
     if (change.mode !== undefined && change.mode !== row.mode) {
       if (!row.project_id) throw new ConversationError("invalid", "Only a development session has a permission mode");
@@ -181,7 +256,7 @@ export function updateConversation(
       db.prepare("UPDATE core_conversations SET mode = ? WHERE id = ?").run(change.mode, id);
       appendEvent(db, { kind: "conversation.mode_set", subject: `conversation:${id}`, payload: { from: row.mode ?? null, to: change.mode }, runId: null, now });
     }
-    for (const field of ["model", "thinking"] as const) {
+    for (const field of ["model", "thinking", "speed"] as const) {
       const value = change[field];
       if (value === undefined || value === row[field]) continue;
       db.prepare(`UPDATE core_conversations SET ${field} = ? WHERE id = ?`).run(value, id);
@@ -197,6 +272,8 @@ export function updateConversation(
     }
     if (change.archived !== undefined && change.archived !== (row.archived_at !== null)) {
       db.prepare("UPDATE core_conversations SET archived_at = ?, unread_reply_id = NULL WHERE id = ?").run(change.archived ? iso(now) : null, id);
+      // Include an old conversation in the bounded recent list when the user brings it back.
+      if (!change.archived) touchConversation(db, id, now);
       appendEvent(db, { kind: change.archived ? "conversation.archived" : "conversation.restored", subject: `conversation:${id}`, payload: {}, runId: null, now });
     }
   });

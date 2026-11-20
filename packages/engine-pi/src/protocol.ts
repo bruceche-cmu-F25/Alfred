@@ -26,6 +26,8 @@ export interface RunJob {
   /** `provider/model` and thinking level for this conversation; absent for Pi's defaults. */
   model?: string;
   thinking?: string;
+  /** `fast`: the provider is asked to write faster, where it offers that (protocol fastSpeed). */
+  speed?: "fast";
   /** A development session's project folder: the session works there, with the file tools its access allows. */
   workspace?: Workspace;
   /** The files the user sent with this turn: images are shown to the model, text is put into the turn (a long one is

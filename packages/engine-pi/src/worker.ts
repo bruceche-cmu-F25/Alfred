@@ -50,6 +50,7 @@ import {
   type AgentSession, type ExtensionFactory, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { change, CHANGERS, countPatch, type Change } from "./changing.ts";
+import { fasterPayload } from "./speed.ts";
 import { LOOKERS, look, real } from "./looking.ts";
 import { loadAlfredMcpConfig, mcpPath } from "./mcp-config.ts";
 import { createMcpTransport, createMcpVault, type McpSecrets } from "./mcp-store.ts";
@@ -105,6 +106,8 @@ interface Warm {
   commands: Set<string>;
   /** The long files the user sent with this turn, by resolved path: the model may read these without asking. */
   files: Set<string>;
+  /** This turn's speed: `fast` asks the provider for it in every request the turn makes. */
+  speed: "fast" | null;
 }
 const warm = new Map<string, Warm>();
 let busy = false;
@@ -289,7 +292,7 @@ async function open(job: RunJob): Promise<Warm> {
 
   const dir = join(sessions, job.thread);
   mkdirSync(dir, { recursive: true });
-  const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null, mode: job.workspace?.mode ?? null, always: false, commands: new Set(), files: new Set() };
+  const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null, mode: job.workspace?.mode ?? null, always: false, commands: new Set(), files: new Set(), speed: null };
   const definitions = alfredTools(state, job);
   const root = job.workspace ? real(job.workspace.root) : null;
   // The servers, and each one's secrets, read once here: Pi asks for both without waiting.
@@ -339,6 +342,12 @@ async function open(job: RunJob): Promise<Warm> {
     excludeTools: root && job.workspace?.mode !== "plan" ? ["powershell"] : ["bash", "edit", "write", "powershell"],
   });
   state.session = session;
+  // Each request to the provider passes through here just before it is sent: a fast turn asks for speed.
+  const before = session.agent.onPayload;
+  session.agent.onPayload = async (payload, model) => {
+    const shaped = (await before?.(payload, model)) ?? payload;
+    return state.speed === "fast" ? fasterPayload(shaped, model) : shaped;
+  };
   // Connects MCP servers in the background; they stay connected while the session is warm.
   await session.bindExtensions({});
   warm.set(job.thread, state);
@@ -421,6 +430,7 @@ async function runTurn(run: string, job: RunJob): Promise<string> {
   entry.run = run;
   entry.always = false;
   entry.commands = new Set(job.workspace?.commands ?? []);
+  entry.speed = job.speed ?? null;
   const sent = await attached(job.attachments ?? [], Array.isArray(session.model?.input) && session.model.input.includes("image"));
   entry.files = sent.files;
   let aborted = false;
