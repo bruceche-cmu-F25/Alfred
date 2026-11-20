@@ -7,9 +7,10 @@ import { appIconPixels } from "./icon-art.ts";
 
 export function trayIcon(): NativeImage {
   const size = 36; // 18 pt at 2x, the usual menu-bar icon size
-  const half = 0.85; // half the line width in pixels; thinner lines keep the inner cube from filling in
-  const scale = (size / 120) * 0.9, inset = 0.05 * size; // the mark's 120 box, pulled in so round caps stay inside
-  const at = ([x, y]: [number, number]): [number, number] => [inset + x * scale, inset + y * scale];
+  const half = 1; // 1 pt stroke at 2x
+  const cropInset = 8; // Trim padding from the 120-unit artboard for a 17 pt tall mark.
+  const scale = size / (120 - 2 * cropInset);
+  const at = ([x, y]: [number, number]): [number, number] => [(x - cropInset) * scale, (y - cropInset) * scale];
   const lines = markSegments({ mono: true }).map(([a, b]) => [at(a), at(b)] as const);
   const pixels = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) {
