@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFigure, type Figure as Live, type FigureState } from "../entity/tesseract.js";
 
 const isDark = () => document.documentElement.dataset.scheme === "dark";
@@ -28,3 +28,18 @@ export function Figure({ state, size, className, anchor }: { state: FigureState;
   return anchor ? <span className="figure-anchor" data-alfred-anchor="">{drawing}</span> : drawing;
 }
 
+
+/** The calm states, in turn: the body, then each shape it takes while working, ending done. Amber (notice) and red
+ * (error) are left out, since they mean something needs you. */
+const TOUR: FigureState[] = ["rest", "listen", "think", "speak", "work", "done", "sleep"];
+
+/** Alfred going through its shapes on an empty page ("All clear"). Holds the body when motion is reduced. */
+export function FigureTour({ size, every = 3200 }: { size: number; every?: number }) {
+  const [at, setAt] = useState(0);
+  useEffect(() => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = setInterval(() => setAt((i) => (i + 1) % TOUR.length), every);
+    return () => clearInterval(timer);
+  }, [every]);
+  return <Figure state={TOUR[at]} size={size} className="figure-tour" />;
+}

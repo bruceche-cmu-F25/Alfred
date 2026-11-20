@@ -247,6 +247,7 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 
 .empty { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; padding: 24px; text-align: center; }
 .empty-title { font: 1.375rem/1.3 var(--serif); }
+.empty .figure-tour { margin-bottom: 12px; flex: none; }
 
 /* Questions worth asking from the page in view, one tap to send. */
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; max-width: 760px; width: calc(100% - 32px); margin: 0 auto; }
@@ -480,7 +481,6 @@ select.area-pick { appearance: none; -webkit-appearance: none; height: 26px; pad
 .week-at { flex: none; font: .75rem var(--mono); color: var(--muted); }
 .week-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .week-row .due { flex: none; }
-@media (hover: none) { .remove { opacity: .7; } }
 
 /* The line a page adds things with (todos, links): one rounded field like the ask bar, pills inside it. */
 .add-bar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 6px 6px 6px 16px; border-radius: 16px; background: var(--field, var(--raise)); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow 160ms var(--ease); }
@@ -871,6 +871,13 @@ textarea.ev-field:disabled { opacity: .5; }
 .ev-foot button.danger { background: var(--bad); color: #fff; }
 .ev-foot button.ev-delete { margin-left: -10px; padding: 0 10px; color: var(--bad); }
 .ev-foot button.ev-delete:hover { background: color-mix(in oklch, var(--bad) 10%, transparent); }
+/* One event's details, in the same card: its colour is a dot by the title. */
+.ev-view { gap: 6px; }
+.ev-view .ev-card-head { align-items: flex-start; }
+.ev-view .ev-card-head b { min-width: 0; padding-top: 3px; color: var(--ink); font-size: 1.0625rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.ev-view .ev-card-head .mark { display: inline-block; margin-right: 8px; vertical-align: .08em; }
+.ev-view p { overflow-wrap: anywhere; }
+.ev-view .ev-card-links { margin-top: 8px; }
 .ev-ask { width: min(380px, 100%); gap: 6px; }
 .ev-ask b { color: var(--ink); font-size: 1rem; font-weight: 600; overflow-wrap: anywhere; }
 .ev-ask .ev-foot { margin-top: 10px; }
@@ -906,13 +913,6 @@ textarea.ev-field:disabled { opacity: .5; }
 .wk-now { position: absolute; left: -1px; right: 0; z-index: 2; height: 2px; background: var(--now); pointer-events: none; }
 .wk-now::before { content: ""; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--now); }
 .agenda { display: none; }
-
-.mail { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; }
-.mail .chips { padding: 0 0 12px; }
-.mail-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); margin: 0 -24px; border-top: 1px solid var(--line-soft); }
-.mail-list { min-height: 0; overflow-y: auto; padding: 6px 8px 24px 12px; border-right: 1px solid var(--line-soft); }
-.mail-row { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; padding: 9px 10px; border-radius: 10px; color: var(--copy); text-align: left; }
-.mail-row:hover { background: var(--wash); }
 /* The week or the month: the switch sits with the New button, at the bar's far end. */
 .cal-tools { flex: none; display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .cal-view button { width: auto; min-width: 34px; padding: 0 10px; font-size: .75rem; white-space: nowrap; }
@@ -945,6 +945,13 @@ textarea.ev-field:disabled { opacity: .5; }
 .mo-ev[data-draft], .mo-cell[data-past] .mo-ev[data-draft] { opacity: 1; box-shadow: inset 0 0 0 1.5px var(--k-solid); }
 .mo-more { flex: none; align-self: flex-start; height: 18px; padding: 0 5px; border-radius: 6px; color: var(--muted); font-size: .6875rem; white-space: nowrap; }
 .mo-dots { display: none; }
+
+.mail { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; }
+.mail .chips { padding: 0 0 12px; }
+.mail-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); margin: 0 -24px; border-top: 1px solid var(--line-soft); }
+.mail-list { min-height: 0; overflow-y: auto; padding: 6px 8px 24px 12px; border-right: 1px solid var(--line-soft); }
+.mail-row { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; padding: 9px 10px; border-radius: 10px; color: var(--copy); text-align: left; }
+.mail-row:hover { background: var(--wash); }
 .mail-row[aria-current] { background: var(--wash); box-shadow: inset 0 0 0 1px var(--line-soft); }
 .mail-dot { width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; }
 .mail-row[data-unread] .mail-dot { background: var(--accent); }
@@ -986,8 +993,21 @@ textarea.ev-field:disabled { opacity: .5; }
 .mail-draft-also { display: flex; flex-direction: column; gap: 2px; color: var(--copy); font-size: .8125rem; }
 .mail-draft-also li::before { content: "+ "; color: var(--muted); }
 .mail-reply { margin: 18px 0; display: flex; flex-direction: column; gap: 8px; }
-.mail-writing { margin: 18px 0; }
-:is(.mail-draft, .mail-reply) .inbox-actions button.ghost[aria-pressed="true"] { background: var(--wash); color: var(--ink); box-shadow: inset 0 0 0 1px var(--copy); }
+/* Alfred writing. While it works the card is already there with lines being written in it; when the draft lands
+   its text is written out in the same box the user then edits, so nothing jumps. */
+.mail-draft:is([data-writing], :has(.mail-draft-typing)) { animation: none; }
+.mail-draft-lines, .mail-draft-typing { min-height: 5.4em; padding: 8px 10px; border-radius: 8px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.mail-draft-typing { color: var(--ink); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; cursor: default; }
+.mail-caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -3px; border-radius: 1px; background: var(--alf); animation: caret 1s steps(2, jump-none) infinite; }
+.mail-draft-lines { display: flex; flex-direction: column; justify-content: center; gap: 11px; }
+.mail-draft-lines i { height: 7px; border-radius: 4px; background: color-mix(in oklch, var(--alf) 30%, transparent); transform-origin: left center; animation: write-line 2.7s cubic-bezier(.4, 0, .2, 1) infinite both; }
+.mail-draft-lines i:nth-child(1) { width: 78%; }
+.mail-draft-lines i:nth-child(2) { width: 92%; animation-delay: .45s; }
+.mail-draft-lines i:nth-child(3) { width: 44%; animation-delay: .9s; }
+@keyframes write-line { 0% { transform: scaleX(0); opacity: 1; } 34%, 78% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mail-draft-lines i { animation: none; opacity: .6; } .mail-caret { animation: none; } }
+/* The thing now in the bar under the page: its button stays down. */
+.inbox-actions button.ghost[aria-pressed="true"] { background: var(--wash); color: var(--ink); box-shadow: inset 0 0 0 1px var(--copy); }
 
 /* A week of seven columns needs room: in a narrow page the days are a list. */
 @container page (max-width: 640px) {
@@ -995,6 +1015,14 @@ textarea.ev-field:disabled { opacity: .5; }
   .week-grid { display: none; }
   /* The list runs to the page's edges, so what scrolls it is at the edge of the screen. */
   .agenda { display: flex; flex-direction: column; gap: 14px; margin: 0 -16px; padding: 0 16px 80px; overflow-y: auto; }
+  /* The month in a narrow page: a day is its number over a dot per colour, and tapping it opens its week. */
+  .month-grid { margin: 0 -16px; padding: 0 8px 80px; }
+  .mo-body { grid-auto-rows: minmax(54px, 1fr); }
+  .mo-cell { align-items: center; gap: 4px; padding: 6px 0; border-left: 0; cursor: pointer; }
+  .mo-cell :is(.mo-ev, .ev-chip, .mo-more) { display: none; }
+  .mo-day { align-self: center; margin: 0; padding: 0 4px; }
+  .mo-dots { display: flex; gap: 3px; pointer-events: none; }
+  .mo-dots .mark { width: 5px; height: 5px; }
   .agenda h3 { min-height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
   .agenda h3 .icon-btn { width: 26px; height: 26px; }
   /* Each day of the list has its own +; the bar's is a round one that stays on the week's row. */

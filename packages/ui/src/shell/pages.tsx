@@ -121,7 +121,7 @@ const PAGES: PageDef[] = [
       const waiting = waitingCount(state), any = inboxItems(state).length > 0;
       return waiting ? ["sug.inbox.urgent", "sug.inbox.what"] : any ? ["sug.inbox.what"] : ["sug.inbox.today"];
     },
-    render: ({ state, focus, onFocused, openConversation }) => <Inbox state={state} focus={focus} onFocused={onFocused} onOpenConversation={openConversation} />,
+    render: ({ state, focus, onFocused, openConversation, line }) => <Inbox state={state} focus={focus} onFocused={onFocused} onOpenConversation={openConversation} line={line} />,
   },
   {
     key: "calendar.week", get title() { return t("page.calendar"); }, icon: "cal", k: "now", group: "work",

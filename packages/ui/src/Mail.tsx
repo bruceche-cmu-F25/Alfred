@@ -76,7 +76,12 @@ interface Acts {
 
 /** One draft, where it will go: who it is for, its text (changed by hand, if it is the only thing to decide), and
  * send, change, or not. */
-function DraftCard({ draft, acts, changing, heading, arrived }: { draft: Draft; acts: Acts; changing: boolean; heading?: boolean; /** It came while the mail was being read. */ arrived?: boolean }) {
+function DraftCard({ draft, acts, changing, heading, written, onWritten }: {
+  draft: Draft; acts: Acts; changing: boolean; heading?: boolean;
+  /** Alfred has just written it: its text is written out in front of the user, once. */
+  written?: boolean;
+  onWritten?(): void;
+}) {
   const { input } = draft;
   const others = draft.kind === "alfred" ? draft.proposal.steps.filter((_, index) => index !== draft.index) : [];
   const stale = draft.kind === "alfred" && !!draft.proposal.stale;
@@ -87,12 +92,17 @@ function DraftCard({ draft, acts, changing, heading, arrived }: { draft: Draft; 
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
+  const [shown, writing, finish] = useWritten(input.body, !!written);
   useEffect(() => {
-    // A draft that turns up under the mail being read is brought into sight; opening a mail starts at its top.
-    if (arrived) root.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     // A draft the user just started is theirs to type in.
     if (draft.kind === "own" && !input.body) field.current?.focus();
   }, []);
+  // A draft being written under the mail is kept in sight as it grows; once written it is the user's to change.
+  useEffect(() => {
+    if (!written) return;
+    root.current?.scrollIntoView({ block: "nearest", behavior: writing ? "smooth" : "auto" });
+    if (!writing) onWritten?.();
+  }, [writing]);
   const act = (action: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -106,7 +116,9 @@ function DraftCard({ draft, acts, changing, heading, arrived }: { draft: Draft; 
         <span>{t("mail.to")} {input.to.join(", ")}{input.cc.length > 0 && ` · ${t("mail.cc")} ${input.cc.join(", ")}`}</span>
       </p>
       {heading && <p className="mail-draft-subject">{input.subject || t("mail.nosubject")}</p>}
-      {editable ? (
+      {writing ? (
+        <p className="mail-draft-typing" aria-live="off" onClick={finish}>{shown}<i className="mail-caret" aria-hidden="true" /></p>
+      ) : editable ? (
         <span className="with-mic">
           <textarea ref={field} value={text} onChange={(event) => write(event.target.value)} rows={Math.min(14, Math.max(3, text.split("\n").length + 1))} maxLength={20_000}
             placeholder={t("mail.own.placeholder")} aria-label={t("mail.draft.text")} disabled={busy} />
@@ -117,19 +129,52 @@ function DraftCard({ draft, acts, changing, heading, arrived }: { draft: Draft; 
       {stale && <p className="problem small">{t("inbox.staleWarn")}</p>}
       <div className="inbox-actions">
         {!stale && (
-          <button type="button" disabled={busy || !text.trim()} onClick={() => act(() => acts.send(draft, text))}>
+          <button type="button" disabled={busy || writing || !text.trim()} onClick={() => act(() => acts.send(draft, text))}>
             {others.length ? t("inbox.acceptN", { n: others.length + 1 }) : t("mail.send")}
           </button>
         )}
-        <button type="button" className="ghost" disabled={busy || !text.trim()} aria-pressed={changing} onClick={() => acts.change(draft, text)}>{t("mail.change")}</button>
-        <button type="button" className="ghost" disabled={busy} onClick={() => act(() => acts.discard(draft))}>{t("mail.discard")}</button>
+        <button type="button" className="ghost" disabled={busy || writing || !text.trim()} aria-pressed={changing} onClick={() => acts.change(draft, text)}>{t("mail.change")}</button>
+        <button type="button" className="ghost" disabled={busy || writing} onClick={() => act(() => acts.discard(draft))}>{t("mail.discard")}</button>
       </div>
       {error && <p className="problem small" role="alert">{error}</p>}
     </section>
   );
 }
 
-const Writing = () => <p className="working mail-writing" role="status"><span className="working-label">{t("mail.writing")}</span></p>;
+/** A text written out as if by hand, when `on`: what is written so far, whether it is still going, and a way to
+ * have the rest at once (a click). It takes one to two and a half seconds whatever the length, and none at all for
+ * someone who asked for less motion. */
+function useWritten(text: string, on: boolean): [string, boolean, () => void] {
+  const chars = useMemo(() => Array.from(text), [text]);
+  /** How much is written so far; null once it all is (and from the start, when it is not written out at all). */
+  const [count, setCount] = useState<number | null>(() => (on && chars.length > 0 && !window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : null));
+  useEffect(() => {
+    if (count === null) return;
+    const total = Math.min(2400, Math.max(900, chars.length * 24));
+    const began = performance.now();
+    let frame = requestAnimationFrame(function step(now) {
+      const next = Math.ceil(((now - began) / total) * chars.length);
+      if (next >= chars.length) { setCount(null); return; }
+      setCount((had) => (had === null ? null : Math.max(had, next)));
+      frame = requestAnimationFrame(step);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const finish = useCallback(() => setCount(null), []);
+  return [count === null ? text : chars.slice(0, count).join(""), count !== null, finish];
+}
+
+/** Alfred is writing: the draft's card is already where it will be, with lines being written in it. */
+function Writing({ to }: { to?: string }) {
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => { root.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, []);
+  return (
+    <section className="mail-draft" data-writing ref={root} role="status">
+      <p className="mail-draft-head"><b className="working-label">{t("mail.writing")}</b>{to && <span>{t("mail.to")} {to}</span>}</p>
+      <div className="mail-draft-lines" aria-hidden="true"><i /><i /><i /></div>
+    </section>
+  );
+}
 
 /** A reply that was sent from here, or is on its way, under the mail it answers. */
 function SentCard({ sent, onAgain }: { sent: MailSent; onAgain?(): void }) {
@@ -153,6 +198,9 @@ interface ReaderProps {
   canSend: boolean;
   line: PageLine;
   acts: Acts;
+  /** The draft has just come from Alfred, and has not been written out yet. */
+  written: boolean;
+  onWritten(): void;
   /** Asks Alfred for a reply to this mail; `words` is what it should say, if the user gave any. */
   onDraft(words?: string): Promise<void>;
   /** Starts the user's own reply, empty or with the text of one that did not go out. */
@@ -160,7 +208,7 @@ interface ReaderProps {
   onBack(): void;
 }
 
-function Reader({ message, draft, writing, sent, canSend, line, acts, onDraft, onOwn, onBack }: ReaderProps) {
+function Reader({ message, draft, writing, sent, canSend, line, acts, written, onWritten, onDraft, onOwn, onBack }: ReaderProps) {
   const [detail, setDetail] = useState<MailDetail | "loading" | "gone">("loading");
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -171,8 +219,6 @@ function Reader({ message, draft, writing, sent, canSend, line, acts, onDraft, o
       .catch(() => { if (alive) setDetail("gone"); });
     return () => { alive = false; };
   }, [message.id, message.account]);
-  const reading = useRef(false);
-  useEffect(() => { reading.current = true; }, []);
   const replyKey = `mail:reply:${messageKey(message)}`;
   const start = (words?: string) => { setError(null); return onDraft(words).catch((reason: Error) => { setError(reason.message); throw reason; }); };
   const inLine = () => line.attach(line.about === replyKey ? null : {
@@ -199,12 +245,13 @@ function Reader({ message, draft, writing, sent, canSend, line, acts, onDraft, o
         </>
       )}
       {sent.map((one) => <SentCard key={one.id} sent={one} onAgain={!draft && canSend ? () => onOwn(one.body) : undefined} />)}
-      {draft ? <DraftCard key={draft.key} draft={draft} acts={acts} changing={line.about === `mail:change:${draft.key}`} arrived={reading.current} />
-        : writing ? <Writing />
+      {draft ? <DraftCard key={draft.key} draft={draft} acts={acts} changing={line.about === `mail:change:${draft.key}`} written={written} onWritten={onWritten} />
+        : writing ? <Writing to={message.fromEmail} />
         : (
           <div className="mail-reply">
             <div className="inbox-actions">
-              <button type="button" onClick={() => { void start().catch(() => {}); }}>{t("mail.reply.draft")}</button>
+              {/* Once answered, another reply is possible but no longer the thing to do. */}
+              <button type="button" className={sent.some((one) => one.state === "done") ? "ghost" : undefined} onClick={() => { void start().catch(() => {}); }}>{t("mail.reply.draft")}</button>
               <button type="button" className="ghost" aria-pressed={line.about === replyKey} onClick={inLine}>{t("mail.reply.line")}</button>
               {canSend && <button type="button" className="ghost" onClick={() => onOwn()}>{t("mail.reply.own")}</button>}
             </div>
@@ -237,6 +284,14 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
       ? [{ kind: "alfred", key: `${proposal.id}:${index}`, input: step.input as SendInput, at: proposal.createdAt, proposal, index }] : []))),
     ...own.map((draft): Draft => ({ kind: "own", ...draft })),
   ], [state.proposals, own]);
+
+  // Alfred's drafts that turned up while the page was open are written out when first shown, once. Those that
+  // were already waiting when it opened are simply there.
+  const known = useRef<Set<string> | null>(null);
+  const fresh = useRef(new Set<string>());
+  for (const draft of drafts) if (draft.kind === "alfred" && known.current && !known.current.has(draft.key)) fresh.current.add(draft.key);
+  known.current = new Set(drafts.map((draft) => draft.key));
+  const shownWritten = (draft: Draft | undefined) => ({ written: !!draft && fresh.current.has(draft.key), onWritten: () => { if (draft) fresh.current.delete(draft.key); } });
 
   /** The message a draft answers: the one it replies to, or the one picked when Alfred was asked for it. */
   const answers = useCallback((draft: Draft): string | null => {
@@ -361,11 +416,11 @@ export function Mail({ snapshot, state, line }: { snapshot: MailSnapshot | undef
     <Reader key={picked} message={open} draft={draftFor(messageKey(open))} writing={isWriting(messageKey(open), open.id)}
       sent={sentMail.filter((sent) => sent.replyTo === open.id && sent.account === open.account)}
       canSend={sources.find((source) => source.account === open.account)?.canSend ?? false}
-      line={line} acts={acts} onDraft={draftReply(open)} onOwn={ownReply(open)} onBack={() => setPicked(null)} />
+      line={line} acts={acts} {...shownWritten(draftFor(messageKey(open)))} onDraft={draftReply(open)} onOwn={ownReply(open)} onBack={() => setPicked(null)} />
   ) : openDraft ? (
     <article className="mail-read" aria-label={openDraft.input.subject}>
       <button type="button" className="ghost small mail-back" onClick={() => setPicked(null)}>‹ {t("mail.back")}</button>
-      <DraftCard key={openDraft.key} draft={openDraft} acts={acts} changing={line.about === `mail:change:${openDraft.key}`} heading />
+      <DraftCard key={openDraft.key} draft={openDraft} acts={acts} changing={line.about === `mail:change:${openDraft.key}`} heading {...shownWritten(openDraft)} />
     </article>
   ) : picked?.startsWith("d:") && composing ? (
     <article className="mail-read">

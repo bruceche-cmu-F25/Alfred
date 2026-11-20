@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { StateResponse } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { desktop } from "./desktop.ts";
 import { Linked } from "./Linked.tsx";
-import { MicButton } from "./voice/MicButton.tsx";
-import { appendDictation } from "./voice/wav.ts";
+import { FigureTour } from "./shell/Figure.tsx";
+import type { PageLine } from "./shell/about.ts";
 import { inboxItems, kindColour, kindName, KINDS, type InboxItem, type InboxKind } from "./shell/inbox.ts";
 import { when } from "./shell/Nav.tsx";
 import { intlLocale, t } from "./i18n/index.ts";
@@ -15,6 +15,8 @@ export interface InboxProps {
   focus: string | null;
   onFocused(): void;
   onOpenConversation(conversationId: string, runId?: string): void;
+  /** The bar under the page: what to change about a proposal is written there, as everywhere. */
+  line: PageLine;
 }
 
 /** What one decision did, said back briefly. */
@@ -26,14 +28,16 @@ export function outcomeText(state: string, error?: string): string {
   return "";
 }
 
-function Detail({ item, onDone, onOpenConversation, conversationTitle }: {
-  item: InboxItem; onDone(message?: string): void; onOpenConversation(conversationId: string, runId?: string): void; conversationTitle?: string;
+function Detail({ item, onDone, onOpenConversation, conversationTitle, line }: {
+  item: InboxItem; onDone(message?: string): void; onOpenConversation(conversationId: string, runId?: string): void; conversationTitle?: string; line: PageLine;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [revising, setRevising] = useState(false);
-  const [text, setText] = useState("");
-  useEffect(() => { setRevising(false); setText(""); setError(null); }, [item.id]);
+  useEffect(() => { setError(null); }, [item.id]);
+  // Another item, or none: the words in the bar were about the one before.
+  const lineNow = useRef(line);
+  lineNow.current = line;
+  useEffect(() => () => { if (lineNow.current.about?.startsWith("inbox:")) lineNow.current.attach(null); }, [item.id]);
 
   const act = (action: () => Promise<string | undefined | void>) => {
     setBusy(true);
@@ -69,23 +73,16 @@ function Detail({ item, onDone, onOpenConversation, conversationTitle }: {
                 <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.decline(proposal.id).then(() => undefined))}>{t("common.no")}</button>
               </div>
             </>
-          ) : revising ? (
-            <form className="revise" onSubmit={(event) => { event.preventDefault(); if (text.trim()) act(() => api.revise(proposal.id, text.trim()).then(() => t("inbox.revised"))); }}>
-              <span className="with-mic">
-                <textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} rows={2} maxLength={1000} placeholder={t("inbox.revisePlaceholder")} aria-label={t("inbox.reviseLabel")} />
-                <MicButton className="small" disabled={busy} onText={(words) => setText((now) => appendDictation(now, words))} />
-              </span>
-              <div className="inbox-actions">
-                <button type="submit" disabled={busy || !text.trim()}>{t("inbox.reviseSend")}</button>
-                <button type="button" className="ghost" disabled={busy} onClick={() => setRevising(false)}>{t("inbox.reviseCancel")}</button>
-              </div>
-            </form>
           ) : (
             <div className="inbox-actions">
               <button type="button" disabled={busy} onClick={() => act(() => api.accept(proposal.id).then(({ proposal: done }) => outcomeText(done.state, done.outcome?.error)))}>
                 {proposal.steps.length > 1 ? t("inbox.acceptN", { n: proposal.steps.length }) : t("inbox.accept")}
               </button>
-              <button type="button" className="ghost" disabled={busy} onClick={() => setRevising(true)}>{t("inbox.revise")}</button>
+              {/* What to change is said in the bar under the page; the new version then lands in this list. */}
+              <button type="button" className="ghost" disabled={busy} aria-pressed={line.about === `inbox:change:${proposal.id}`} onClick={() => line.attach(line.about === `inbox:change:${proposal.id}` ? null : {
+                key: `inbox:change:${proposal.id}`, label: t("inbox.revise"), placeholder: t("inbox.revisePlaceholder"),
+                send: async (words) => { await line.revise(proposal.id, words, { id: proposal.id, title: proposal.title.slice(0, 200) }); onDone(t("inbox.revised")); },
+              })}>{t("inbox.revise")}</button>
               <button type="button" className="ghost" disabled={busy} onClick={() => act(() => api.decline(proposal.id).then(() => undefined))}>{t("common.no")}</button>
             </div>
           )}
@@ -125,7 +122,7 @@ function Detail({ item, onDone, onOpenConversation, conversationTitle }: {
 }
 
 /** 通知: what needs you, and what Alfred wants you to know. A list on the left, the chosen item on the right. */
-export function Inbox({ state, focus, onFocused, onOpenConversation }: InboxProps) {
+export function Inbox({ state, focus, onFocused, onOpenConversation, line }: InboxProps) {
   const items = useMemo(() => inboxItems(state, desktop?.userName ?? null), [state]);
   const [filter, setFilter] = useState<InboxKind | "all">("all");
   const [selected, setSelected] = useState<string | null>(null);
@@ -158,7 +155,7 @@ export function Inbox({ state, focus, onFocused, onOpenConversation }: InboxProp
       )}
       {said && <p className="inbox-said" role="status">{said}</p>}
       {items.length === 0 ? (
-        <div className="empty"><p className="empty-title">{t("inbox.emptyTitle")}</p><p className="quiet">{t("inbox.emptyHint")}</p></div>
+        <div className="empty"><FigureTour size={112} /><p className="empty-title">{t("inbox.emptyTitle")}</p><p className="quiet">{t("inbox.emptyHint")}</p></div>
       ) : (
         <div className="split" data-open={current ? "" : undefined}>
           <ul className="inbox-list">
@@ -175,7 +172,7 @@ export function Inbox({ state, focus, onFocused, onOpenConversation }: InboxProp
           {detail && (
             <div className="inbox-pane">
               <button type="button" className="back link" onClick={() => setSelected(null)}>{t("inbox.back")}</button>
-              <Detail key={detail.id} item={detail} conversationTitle={titleOf(detail.conversationId) ?? undefined} onOpenConversation={onOpenConversation}
+              <Detail key={detail.id} item={detail} conversationTitle={titleOf(detail.conversationId) ?? undefined} onOpenConversation={onOpenConversation} line={line}
                 onDone={(message) => { setSelected(null); if (message) setSaid(message); }} />
             </div>
           )}
