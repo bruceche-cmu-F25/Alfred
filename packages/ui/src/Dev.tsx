@@ -15,6 +15,7 @@ import { Diff } from "./Diff.tsx";
 import { t, type Key } from "./i18n/index.ts";
 import { AsciiField } from "./shell/AsciiField.tsx";
 import { Figure } from "./shell/Figure.tsx";
+import { ChoicePicker } from "./shell/ChoicePicker.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { MicButton } from "./voice/MicButton.tsx";
 import { appendDictation } from "./voice/wav.ts";
@@ -23,6 +24,9 @@ import { sends } from "./prefs.ts";
 import { Terminal } from "./Terminal.tsx";
 import { BrowserPane } from "./BrowserPane.tsx";
 import { when } from "./shell/Nav.tsx";
+import { ProcessLogs, Processes, Ship, useProcesses } from "./DevWork.tsx";
+import { ProjectPicker } from "./ProjectPicker.tsx";
+import type { SessionProcess } from "@alfred/protocol";
 
 export interface DevProps {
   state: StateResponse;
@@ -55,8 +59,6 @@ export function Dev(props: DevProps) {
 const noView = () => {};
 
 const MODES: SessionMode[] = ["plan", "ask", "edits"];
-/** The project picker's last choice: not a project, but adding one. */
-const ADD = "+";
 const PANEL_KEY = "alfred.devPanel";
 
 function Session({ id, conversation, state, onSession, live, highlighted, onEvent, pageTitle, automationTitle }: DevProps & { id: string; conversation?: ConversationRow }) {
@@ -65,6 +67,9 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
   const [panel, setPanel] = useState(() => { try { return matchMedia("(min-width: 1001px)").matches && localStorage.getItem(PANEL_KEY) !== "closed"; } catch { return false; } });
   const [changes, setChanges] = useState<SessionChanges | null>(null);
   const [open, setOpen] = useState<{ path: string; diff: string | null } | null>(null);
+  // A background process's output, in the same drawer as a diff.
+  const [logs, setLogs] = useState<SessionProcess | null>(null);
+  const processes = useProcesses(id);
   // The user's own terminal, under the conversation. Hiding it leaves its shell running.
   const [term, setTerm] = useState(false);
   // The Mac app's browser pane takes the place of the details panel while it is open.
@@ -74,17 +79,23 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
 
   // The changed files, read again whenever this session's runs change something or finish.
   const timer = useRef<number | null>(null);
+  const [reloads, setReloads] = useState(0);
   useEffect(() => {
     let alive = true;
     const load = () => api.changes(id).then((next) => { if (alive) setChanges(next); }).catch(() => {});
     void load();
     const off = onEvent((event) => {
       if (event.kind !== "file.changed" && event.kind !== "run.completed" && event.kind !== "run.failed") return;
+      if (event.kind !== "file.changed") processes.reload();
       if (timer.current === null) timer.current = window.setTimeout(() => { timer.current = null; void load(); }, 300);
     });
     return () => { alive = false; off(); };
-  }, [id, onEvent]);
-  const show = (path: string) => { setOpen({ path, diff: null }); api.diff(id, path).then(({ diff }) => setOpen({ path, diff: diff ?? "" })).catch(() => setOpen({ path, diff: "" })); };
+  }, [id, onEvent, reloads]);
+  const show = (path: string) => { setLogs(null); setOpen({ path, diff: null }); api.diff(id, path).then(({ diff }) => setOpen({ path, diff: diff ?? "" })).catch(() => setOpen({ path, diff: "" })); };
+  // A dev server's address: in the browser pane where there is one, else a tab of its own.
+  const openUrl = (address: string) => {
+    if (desktop?.browser) { setBrowser(true); desktop.browser.go(address); } else window.open(address, "_blank", "noopener");
+  };
 
   const files = changes?.files ?? [];
   const added = files.reduce((sum, file) => sum + file.added, 0), removed = files.reduce((sum, file) => sum + file.removed, 0);
@@ -93,20 +104,34 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
   return (
     <div className="dev-layout" data-panel={(panel && !browser) || undefined} data-browser={browser || undefined}>
       <section className="dev-session">
-        <header className="dev-bar">
-          <button type="button" className="icon-btn" onClick={() => onSession(null)} aria-label={t("dev.back")} title={t("dev.back")}><Icon name="back" /></button>
-          {project && <span className="dev-where" title={project.path}><Icon name="folder" />{project.name}{changes?.branch ? ` · ${changes.branch}` : ""}</span>}
-          <button type="button" className="icon-btn dev-term-toggle" onClick={() => setTerm(!term)} aria-pressed={term} aria-label={t("term.title")} title={t("term.title")}><Icon name="terminal" /></button>
-          {canBrowse && <button type="button" className="icon-btn dev-browser-toggle" onClick={() => setBrowser(!browser)} aria-pressed={browser} aria-label={t("browser.title")} title={t("browser.title")}><Icon name="globe" /></button>}
-          <button type="button" className="icon-btn dev-panel-toggle" onClick={togglePanel} aria-pressed={panel} aria-label={t("dev.panel")} title={t("dev.panel")}><Icon name="panel" /></button>
-        </header>
         <Conversation key={id} id={id} live={live} highlighted={highlighted} suggestions={[]} pageTitle={pageTitle} automationTitle={automationTitle}
-          onEvent={onEvent} onView={noView} onStarted={noView} />
+          onEvent={onEvent} onView={noView} onStarted={noView}
+          sessionToolbar={(title, usage) => (
+            <header className="dev-bar">
+              <button type="button" className="icon-btn" onClick={() => onSession(null)} aria-label={t("dev.back")} title={t("dev.back")}><Icon name="back" /></button>
+              <div className="dev-identity">
+                {project && <span className="dev-where" title={[project.path, changes?.branch].filter(Boolean).join(" · ")}><Icon name="folder" /><span>{project.name}{changes?.branch ? ` · ${changes.branch}` : ""}</span></span>}
+                <h1 title={title}>{title}</h1>
+              </div>
+              {usage}
+              <div className="dev-tools">
+                <button type="button" className="icon-btn dev-term-toggle" onClick={() => setTerm(!term)} aria-pressed={term} aria-label={t("term.title")} title={t("term.title")}><Icon name="terminal" /></button>
+                {canBrowse && <button type="button" className="icon-btn dev-browser-toggle" onClick={() => setBrowser(!browser)} aria-pressed={browser} aria-label={t("browser.title")} title={t("browser.title")}><Icon name="globe" /></button>}
+                <button type="button" className="icon-btn dev-panel-toggle" onClick={togglePanel} aria-pressed={panel} aria-label={t("dev.panel")} title={t("dev.panel")}><Icon name="panel" /></button>
+              </div>
+            </header>
+          )} />
         {term && <Terminal session={id} onClose={() => setTerm(false)} />}
         {open && (
           <div className="dev-drawer" role="dialog" aria-label={open.path}>
             <header><button type="button" className="icon-btn" onClick={() => setOpen(null)} aria-label={t("common.close")}><Icon name="back" /></button><span className="p">{open.path}</span></header>
             {open.diff === null ? <p className="quiet small">…</p> : open.diff ? <Diff patch={open.diff} /> : <p className="quiet small">{t("dev.noDiff")}</p>}
+          </div>
+        )}
+        {logs && (
+          <div className="dev-drawer" role="dialog" aria-label={logs.name}>
+            <header><button type="button" className="icon-btn" onClick={() => setLogs(null)} aria-label={t("common.close")}><Icon name="back" /></button><span className="p">{logs.name}</span></header>
+            <ProcessLogs id={id} process={logs} />
           </div>
         )}
       </section>
@@ -116,7 +141,9 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
           <section>
             <h3>{t("dev.env")}</h3>
             {project && <p className="kv" title={project.path}><Icon name="folder" /><span className="mono">{project.path}</span></p>}
-            <p className="kv"><Icon name="code" /><span className="mono">{changes?.branch ?? t("dev.noGit")}</span></p>
+            {conversation?.worktree && <p className="kv" title={conversation.worktree}><Icon name="layers" /><span>{t("dev.worktreeAt")}</span></p>}
+            <p className="kv"><Icon name="branch" /><span className="mono">{changes?.branch ?? t("dev.noGit")}</span></p>
+            {changes?.gone && <p className="small problem">{t("dev.gone")}</p>}
           </section>
           <section>
             <h3>{t("mode.title")}</h3>
@@ -163,6 +190,11 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
               </ul>
             )}
             {changes?.base && <p className="small quiet">{t("dev.since", { base: changes.base.slice(0, 7) })}</p>}
+            <Ship id={id} title={conversation?.title ?? ""} changes={changes} onChanged={() => setReloads((n) => n + 1)} />
+          </section>
+          <section>
+            <h3>{t("proc.title")}{processes.list.some((process) => process.exit === null) && <span className="mono">{processes.list.filter((process) => process.exit === null).length}</span>}</h3>
+            <Processes id={id} mode={mode} processes={processes} onOpen={openUrl} onLogs={(process) => { setOpen(null); setLogs(process); }} />
           </section>
         </aside>
       )}
@@ -174,31 +206,19 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
   const projects = state.projects ?? [];
   const [chosen, setChosen] = useState<string | null>(() => projects.find((project) => project.trustedAt)?.id ?? null);
   const [mode, setMode] = useState<SessionMode>("ask");
+  // A worktree of its own: a separate folder on a new branch, so the project's own folder is left as it is.
+  const [worktree, setWorktree] = useState(false);
   const [draft, setDraft] = useState("");
-  const [path, setPath] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attachments = useAttachments();
   const project = projects.find((candidate) => candidate.id === chosen);
   const fail = (reason: unknown) => setError(reason instanceof ApiError && reason.code === "local_only" ? t("dev.addLocal")
-    : reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope") : reason instanceof Error ? reason.message : String(reason));
+    : reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope")
+    : reason instanceof ApiError && (reason.code === "git_not_git" || reason.code === "git_no_commit") ? t(`git.${reason.code.slice(4)}` as Key)
+    : reason instanceof Error ? reason.message : String(reason));
 
-  const add = async (folder: string | null) => {
-    if (!folder?.trim()) return;
-    setError(null);
-    try {
-      const added = await api.addProject(folder.trim());
-      setChosen(added.id);
-      setPath("");
-      setAdding(false);
-    } catch (reason) { fail(reason); }
-  };
-  const pick = () => {
-    // The Mac app has the system's folder picker; a browser on the same machine types the path.
-    if (desktop?.pickFolder) void desktop.pickFolder().then(add, fail);
-    else setAdding((value) => !value);
-  };
   const trust = (target: Project) => { setError(null); api.trustProject(target.id).catch(fail); };
 
   const start = (event?: FormEvent) => {
@@ -208,7 +228,7 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
     if (!text || !project?.trustedAt || busy || attachments.busy) return;
     setBusy(true);
     setError(null);
-    api.startSession(project.id, text, mode)
+    api.startSession(project.id, text, mode, worktree)
       .then(async (conversation) => { await api.submit(text, conversation.id, undefined, files); attachments.clear(); onSession(conversation.id); })
       .catch((reason) => { fail(reason); setBusy(false); });
   };
@@ -232,20 +252,17 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
             rows={Math.min(6, Math.max(2, draft.split("\n").length))} maxLength={8000} aria-label={t("composer.label")}
             placeholder={project?.trustedAt ? t("dev.ask", { name: project.name }) : t("dev.pick")} disabled={!project?.trustedAt} />
           <div className="composer-bar">
-            <label className="pick" title={project?.path ?? t("dev.projects")}>
-              <Icon name="folder" />
-              <select aria-label={t("dev.projects")} value={chosen ?? ""} onChange={(event) => { if (event.target.value === ADD) pick(); else setChosen(event.target.value); }}>
-                {!project && <option value="" disabled>{t("dev.projects")}</option>}
-                {projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.trustedAt ? "" : ` · ${t("dev.untrusted")}`}</option>)}
-                <option value={ADD}>{t("dev.add")}</option>
-              </select>
-            </label>
-            <label className="pick mode" data-mode={mode} title={t("mode.title")}>
-              <Icon name="shield" />
-              <select aria-label={t("mode.title")} value={mode} onChange={(event) => setMode(event.target.value as SessionMode)}>
-                {MODES.map((candidate) => <option key={candidate} value={candidate}>{t(`mode.${candidate}` as Key)}</option>)}
-              </select>
-            </label>
+            <button type="button" className="pick project-trigger" aria-haspopup="dialog" aria-expanded={picking}
+              aria-label={project ? t("dev.switchProject", { name: project.name }) : t("dev.projects")} title={project?.path ?? t("dev.projects")}
+              onClick={(event) => { event.currentTarget.focus(); setPicking(true); }}>
+              <Icon name="folder" /><span>{project?.name ?? t("dev.projects")}</span><Icon name="down" />
+            </button>
+            <ChoicePicker label={t("mode.title")} value={mode} mode={mode} icon={<Icon name="shield" />}
+              options={MODES.map((value) => ({ value, label: t(`mode.${value}` as Key) }))}
+              onChange={(value) => setMode(value as SessionMode)} />
+            <button type="button" className="pick toggle" aria-pressed={worktree} onClick={() => setWorktree(!worktree)} disabled={!project?.trustedAt} title={t("dev.worktreeHint")}>
+              <Icon name="branch" /><span>{t("dev.worktree")}</span>
+            </button>
             <span className="grow" />
             <AttachButton attachments={attachments} disabled={!project?.trustedAt} />
             <MicButton disabled={!project?.trustedAt} onText={(words) => setDraft((now) => appendDictation(now, words))} />
@@ -255,12 +272,10 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
           </div>
         </form>
         {/* What the two choices under the composer mean, in one line. */}
-        <p className="dev-note">{project && <span className="mono" title={project.path}>{project.path}</span>}<span>{t(`mode.${mode}.hint` as Key)}</span></p>
-        {adding && (
-          <form className="dev-add" onSubmit={(event) => { event.preventDefault(); void add(path); }}>
-            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder={t("dev.addPath")} aria-label={t("dev.addPath")} autoFocus spellCheck={false} />
-            <button type="submit" disabled={!path.trim()}>{t("dev.addButton")}</button>
-          </form>
+        <p className="dev-note">{project && <span className="mono" title={project.path}>{project.path}</span>}<span>{worktree ? `${t("dev.worktreeHint")} · ` : ""}{t(`mode.${mode}.hint` as Key)}</span></p>
+        {picking && (
+          <ProjectPicker projects={projects} chosen={chosen} onClose={() => setPicking(false)}
+            onChoose={(id) => { setChosen(id); setError(null); setPicking(false); }} />
         )}
         {error && <p className="problem small" role="alert">{error}</p>}
 

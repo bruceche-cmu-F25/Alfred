@@ -50,6 +50,9 @@ export function Terminal({ session, onClose }: { session: string; onClose(): voi
       source = new EventSource(`${base}/stream?from=0`);
       source.addEventListener("output", (message) => term.write((JSON.parse((message as MessageEvent<string>).data) as { data: string }).data));
       source.addEventListener("exit", () => { setExited(true); source?.close(); });
+      // The home node restarted (its shells end with it) or the terminal was closed elsewhere: the stream is refused
+      // and the browser gives up on it. Said, not left as a terminal that silently takes no keys.
+      source.onerror = () => { if (source?.readyState === EventSource.CLOSED && alive) setExited(true); };
       // Keys go out a few at a time: one request per burst of typing, in order.
       let pending = "", sending = Promise.resolve();
       const flush = () => { const data = pending; pending = ""; if (data) sending = sending.then(() => post(`${base}/input`, { data }).then(() => undefined, () => undefined)); };

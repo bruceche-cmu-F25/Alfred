@@ -28,12 +28,23 @@ export function BrowserPane({ onClose }: { onClose(): void }) {
         if (rect.width > 0 && rect.height > 0) bridge.show({ x: rect.left, y: rect.top, width: rect.width, height: rect.height });
       });
     };
-    tell();
-    const observer = new ResizeObserver(tell);
+    // The pane is drawn over the page, so a card over the blurred page (shell/Pop.tsx) would be under it: while one is
+    // open, the pane steps aside.
+    const covered = () => !!document.querySelector(".ev-pop");
+    let hidden = false;
+    const layout = () => {
+      if (covered()) { if (!hidden) { hidden = true; cancelAnimationFrame(frame); bridge.hide(); } return; }
+      hidden = false;
+      tell();
+    };
+    layout();
+    const observer = new ResizeObserver(layout);
     observer.observe(element);
     observer.observe(document.documentElement);
-    window.addEventListener("resize", tell);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener("resize", tell); bridge.hide(); };
+    const cards = new MutationObserver(layout);
+    cards.observe(document.body, { childList: true });
+    window.addEventListener("resize", layout);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); cards.disconnect(); window.removeEventListener("resize", layout); bridge.hide(); };
   }, [bridge]);
 
   useEffect(() => bridge?.onState((next) => {

@@ -2,9 +2,9 @@
  * retry after a dropped connection can never do the same thing twice.
  */
 import type {
-  Automation, AutomationHistory, Schedule,
+  ArchivedConversation, Automation, AutomationHistory, Schedule,
   Conversation, ConversationDetail, CoreEvent, DeviceInfo, FileInfo, DeviceKind, DeviceScope, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
-  Project, SessionChanges, SessionMode, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
+  Project, SessionBranch, SessionChanges, SessionMode, SessionProcess, SessionProcesses, SessionPublished, SessionPullRequest, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
 import { t } from "./i18n/dict.ts";
@@ -36,7 +36,9 @@ export const newRequestId = () => `${deviceId}.${random()}`;
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
-  constructor(status: number, message: string, code?: string) { super(message); this.status = status; this.code = code; }
+  /** How many, when the refusal is about a number of things (files a worktree has not committed). */
+  readonly count?: number;
+  constructor(status: number, message: string, code?: string, count?: number) { super(message); this.status = status; this.code = code; this.count = count; }
 }
 
 /** This device is not paired with the home node (it came in through Tailscale without a device token). */
@@ -46,8 +48,8 @@ export const isUnpaired = (error: unknown) => error instanceof ApiError && error
 async function answer<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const { error, code } = body as { error?: string; code?: string };
-    throw new ApiError(response.status, error ?? t("api.failed", { status: response.status }), code);
+    const { error, code, count } = body as { error?: string; code?: string; count?: number };
+    throw new ApiError(response.status, error ?? t("api.failed", { status: response.status }), code, typeof count === "number" ? count : undefined);
   }
   return body as T;
 }
@@ -91,9 +93,11 @@ export const api = {
     post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}), ...(attachments?.length ? { attachments } : {}) }),
   /** A file for the next message: kept on the home node, which says what it is (an image, a PDF, text) or refuses it. */
   upload: (file: Blob, name: string) => call<FileInfo>(`/api/files?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }),
+  archivedConversations: () => call<{ conversations: ArchivedConversation[] }>("/api/conversations/archived"),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
   readConversationReply: (id: string, runId: string) => post<Record<string, never>>(`/api/conversations/${id}/read`, { runId }),
-  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode; forgetCommand?: string }) =>
+  /** `worktree`: what to do with a session's worktree that has uncommitted changes, when archiving it. */
+  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; speed?: "fast" | null; mode?: SessionMode; forgetCommand?: string; worktree?: "keep" | "discard" }) =>
     post<Conversation>(`/api/conversations/${id}`, { requestId: newRequestId(), ...change }),
   /** Words into the run now working; rejects with 409 when it is not. */
   steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),
@@ -102,10 +106,23 @@ export const api = {
   addProject: (path: string) => post<Project>("/api/projects", { requestId: newRequestId(), path }),
   trustProject: (id: string) => post<Project>(`/api/projects/${id}/trust`, { requestId: newRequestId() }),
   /** A development session in a trusted project; its first message is then submitted to it. */
-  startSession: (projectId: string, title: string, mode?: SessionMode) => post<Conversation>("/api/conversations", { requestId: newRequestId(), projectId, title, ...(mode ? { mode } : {}) }),
+  /** `worktree`: in a worktree of its own, on a new branch. */
+  startSession: (projectId: string, title: string, mode?: SessionMode, worktree?: boolean) =>
+    post<Conversation>("/api/conversations", { requestId: newRequestId(), projectId, title, ...(mode ? { mode } : {}), ...(worktree ? { worktree: true } : {}) }),
   /** A development session's changed files since its snapshot, and one file's diff. */
   changes: (id: string) => call<SessionChanges>(`/api/conversations/${id}/changes`),
   diff: (id: string, path: string) => call<{ diff: string | null }>(`/api/conversations/${id}/diff?path=${encodeURIComponent(path)}`),
+  /** Where its branch stands, and its pull request (which asks GitHub). */
+  branch: (id: string) => call<SessionBranch>(`/api/conversations/${id}/branch`),
+  pullRequest: (id: string) => call<SessionPullRequest>(`/api/conversations/${id}/pr`),
+  /** Commits the session's own changed files. */
+  commit: (id: string, message: string) => post<Conversation>(`/api/conversations/${id}/commit`, { requestId: newRequestId(), message }),
+  /** Pushes its branch and opens a pull request (or updates the open one). Outward: the user is asked first. */
+  publish: (id: string, title: string, body: string) => post<SessionPublished>(`/api/conversations/${id}/publish`, { requestId: newRequestId(), title, body }),
+  processes: (id: string) => call<SessionProcesses>(`/api/conversations/${id}/processes`),
+  startProcess: (id: string, command: string) => post<SessionProcess>(`/api/conversations/${id}/processes`, { command }),
+  stopProcess: (id: string, processId: string) => post<Record<string, never>>(`/api/conversations/${id}/processes/${processId}/stop`, {}),
+  processLogs: (id: string, processId: string) => call<{ process: SessionProcess; text: string }>(`/api/conversations/${id}/processes/${processId}/logs`),
   respond: (runId: string, requestId: string, answer: string) => post<Run>(`/api/runs/${runId}/respond`, { requestId, answer }),
   run: (runId: string) => call<{ run: Run }>(`/api/runs/${runId}`),
   cancel: (runId: string) => post<Run>(`/api/runs/${runId}/cancel`, { requestId: newRequestId() }),

@@ -600,7 +600,9 @@ function wireIpc(): void {
   ipcMain.on("browser-show", (event, bounds: unknown) => {
     const rect = bounds as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | null;
     if (!fromMain(event) || !rect || ![rect.x, rect.y, rect.width, rect.height].every((value) => typeof value === "number" && Number.isFinite(value))) return;
-    pane?.show({ x: rect.x as number, y: rect.y as number, width: rect.width as number, height: rect.height as number });
+    // The page measures in its own pixels; with the window zoomed (⌘+ / ⌘−) the window's are that many times larger.
+    const zoom = main!.webContents.getZoomFactor() || 1;
+    pane?.show({ x: (rect.x as number) * zoom, y: (rect.y as number) * zoom, width: (rect.width as number) * zoom, height: (rect.height as number) * zoom });
   });
   ipcMain.on("browser-hide", (event) => { if (fromMain(event)) pane?.hide(); });
   ipcMain.on("browser-go", (event, url: unknown) => { if (fromMain(event) && typeof url === "string" && url.length <= 2100) pane?.go(url); });

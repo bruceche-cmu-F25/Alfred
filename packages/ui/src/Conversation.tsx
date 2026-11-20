@@ -1,13 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationDetail, CoreEvent, EngineModel, FileInfo, Run, RunRequest, SessionMode, ThinkingLevel, ViewContext } from "@alfred/protocol";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { fastSpeed, type ConversationDetail, type CoreEvent, type EngineModel, type FileInfo, type Run, type RunRequest, type SessionMode, type ThinkingLevel, type ViewContext } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
 import { Logo, modelMark } from "./brand/Logo.tsx";
-import { t, type Key } from "./i18n/index.ts";
+import { intlLocale, t, type Key } from "./i18n/index.ts";
 import { describeReceipt, errorText } from "./receipts.ts";
 import { Diff } from "./Diff.tsx";
 import { Linked } from "./Linked.tsx";
 import { ConversationReply } from "./ConversationReply.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { ChoicePicker } from "./shell/ChoicePicker.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { MicButton } from "./voice/MicButton.tsx";
 import { appendDictation } from "./voice/wav.ts";
@@ -236,19 +237,86 @@ function Turn({ run, receipts, activity, files, live, highlighted, askedOn, star
 }
 
 const MODES: SessionMode[] = ["plan", "ask", "edits"];
-const THINKING: Array<[ThinkingLevel | "", Key]> = [["", "think.default"], ["off", "think.off"], ["low", "think.low"], ["medium", "think.medium"], ["high", "think.high"]];
+const THINKING: Array<[ThinkingLevel | "", Key]> = [["", "think.default"], ["off", "think.off"], ["low", "think.low"], ["medium", "think.medium"], ["high", "think.high"], ["xhigh", "think.xhigh"], ["max", "think.max"]];
 let modelList: Promise<EngineModel[]> | null = null;
 
-/** The top of a conversation: its title and how much it has used. Nothing to change here; that is under the composer. */
-function ConversationHead({ title, detail }: { title: string; detail: ConversationDetail | null }) {
+type SessionToolbar = (title: string, usage: ReactNode) => ReactNode;
+
+/** The session toolbar and the everyday header share the conversation's existing usage subscription. */
+function ConversationHead({ title, detail, sessionToolbar }: { title: string; detail: ConversationDetail | null; sessionToolbar?: SessionToolbar }) {
   const usages = detail ? Object.values(detail.activity).flat().filter((event) => event.kind === "run.usage").sort((a, b) => a.seq - b.seq) : [];
   const usage = usages.at(-1);
+  if (sessionToolbar) return sessionToolbar(title, <SessionUsage sample={usage?.payload} />);
   const percent = typeof usage?.payload.percent === "number" ? Math.round(usage.payload.percent) : null;
   return (
     <header className="conversation-head">
       <h1>{title}</h1>
       <Stats total={spent(usages)} percent={percent} window={num(usage?.payload.contextWindow)} />
     </header>
+  );
+}
+
+/** Pi reports a single context snapshot and the spend for that turn. An absent reading is meaningful after compaction. */
+function SessionUsage({ sample }: { sample?: CoreEvent["payload"] }) {
+  const disclosure = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      const details = disclosure.current;
+      if (details?.open && !details.contains(event.target as Node)) details.open = false;
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, []);
+  const reading = (key: string) => {
+    const value = sample?.[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+  };
+  const used = reading("tokens"), capacity = reading("contextWindow") || null;
+  const percent = reading("percent") ?? (used !== null && capacity ? used / capacity * 100 : null);
+  const input = reading("input"), output = reading("output"), cost = reading("cost");
+  const count = (value: number | null) => value === null ? null : value.toLocaleString(intlLocale());
+  const label = t("stats.window");
+  if (!sample) return <div className="session-usage pending" role="status" title={t("stats.noReport")} aria-label={`${label} · ${t("stats.noReport")}`}><Icon name="clock" /><strong>{label}</strong><span>{t("stats.noReport")}</span></div>;
+
+  const rows: Array<[Key, string | null]> = [
+    ["conv.model", typeof sample.model === "string" ? sample.model : null],
+    ["stats.usedTokens", count(used)], ["stats.windowTokens", count(capacity)],
+    ["stats.in", count(input)], ["stats.out", count(output)],
+    ["stats.cacheRead", count(reading("cacheRead"))], ["stats.cacheWrite", count(reading("cacheWrite"))],
+    ["stats.estimate", cost === null ? null : cost.toLocaleString(intlLocale(), { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 })],
+  ];
+  const tone = percent !== null && percent > 90 ? "full" : percent !== null && percent > 70 ? "high" : undefined;
+  const costText = cost === null ? null : dollars(cost);
+  return (
+    <details className="session-usage" ref={disclosure}
+      onBlur={(event) => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !event.currentTarget.open) return;
+        event.stopPropagation();
+        event.currentTarget.open = false;
+        event.currentTarget.querySelector("summary")?.focus();
+      }}>
+      <summary title={label} aria-label={percent === null ? label : t("conv.context", { n: Math.round(percent) })}>
+        <span className="session-window" data-level={tone}>
+          <strong>{label}</strong>
+          {percent !== null && <span className="session-gauge" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+            aria-valuenow={Math.min(100, percent)} aria-valuetext={`${Math.round(percent)}%`}><i style={{ width: `${Math.min(100, percent)}%` }} /></span>}
+          <b>{percent === null ? "—" : `${Math.round(percent)}%`}</b>
+          {(used !== null || capacity !== null) && <span className="session-capacity">{used === null ? "—" : compact(used)} / {capacity === null ? "—" : compact(capacity)}</span>}
+        </span>
+        <span className="session-turn-usage">
+          <span>{t("stats.lastReport")}</span>
+          {input !== null && <span aria-label={`${t("stats.in")} ${count(input)}`}>↑ {compact(input)}</span>}
+          {output !== null && <span aria-label={`${t("stats.out")} ${count(output)}`}>↓ {compact(output)}</span>}
+          {costText && <span>{costText}</span>}
+        </span>
+        <Icon name="down" />
+      </summary>
+      <div className="session-report">
+        <p>{t("stats.reportHint")}</p>
+        <dl>{rows.map(([key, value]) => value !== null && <div key={key}><dt>{t(key)}</dt><dd>{value}</dd></div>)}</dl>
+      </div>
+    </details>
   );
 }
 
@@ -263,41 +331,44 @@ function ComposerBar({ conversation, onError }: { conversation: ConversationDeta
     void modelList.then(setModels);
   }, [exists]);
   if (!conversation) return null;
-  const change = (patch: { model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }) => {
+  const change = (patch: { model?: string | null; thinking?: ThinkingLevel | null; speed?: "fast" | null; mode?: SessionMode }) => {
     onError(null);
     api.updateConversation(conversation.id, patch).catch((reason: Error) => onError(reason.message));
   };
-  const known = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  const modelOptions = models.map((model) => ({ value: `${model.provider}/${model.id}`, label: `${model.name} · ${model.provider}` }));
+  if (conversation.model && !modelOptions.some((option) => option.value === conversation.model)) {
+    modelOptions.unshift({ value: conversation.model, label: conversation.model.split("/").at(-1) || conversation.model });
+  }
+  modelOptions.unshift({ value: "", label: t("conv.defaultModel") });
   const mark = modelMark(conversation.model);
+  // Fast is offered where the chosen model can write faster; with the default model it is kept and used where it can.
+  const slash = conversation.model?.indexOf("/") ?? -1;
+  const canFast = !conversation.model || !!fastSpeed(conversation.model.slice(0, slash), conversation.model.slice(slash + 1));
   return (
     <>
-      <label className="pick" title={t("conv.model")}>
-        {mark ? <Logo name={mark} /> : <Icon name="model" />}
-        <select aria-label={t("conv.model")} value={conversation.model ?? ""} onChange={(event) => change({ model: event.target.value || null })}>
-          <option value="">{t("conv.defaultModel")}</option>
-          {conversation.model && !known.has(conversation.model) && <option value={conversation.model}>{conversation.model.split("/").at(-1)}</option>}
-          {models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name} · {model.provider}</option>)}
-        </select>
-      </label>
-      <label className="pick" title={t("conv.thinking")}>
-        <Icon name="bulb" />
-        <select aria-label={t("conv.thinking")} value={conversation.thinking ?? ""} onChange={(event) => change({ thinking: (event.target.value || null) as ThinkingLevel | null })}>
-          {THINKING.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
-        </select>
-      </label>
+      <ChoicePicker label={t("conv.model")} value={conversation.model ?? ""} options={modelOptions}
+        icon={mark ? <Logo name={mark} /> : <Icon name="model" />} onChange={(value) => change({ model: value || null })} />
+      <ChoicePicker label={t("conv.thinking")} value={conversation.thinking ?? ""} icon={<Icon name="bulb" />}
+        options={THINKING.map(([value, label]) => ({ value, label: t(label) }))}
+        onChange={(value) => change({ thinking: (value || null) as ThinkingLevel | null })} />
+      <ChoicePicker label={t("speed.title")} title={t(canFast ? "speed.hint" : "speed.none")}
+        value={conversation.speed ?? ""} fast={conversation.speed === "fast"}
+        icon={<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 3 5 11h4.5L9 17l6-8h-4.5z" /></svg>}
+        options={[
+          { value: "", label: t("speed.standard") },
+          { value: "fast", label: t(canFast ? "speed.fast" : "speed.fastNone"), disabled: !canFast },
+        ]}
+        onChange={(value) => change({ speed: value === "fast" ? "fast" : null })} />
       {conversation.projectId && (
-        <label className="pick mode" data-mode={conversation.mode ?? "plan"} title={t("mode.title")}>
-          <Icon name="shield" />
-          <select aria-label={t("mode.title")} value={conversation.mode ?? "plan"} onChange={(event) => change({ mode: event.target.value as SessionMode })}>
-            {MODES.map((mode) => <option key={mode} value={mode}>{t(`mode.${mode}` as Key)}</option>)}
-          </select>
-        </label>
+        <ChoicePicker label={t("mode.title")} value={conversation.mode ?? "plan"} mode={conversation.mode ?? "plan"} icon={<Icon name="shield" />}
+          options={MODES.map((value) => ({ value, label: t(`mode.${value}` as Key) }))}
+          onChange={(value) => change({ mode: value as SessionMode })} />
       )}
     </>
   );
 }
 
-/** How much the conversation has used, after pi web: tokens in and out, cost, and how full the context is. */
+/** How much the conversation has used, after pi-web (github.com/agegr/pi-web, MIT): tokens in and out, cost, and how full the context is. */
 function Stats({ total, percent, window }: { total: Spent; percent: number | null; window: number }) {
   if (!total.input && !total.output && percent === null) return null;
   const cost = dollars(total.cost);
@@ -344,9 +415,10 @@ export interface ConversationProps {
   /** In Alfred's panel beside a daily page: the words and what was done, and nothing about the model. No title and
    * usage row, no model and thinking under the composer, and suggestions only before the first question. */
   slim?: boolean;
+  sessionToolbar?: SessionToolbar;
 }
 
-export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, automationTitle, onEvent, onView, onStarted, slim }: ConversationProps) {
+export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, automationTitle, onEvent, onView, onStarted, slim, sessionToolbar }: ConversationProps) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -442,7 +514,7 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
 
   return (
     <section className="conversation" data-slim={slim || undefined} aria-label={detail?.conversation.title ?? t("conv.new")}>
-      {!slim && <ConversationHead title={id ? detail?.conversation.title ?? "…" : t("conv.new")} detail={detail} />}
+      {!slim && <ConversationHead title={id ? detail?.conversation.title ?? "…" : t("conv.new")} detail={detail} sessionToolbar={sessionToolbar} />}
       {!id || runs.length === 0 ? (
         <div className="empty">
           <p className="empty-title">{t("conv.emptyTitle")}</p>

@@ -1,9 +1,11 @@
 import { ConversationStatus } from "./ConversationStatus.tsx";
 import type { Conversation, StateResponse } from "@alfred/protocol";
-import { api, type Connection } from "../api.ts";
+import { useState } from "react";
+import { ApiError, api, type Connection } from "../api.ts";
 import { getLocale, intlLocale, t } from "../i18n/index.ts";
 import { origin, setAppearance, useScheme } from "../scheme.ts";
 import { Icon } from "./icons.tsx";
+import { Pop } from "./Pop.tsx";
 import { moduleOf, type PageDef } from "./pages.tsx";
 import type { Mode } from "./Topbar.tsx";
 
@@ -32,6 +34,8 @@ export interface NavProps {
   session: string | null;
   onSession(id: string | null): void;
   connection: Connection;
+  onArchive(conversation: Conversation, worktree?: "keep" | "discard"): Promise<void>;
+  onShowArchive(): void;
   onPage(key: string): void;
   onSelect(id: string | null): void;
   /** Shown as a sheet (phone): a button closes it. */
@@ -56,14 +60,50 @@ export function ViewButtons({ onLanguage }: { onLanguage(): void }) {
   );
 }
 
-export function Nav({ state, pages, page, mode, selected, session, onSession, connection, onPage, onSelect, onClose, onLanguage }: NavProps) {
+export function Nav({ state, pages, page, mode, selected, session, onSession, connection, onArchive, onShowArchive, onPage, onSelect, onClose, onLanguage }: NavProps) {
   const rename = (conversation: Conversation) => {
     const title = window.prompt(t("nav.rename"), conversation.title);
     if (title && title.trim() && title.trim() !== conversation.title) api.updateConversation(conversation.id, { title }).catch(() => {});
   };
-  const archive = (conversation: Conversation) => {
-    api.updateConversation(conversation.id, { archived: true }).then(() => { if (selected === conversation.id) onSelect(null); }).catch(() => {});
-  };
+  // A session whose worktree holds work not committed: archiving it asks whether to keep that folder or drop it.
+  const [dirty, setDirty] = useState<{ conversation: Conversation; count: number } | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
+  async function archive(conversation: Conversation, worktree?: "keep" | "discard") {
+    if (archiving) return;
+    setArchiving(true);
+    setArchiveError("");
+    try {
+      await onArchive(conversation, worktree);
+      setDirty(null);
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.code === "git_dirty") {
+        setDirty({ conversation, count: reason.count ?? 1 });
+      } else {
+        setArchiveError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      setArchiving(false);
+    }
+  }
+  const archiveMenu = (
+    <details className="archive-menu" onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
+    }} onKeyDown={(event) => {
+      if (event.key === "Escape") {
+        event.currentTarget.open = false;
+        event.currentTarget.querySelector("summary")?.focus();
+        event.stopPropagation();
+      }
+    }}>
+      <summary className="icon-btn" aria-label={t("archive.menu")} title={t("archive.menu")}>•••</summary>
+      <button type="button" aria-haspopup="dialog" onClick={(event) => {
+        const menu = event.currentTarget.closest("details");
+        if (menu) { menu.open = false; menu.querySelector("summary")?.focus(); }
+        onShowArchive();
+      }}><Icon name="archive" />{t("archive.title")}</button>
+    </details>
+  );
   // Everyday conversations here; development sessions are listed under their projects in the Code group.
   const daily = state.conversations.filter((conversation) => !conversation.projectId && !conversation.briefOnly);
   const groups: Array<[string, PageDef[]]> = [
@@ -87,7 +127,9 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
 
       {groups.map(([label, items]) => items.length > 0 && (
         <div className="nav-group" key={label}>
-          <p className="nav-label">{label}</p>
+          <div className="nav-section-head"><p className="nav-label">{label}</p>
+            {mode === "dev" && items.some((item) => item.group === "dev") && archiveMenu}
+          </div>
           {items.map((item) => {
             const count = item.badge?.(state.modules[moduleOf(item)], state);
             return (
@@ -110,6 +152,9 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
                       <span className="ct">{conversation.title}</span>
                       <span className="time">{when(conversation.updatedAt)}</span>
                     </button>
+                    <button type="button" className="archive" disabled={archiving} aria-label={t("nav.archive", { title: conversation.title })} onClick={() => archive(conversation)}>
+                      <Icon name="archive" />
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -123,6 +168,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
       {mode !== "dev" && <>
       <div className="conv-head">
         <span>{t("nav.conversations")}</span>
+        {archiveMenu}
         <button type="button" className="icon-btn" aria-label={t("nav.newConversation")} title={t("nav.newConversation")} onClick={() => onSelect(null)}><Icon name="plus" /></button>
       </div>
       <ul className="conv-list">
@@ -137,7 +183,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
                 ? <span className="badge attention" aria-label={t("nav.attention", { n: conversation.attention })}>{conversation.attention}</span>
                 : <span className="time">{when(conversation.updatedAt)}</span>}
             </button>
-            <button type="button" className="archive" aria-label={t("nav.archive", { title: conversation.title })} onClick={() => archive(conversation)}>
+            <button type="button" className="archive" disabled={archiving} aria-label={t("nav.archive", { title: conversation.title })} onClick={() => archive(conversation)}>
               <Icon name="archive" />
             </button>
           </li>
@@ -145,11 +191,26 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
       </ul>
       </>}
 
+      {archiveError && !dirty && <p className="problem" role="alert">{archiveError}</p>}
       <div className="nav-foot">
         <p className="connection" data-state={connection} title={t(CONNECTION[connection])}><span aria-hidden="true" /><b>{t(CONNECTION[connection])}</b></p>
         {/* On a phone, which has no top bar, the theme and language buttons live here. */}
         {onClose && <ViewButtons onLanguage={onLanguage} />}
       </div>
+      {dirty && (
+        <Pop onClose={() => setDirty(null)}>
+          <div className="ev-edit" role="alertdialog" aria-modal="true" aria-label={t("archive.dirty", { n: dirty.count })}>
+            <div className="ev-card-head"><b>{t("archive.dirty", { n: dirty.count })}</b><button type="button" className="icon-btn" onClick={() => setDirty(null)} aria-label={t("common.close")}>×</button></div>
+            <p>{t("archive.dirtyWhy", { branch: dirty.conversation.branch ?? "" })}</p>
+            {archiveError && <p className="problem" role="alert">{archiveError}</p>}
+            <div className="ev-foot">
+              <span />
+              <button type="button" className="danger" disabled={archiving} onClick={() => archive(dirty.conversation, "discard")}>{t("archive.discard")}</button>
+              <button type="button" disabled={archiving} onClick={() => archive(dirty.conversation, "keep")} autoFocus>{t("archive.keep")}</button>
+            </div>
+          </div>
+        </Pop>
+      )}
     </nav>
   );
 }

@@ -1,0 +1,23 @@
+.archived-conversations { width: min(480px, calc(100% - 28px)); }
+.archived-list {
+  margin: 0; padding: 0 4px; list-style: none;
+  max-height: min(440px, 56dvh); overflow-y: auto; overscroll-behavior: contain;
+}
+.archived-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 2px;
+}
+.archived-list li + li { border-top: 1px solid var(--line-soft); }
+.archived-details { display: grid; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
+.archived-details b { color: var(--ink); font-size: .875rem; font-weight: 550; }
+.archived-details small { color: var(--muted); font-size: .75rem; }
+.archive-action { flex: none; min-height: 32px; padding: 0 12px; border-radius: 8px; font-size: .8125rem; }
+.archive-action:hover:not([aria-disabled="true"]) { background: var(--wash); }
+.archive-action[aria-disabled="true"] { cursor: default; opacity: .6; }
+.archive-load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 4px; }
+.archived-conversations .problem { overflow-wrap: anywhere; }
+.archive-feedback { margin: 0; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+.archive-feedback:not(:empty) { padding: 8px 4px 2px; }
+@media (pointer: coarse) {
+  .archived-conversations .archive-action { min-height: 44px; }
+}

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { AwayDigest, Notice, StateResponse } from "@alfred/protocol";
+import type { AwayDigest, Conversation, Notice, StateResponse } from "@alfred/protocol";
 import { ApiError, api, deviceId } from "./api.ts";
 import { desktop } from "./desktop.ts";
 import { AlfredPanel, figureState } from "./shell/AlfredPanel.tsx";
@@ -14,6 +14,8 @@ import { inboxTarget, noticeLines } from "./noticeText.ts";
 import type { Outcome, Said } from "./speech/useSpeech.ts";
 import { Icon } from "./shell/icons.tsx";
 import { ALF, dragHandle, NAV, PHONE, useLayout, useMedia, useViewportWidth, widths } from "./shell/layout.ts";
+import { ArchivedConversations } from "./ArchivedConversations.tsx";
+import { ArchiveNotice } from "./shell/ArchiveNotice.tsx";
 import { MOD, Nav } from "./shell/Nav.tsx";
 import { Topbar, type Mode } from "./shell/Topbar.tsx";
 import { availablePages, moduleOf, pageView } from "./shell/pages.tsx";
@@ -88,7 +90,18 @@ function useRoute() {
     return next;
   }, []);
 
-  return { ...route, go };
+  // Reopen on undo only if the user is still where archiving left them.
+  function leaveArchived(conversation: Conversation) {
+    const field = conversation.projectId ? "session" : "selected";
+    if (latest.current[field] !== conversation.id) return;
+    const left = go({ [field]: null });
+    return () => {
+      if (latest.current !== left) return false;
+      go({ [field]: conversation.id });
+      return true;
+    };
+  }
+  return { ...route, go, leaveArchived };
 }
 
 /** A run can stay selected while its panel is closed. Only a visible result counts as read. */
@@ -214,6 +227,20 @@ function Workspace({ state, alfred }: { state: StateResponse; alfred: Alfred }) 
   /** A phone: the dock's tabs have given way to the ask bar. */
   const [asking, setAsking] = useState(false);
   const [palette, setPalette] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
+  const [archived, setArchived] = useState<{ conversation: Conversation; reopen?: () => boolean } | null>(null);
+  const dismissArchive = useCallback(() => setArchived(null), []);
+  async function archiveConversation(conversation: Conversation, worktree?: "keep" | "discard") {
+    const saved = await api.updateConversation(conversation.id, { archived: true, worktree });
+    setArchived({ conversation: saved, reopen: route.leaveArchived(conversation) });
+    alfred.refresh();
+  }
+  async function restoreConversation({ id }: { id: string }) {
+    await api.updateConversation(id, { archived: false });
+    setArchived((current) => current?.conversation.id === id ? null : current);
+    alfred.refresh();
+  }
+
   const [greeting, setGreeting] = useState(true);
   const [highlighted, setHighlighted] = useState<ReadonlySet<string>>(new Set());
   const inboxFocus = route.item;
@@ -338,6 +365,7 @@ function Workspace({ state, alfred }: { state: StateResponse; alfred: Alfred }) 
   const size = widths(layout, viewport, alfredMode === "open");
   /** The sidebar as drawn: folded away when the window has no room for it beside Alfred. */
   const navMode = size.navMode;
+  const navVisible = phone ? sheet === "nav" : navMode === "full";
   const toggleNav = useCallback(() => {
     // Folded for want of room: showing it puts Alfred away, which is what makes the room.
     if (layout.nav === "full" && navMode === "hidden") setLayout({ alfred: "closed" });
@@ -483,12 +511,23 @@ function Workspace({ state, alfred }: { state: StateResponse; alfred: Alfred }) 
       {!phone && <Topbar navOpen={navMode === "full"} onNav={toggleNav} mode={mode} onMode={hasDev ? switchMode : undefined} onLanguage={switchLanguage}
         heading={current && alfredMode !== "wide" ? { title: current.title, icon: current.icon, k: current.k, summary: bare || welcoming ? undefined : current.summary?.(state.modules[moduleOf(current)], state) } : undefined}
         system={pages.filter((page) => page.group === "system")} page={current?.key ?? ""} onPage={goPage} />}
-      {(phone ? sheet === "nav" : navMode === "full") && (
-        <Nav state={state} pages={navigationPages} page={alfredMode === "wide" ? "" : current?.key ?? ""} mode={phone ? "all" : mode} selected={selected} session={bare ? route.session : null}
-          onSession={openSession} connection={connection}
-          onPage={goPage} onSelect={(id) => { setSheet(null); selectFromList(id); }} onClose={phone ? () => setSheet(null) : undefined} onLanguage={switchLanguage} />
-      )}
+      <div className="sidebar" data-visible={navVisible || undefined}>
+        {navVisible && (
+          <Nav state={state} pages={navigationPages} page={alfredMode === "wide" ? "" : current?.key ?? ""} mode={phone ? "all" : mode} selected={selected} session={bare ? route.session : null}
+            onSession={openSession} connection={connection} onArchive={archiveConversation} onShowArchive={() => setShowArchive(true)}
+            onPage={goPage} onSelect={(id) => { setSheet(null); selectFromList(id); }} onClose={phone ? () => setSheet(null) : undefined} onLanguage={switchLanguage} />
+        )}
+        {archived && <ArchiveNotice key={archived.conversation.id + archived.conversation.archivedAt} conversation={archived.conversation}
+          onDismiss={dismissArchive} onUndo={async () => {
+            await restoreConversation(archived.conversation);
+            if (archived.reopen?.() && phone) {
+              setSheet((current) => current === "nav" ? (archived.conversation.projectId ? null : "alfred") : current);
+            }
+          }} />}
+      </div>
       {phone && sheet === "nav" && <div className="scrim" onClick={() => setSheet(null)} />}
+      {showArchive && <ArchivedConversations projects={state.projects ?? []} onClose={() => setShowArchive(false)}
+        onRestore={restoreConversation} onEvent={onEvent} />}
 
       <main className="page" data-k={current?.k} data-bare={bare || undefined}>
         {current ? (
