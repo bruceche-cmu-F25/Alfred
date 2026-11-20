@@ -540,8 +540,8 @@ export const zh = {
   "skills.added": "已添加",
   "skills.adding": "添加中…",
   "skills.found": "这台 Mac 上 · {n}",
-  "skills.found.fewer": "收起",
-  "skills.found.all": "全部 {n} 个",
+  "skills.fewer": "收起",
+  "skills.all": "全部 {n} 个",
 
   // W4: what the user is looking at
   "panel.looking": "在看 · {page}",

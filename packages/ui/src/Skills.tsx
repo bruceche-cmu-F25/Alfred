@@ -1,7 +1,7 @@
 /** Settings → Skills: the instructions Alfred reads when a task calls for one (after pi-web's Settings › Skills, github.com/agegr/pi-web, MIT).
  *
  * A plain list: one line per skill, its name, what it is for, and a switch (off stays on disk, and Alfred is not told
- * about it). A skill's name opens its instructions in a card over the page, where it can also be removed. Under the
+ * about it). Ten are shown, and the rest open under them. A skill's name opens its instructions in a card over the page, where it can also be removed. Under the
  * list, one box adds more: what is typed narrows the skills other agents on this Mac already have (they are copied
  * in), and searching asks skills.sh. Only on the Mac Alfred runs on.
  */
@@ -12,8 +12,8 @@ import { request as call } from "./api.ts";
 import { getLocale, t } from "./i18n/index.ts";
 import { Markdown } from "./Markdown.tsx";
 
-/** How many of the Mac's skills are listed before "show all". */
-const FEW = 6;
+/** How many skills a list shows before "show all": Alfred's own, and the ones found on this Mac. */
+const FEW = 10;
 
 /** A card in the middle of the window, the page blurred behind it; Escape or a click beside it puts it away. */
 function Pop({ onClose, children }: { onClose(): void; children: ReactNode }) {
@@ -67,6 +67,7 @@ export function Skills() {
   const [searching, setSearching] = useState(false);
   const [updates, setUpdates] = useState<SkillUpdatesResponse | null>(null);
   const [checking, setChecking] = useState(false);
+  const [all, setAll] = useState(false);
   const [allFound, setAllFound] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -108,6 +109,8 @@ export function Skills() {
   };
 
   const skills = data?.skills ?? [];
+  /** The first ten, and any past them that an update was found for (its button is the reason to look). */
+  const shown = all ? skills : skills.filter((skill, at) => at < FEW || updates?.updates.includes(skill.id));
   const fromSite = skills.some((skill) => skill.source);
   const count = new Intl.NumberFormat(getLocale() === "zh" ? "zh-CN" : "en-US", { notation: "compact", maximumFractionDigits: 1 });
   const needle = query.trim().toLowerCase();
@@ -128,7 +131,7 @@ export function Skills() {
       {data && skills.length === 0 && <p className="quiet small skill-none">{t("skills.none")}</p>}
       {skills.length > 0 && (
         <ul className="skill-list">
-          {skills.map((skill) => (
+          {shown.map((skill) => (
             <li className="skill-item" key={skill.id}>
               <button type="button" className="skill-words" onClick={() => setViewing(skill.id)}>
                 <b>{skill.name}</b><span>{skill.description}</span>
@@ -139,6 +142,7 @@ export function Skills() {
           ))}
         </ul>
       )}
+      {skills.length > FEW && <button type="button" className="skill-add skill-more" onClick={() => setAll(!all)}>{all ? t("skills.fewer") : t("skills.all", { n: skills.length })}</button>}
       {fromSite && (
         <p className="quiet small skill-foot">
           <button type="button" className="usage-refresh" disabled={checking} onClick={check}>{t(checking ? "skills.checking" : "skills.check")}</button>
@@ -181,7 +185,7 @@ export function Skills() {
               </li>
             ))}
           </ul>
-          {!needle && found.length > FEW && <button type="button" className="skill-add skill-more" onClick={() => setAllFound(!allFound)}>{allFound ? t("skills.found.fewer") : t("skills.found.all", { n: found.length })}</button>}
+          {!needle && found.length > FEW && <button type="button" className="skill-add skill-more" onClick={() => setAllFound(!allFound)}>{allFound ? t("skills.fewer") : t("skills.all", { n: found.length })}</button>}
         </>
       )}
 
