@@ -50,6 +50,8 @@ export const en: Record<keyof typeof zh, string> = {
   "top.mode": "Daily or Code",
   "top.daily": "Daily",
   "top.dev": "Code",
+  "top.menu": "Appearance and language",
+  "top.allSettings": "All settings",
   "nav.conversations": "Conversations",
   "nav.menu": "Menu",
   "nav.newConversation": "New conversation",

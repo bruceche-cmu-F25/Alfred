@@ -1,0 +1,255 @@
+<!doctype html>
+<!--
+  Alfred: the top bar's right corner (light/dark, language, Settings). A prototype: no build step.
+  Each row is the same top bar with a different corner; every control in it works (light/dark and the language
+  change this whole page). The strip at the top switches the page between light/dark and zh/en too, so each
+  corner can be seen in all four.
+    现在  as the app is today
+    A    one Settings button; light/dark and the language are in the small menu it opens
+    B    one pill, the twin of the daily | dev switch at the left end of the bar
+    C    three icons of one size, the language drawn as an icon, Settings after a hairline
+-->
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred：右上角</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { min-height: 100vh; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--alf); outline-offset: 3px; }
+svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+.strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 24px; color: var(--muted); font-size: .8125rem; }
+.strip b { color: var(--ink); font-weight: 600; margin-right: auto; }
+.strip button { padding: 3px 10px; border-radius: 999px; background: var(--wash); }
+.strip button[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); }
+
+main { padding: 4px 24px 60px; display: grid; gap: 26px; max-width: 1180px; }
+.row h2 { margin: 0 0 2px; font-size: .9375rem; font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
+.row h2 em { font-style: normal; font-size: .75rem; font-weight: 600; color: var(--alf); background: var(--alf-soft); padding: 1px 8px; border-radius: 999px; }
+.row p { margin: 0 0 10px; color: var(--copy); font-size: .8125rem; max-width: 70ch; }
+.win { border: 1px solid var(--line); border-radius: 12px; overflow: visible; background: var(--bg); box-shadow: 0 1px 2px oklch(0 0 0 / .04); }
+.win .body { height: 74px; border-radius: 0 0 12px 12px; display: grid; grid-template-columns: 240px 1fr; }
+.win .body .side { background: var(--paper); border-right: 1px solid var(--line-soft); border-radius: 0 0 0 12px; }
+.win .body .page { padding: 16px 22px; display: grid; gap: 8px; align-content: start; }
+.win .body .page i { display: block; height: 9px; border-radius: 5px; background: var(--wash); }
+
+/* The bar, as styles.css draws it. */
+.topbar { height: 52px; display: flex; align-items: stretch; background: var(--paper); border-bottom: 1px solid var(--line-soft); border-radius: 12px 12px 0 0; }
+.lead { flex: none; width: 240px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; border-right: 1px solid var(--line-soft); }
+.lights { display: flex; gap: 8px; margin-right: 10px; }
+.lights span { width: 12px; height: 12px; border-radius: 50%; background: var(--line); }
+.mode { margin-left: auto; display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--wash); }
+.mode button { width: 32px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--muted); }
+.mode button svg { width: 16px; height: 16px; }
+.mode button[aria-pressed="true"] { background: var(--raise); color: var(--ink); box-shadow: 0 0 0 1px var(--line-soft), 0 1px 2px #0000000f; }
+.barmain { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 18px; position: relative; }
+.title { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 1.0625rem; font-weight: 650; white-space: nowrap; }
+.title svg { width: 20px; height: 20px; color: oklch(.6 .14 25); stroke-width: 1.8; }
+.sub { margin-left: 6px; color: var(--muted); font-size: .8125rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.room { flex: 1; }
+.icon-btn { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); transition: background .15s var(--ease), color .15s var(--ease); }
+.icon-btn:hover { background: var(--wash); color: var(--ink); }
+
+/* 现在 */
+.now .scheme svg { width: 16px; height: 16px; }
+.now .lang { height: 28px; padding: 0 9px; border-radius: 8px; color: var(--muted); font-size: .8125rem; }
+.now .lang:hover { background: var(--wash); color: var(--ink); }
+.now .icon-btn[aria-current="page"] { background: var(--wash); color: var(--ink); }
+
+/* A: one button and its menu */
+.a .icon-btn[aria-current="page"] { color: var(--ink); }
+.a .icon-btn[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.menu { position: absolute; top: calc(100% + 6px); right: 10px; z-index: 5; width: 248px; padding: 6px; border-radius: 12px; background: var(--raise);
+  box-shadow: 0 0 0 1px var(--line-soft), var(--shadow); transform-origin: top right; animation: pop .16s var(--ease); }
+@keyframes pop { from { opacity: 0; transform: scale(.96) translateY(-4px); } }
+.menu[hidden] { display: none; }
+.menu .item { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 6px 0 10px; font-size: .8125rem; color: var(--copy); }
+.menu .item > span { flex: 1; }
+.seg { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--wash); }
+.seg button { min-width: 30px; height: 24px; padding: 0 7px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); font-size: .75rem; font-weight: 500; }
+.seg button svg { width: 14px; height: 14px; }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--raise); color: var(--ink); box-shadow: 0 0 0 1px var(--line-soft), 0 1px 2px #0000000f; }
+.menu hr { border: 0; border-top: 1px solid var(--line-soft); margin: 4px 4px; }
+.menu .all { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 8px; font-size: .8125rem; color: var(--ink); text-align: left; }
+.menu .all:hover { background: var(--wash); }
+.menu .all svg { width: 16px; height: 16px; color: var(--muted); }
+.menu .all span { flex: 1; }
+.menu kbd { font: .6875rem var(--sans); color: var(--muted); }
+.half { fill: currentColor; stroke: none; }
+
+/* B: one pill, the twin of the switch at the left */
+.b .pill { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--wash); }
+.b .pill button { width: 32px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--muted); transition: color .15s var(--ease); }
+.b .pill button svg { width: 16px; height: 16px; }
+.b .pill button:hover { color: var(--ink); }
+.b .pill button[aria-current="page"] { background: var(--raise); color: var(--ink); box-shadow: 0 0 0 1px var(--line-soft), 0 1px 2px #0000000f; }
+
+/* C: three icons of one size */
+.c .icon-btn svg { width: 17px; height: 17px; }
+.c .rule { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+.c .icon-btn[aria-current="page"] { color: var(--ink); position: relative; }
+.c .icon-btn[aria-current="page"]::after { content: ""; position: absolute; left: 50%; bottom: -11px; width: 16px; height: 2px; margin-left: -8px; border-radius: 2px; background: var(--ink); }
+
+.tip { font-size: .75rem; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="strip">
+  <b data-t="head"></b>
+  <span data-t="look"></span>
+  <button type="button" data-set="scheme:light">☀︎</button><button type="button" data-set="scheme:dark">☾</button>
+  <button type="button" data-set="lang:zh">中文</button><button type="button" data-set="lang:en">EN</button>
+  <button type="button" data-set="page:notices" data-t="onNotices"></button><button type="button" data-set="page:settings" data-t="onSettings"></button>
+</div>
+<main id="rows"></main>
+
+<script>
+const P = {
+  sun: "M10 13.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM10 3v1.6M10 15.4V17M3 10h1.6M15.4 10H17M5.05 5.05l1.15 1.15M13.8 13.8l1.15 1.15M5.05 14.95l1.15-1.15M13.8 6.2l1.15-1.15",
+  moon: "M16.3 10.55A6.3 6.3 0 1 1 9.45 3.7a4.9 4.9 0 0 0 6.85 6.85z",
+  auto: "M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14z",
+  gear: "M3.5 6.5h7M14.5 6.5h2M3.5 13.5h2M9.5 13.5h7M12.5 8.2a1.7 1.7 0 1 0 0-3.4 1.7 1.7 0 0 0 0 3.4zM7.5 15.2a1.7 1.7 0 1 0 0-3.4 1.7 1.7 0 0 0 0 3.4z",
+  lang: "M3 5.2h8M7 3.5v1.7M9.3 5.2c-.5 2.6-2.4 4.9-5.3 6.3M5.2 7.6c.9 1.4 2.2 2.6 3.8 3.3M10.5 16.5l3-7.5 3 7.5M11.6 14h3.8",
+  rail: "M3.5 4.5h13v11h-13zM8 4.5v11",
+  home: "M3.5 9.2 10 3.8l6.5 5.4V16h-4.4v-4.2H7.9V16H3.5z",
+  code: "M7 6.5 3.5 10 7 13.5M13 6.5l3.5 3.5-3.5 3.5M11.2 4.5l-2.4 11",
+  inbox: "M3.5 11.5 5.5 5h9l2 6.5V15.5h-13zM3.5 11.5H8l1 2h2l1-2h4.5",
+  chev: "M8 6l4 4-4 4",
+};
+const icon = (n, extra = "") => `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="${P[n]}"/>${extra}</svg>`;
+const autoIcon = () => icon("auto", `<path class="half" d="M10 3a7 7 0 0 0 0 14z"/>`);
+
+const T = {
+  zh: {
+    head: "右上角：主题、语言、设置", look: "看：", onNotices: "在通知页", onSettings: "在设置页",
+    notices: "通知", noticesSub: "3 件等你 · 1 封来自邮件", settings: "设置", settingsSub: "通用、模型、账号…",
+    toDark: "切换到深色", toLight: "切换到浅色", toOther: "Switch to English（切换到英文）", otherName: "English",
+    menu: "外观和语言", look2: "外观", lang: "语言", light: "浅色", dark: "深色", system: "跟随系统", all: "全部设置",
+    rows: {
+      now: ["现在", "三样东西三种画法：16px 的月亮、一段字、18px 的图标底下再垫一块灰。灰块只说「你在设置页」，标题已经说了；它却是这一角最重的东西。「中文 / English」宽度随语言变，按下前也看不出它是现在的语言还是要换去的语言。"],
+      a: ["A 一个入口", "角上只留设置。主题和语言一年换不了几次，收进它打开的小菜单：两组分段，选中的那个就是现在的，不用猜。最下面一行进整页设置（⌘,）。这一角最静，窄窗口也最省地方；代价是换深浅色要多点一下。"],
+      b: ["B 一个药丸", "和左端「日常 | 开发」那个开关做成一对：同一块灰底、同样 32×26 的格子。语言换成一个图标，宽度不再跟着语言变。在设置页时，设置那格浮起来，跟左边选中的那格一样。"],
+      c: ["C 三个一样大", "保持三个按钮，但都是 17px 线图标、30px 的格子，语言也画成图标。设置前一条细竖线，把「换一下」和「去一个页面」分开。在设置页时，图标变深、下面一条短线，不再垫灰块。"],
+    },
+    best: "推荐",
+  },
+  en: {
+    head: "The top-right corner: theme, language, Settings", look: "View:", onNotices: "On Notices", onSettings: "On Settings",
+    notices: "Notices", noticesSub: "3 waiting · 1 from mail", settings: "Settings", settingsSub: "General, models, accounts…",
+    toDark: "Switch to dark", toLight: "Switch to light", toOther: "切换到中文 (Switch to Chinese)", otherName: "中文",
+    menu: "Appearance and language", look2: "Appearance", lang: "Language", light: "Light", dark: "Dark", system: "System", all: "All settings",
+    rows: {
+      now: ["Today", "Three things drawn three ways: a 16px moon, a word, an 18px icon on a grey slab. The slab only says “you are on Settings”, which the title already says, yet it is the heaviest thing here. “中文 / English” changes width with the language, and you can’t tell if it names the current language or the one you would switch to."],
+      a: ["A One door", "Only Settings in the corner. Theme and language change a few times a year; they go in the small menu it opens, as two segmented choices where the picked one is the current one. The last line opens the full Settings page (⌘,). The calmest corner and the narrowest; switching light/dark takes one more click."],
+      b: ["B One pill", "A twin of the daily | dev switch at the left end: the same grey pill, the same 32×26 cells. The language becomes an icon, so the width no longer changes. On Settings, its cell rises like the picked cell at the left."],
+      c: ["C Three alike", "Keep three buttons, all 17px line icons in 30px cells; the language is an icon too. A hairline before Settings separates “change something” from “go to a page”. On Settings the icon darkens with a short line under it, no slab."],
+    },
+    best: "Recommended",
+  },
+};
+
+const S = { scheme: "light", lang: "zh", page: "notices", open: false };
+const root = document.documentElement;
+
+function apply() {
+  root.dataset.scheme = S.scheme;
+  root.lang = S.lang === "zh" ? "zh-CN" : "en";
+  document.querySelectorAll("[data-set]").forEach((b) => { const [k, v] = b.dataset.set.split(":"); b.setAttribute("aria-pressed", S[k] === v); });
+  render();
+}
+
+function bar(corner) {
+  const t = T[S.lang];
+  const onSet = S.page === "settings";
+  return `
+  <div class="win">
+    <header class="topbar">
+      <div class="lead">
+        <span class="lights"><span></span><span></span><span></span></span>
+        <button class="icon-btn" type="button">${icon("rail")}</button>
+        <span class="mode"><button aria-pressed="true">${icon("home")}</button><button>${icon("code")}</button></span>
+      </div>
+      <div class="barmain">
+        <h1 class="title">${icon(onSet ? "gear" : "inbox")}<span>${onSet ? t.settings : t.notices}</span></h1>
+        <span class="sub">${onSet ? t.settingsSub : t.noticesSub}</span>
+        <span class="room"></span>
+        ${corner}
+      </div>
+    </header>
+    <div class="body"><div class="side"></div><div class="page"><i style="width:46%"></i><i style="width:70%"></i><i style="width:58%"></i></div></div>
+  </div>`;
+}
+
+function corners() {
+  const t = T[S.lang];
+  const other = S.scheme === "dark" ? "light" : "dark";
+  const cur = S.page === "settings" ? ' aria-current="page"' : "";
+  const toScheme = other === "dark" ? t.toDark : t.toLight;
+  return {
+    now: `<button class="icon-btn scheme" data-do="scheme" title="${toScheme}">${icon(other === "dark" ? "moon" : "sun")}</button>
+          <button class="lang" data-do="lang" title="${t.toOther}">${t.otherName}</button>
+          <button class="icon-btn" data-do="settings" title="${t.settings}"${cur}>${icon("gear")}</button>`,
+    a: `<button class="icon-btn" data-do="menu" title="${t.settings}" aria-haspopup="menu" aria-expanded="${S.open}"${cur}>${icon("gear")}</button>
+        <div class="menu" role="menu" aria-label="${t.menu}" ${S.open ? "" : "hidden"}>
+          <div class="item"><span>${t.look2}</span><span class="seg" role="radiogroup">
+            <button data-do="scheme:light" aria-pressed="${S.scheme === "light"}" title="${t.light}">${icon("sun")}</button>
+            <button data-do="scheme:dark" aria-pressed="${S.scheme === "dark"}" title="${t.dark}">${icon("moon")}</button>
+            <button data-do="scheme:system" aria-pressed="false" title="${t.system}">${autoIcon()}</button></span></div>
+          <div class="item"><span>${t.lang}</span><span class="seg" role="radiogroup">
+            <button data-do="lang:zh" aria-pressed="${S.lang === "zh"}" lang="zh">中文</button>
+            <button data-do="lang:en" aria-pressed="${S.lang === "en"}" lang="en">EN</button></span></div>
+          <hr>
+          <button class="all" data-do="settings">${icon("gear")}<span>${t.all}</span><kbd>⌘,</kbd></button>
+        </div>`,
+    b: `<span class="pill">
+          <button data-do="scheme" title="${toScheme}">${icon(other === "dark" ? "moon" : "sun")}</button>
+          <button data-do="lang" title="${t.toOther}">${icon("lang")}</button>
+          <button data-do="settings" title="${t.settings}"${cur}>${icon("gear")}</button>
+        </span>`,
+    c: `<button class="icon-btn" data-do="scheme" title="${toScheme}">${icon(other === "dark" ? "moon" : "sun")}</button>
+        <button class="icon-btn" data-do="lang" title="${t.toOther}">${icon("lang")}</button>
+        <span class="rule"></span>
+        <button class="icon-btn" data-do="settings" title="${t.settings}"${cur}>${icon("gear")}</button>`,
+  };
+}
+
+function render() {
+  const t = T[S.lang];
+  document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t[el.dataset.t]; });
+  const c = corners();
+  document.getElementById("rows").innerHTML = ["now", "a", "b", "c"].map((k) => `
+    <section class="row" data-row="${k}">
+      <h2>${t.rows[k][0]}${k === "a" ? ` <em>${t.best}</em>` : ""}</h2>
+      <p>${t.rows[k][1]}</p>
+      ${bar(c[k])}
+    </section>`).join("");
+}
+
+document.addEventListener("click", (e) => {
+  const set = e.target.closest("[data-set]");
+  if (set) { const [k, v] = set.dataset.set.split(":"); S[k] = v; S.open = false; return apply(); }
+  const b = e.target.closest("[data-do]");
+  if (!b) { if (S.open && !e.target.closest(".menu")) { S.open = false; render(); } return; }
+  const [what, val] = b.dataset.do.split(":");
+  if (what === "menu") S.open = !S.open;
+  else if (what === "scheme") S.scheme = val === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : val ?? (S.scheme === "dark" ? "light" : "dark");
+  else if (what === "lang") S.lang = val ?? (S.lang === "zh" ? "en" : "zh");
+  else if (what === "settings") { S.page = "settings"; S.open = false; }
+  apply();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.open) { S.open = false; render(); } });
+apply();
+</script>
+</body>
+</html>

@@ -70,7 +70,28 @@ body.resizing { cursor: col-resize; user-select: none; }
 .topbar-room { flex: 1; min-width: 0; align-self: stretch; }
 /* No room for the facts beside the name: the name alone. */
 @container topmain (max-width: 440px) { .topbar-sub { display: none; } }
-.topbar .icon-btn[aria-current="page"] { background: var(--wash); color: var(--ink); }
+/* The gear at the right end: Settings, with light/dark and the language in its menu. On Settings it is only darker. */
+.top-menu { position: relative; flex: none; display: flex; }
+.top-menu > .icon-btn[aria-current="page"] { color: var(--ink); }
+.top-menu > .icon-btn[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.top-menu-card { position: absolute; top: calc(100% + 8px); right: -4px; z-index: 40; width: max-content; min-width: 236px; padding: 6px; border-radius: 12px;
+  background: var(--raise); box-shadow: 0 0 0 1px var(--line-soft), var(--shadow); transform-origin: top right; animation: top-menu-in .16s var(--ease); }
+@keyframes top-menu-in { from { opacity: 0; transform: scale(.96) translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .top-menu-card { animation: none; } }
+.top-menu-row { display: flex; align-items: center; gap: 16px; min-height: 38px; padding: 0 6px 0 10px; color: var(--copy); font-size: .8125rem; }
+.top-menu-row > span:first-child { flex: 1; white-space: nowrap; }
+.top-menu-card .seg { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--wash); }
+.top-menu-card .seg button { min-width: 30px; height: 24px; padding: 0 7px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); font-size: .75rem; font-weight: 500; }
+.top-menu-card .seg button svg { width: 14px; height: 14px; }
+.top-menu-card .seg button svg .fill { fill: currentColor; stroke: none; }
+.top-menu-card .seg button:hover { color: var(--ink); }
+.top-menu-card .seg button[aria-checked="true"] { background: var(--raise); color: var(--ink); box-shadow: 0 0 0 1px var(--line-soft), 0 1px 2px #0000000f; }
+.top-menu-card hr { margin: 4px; border: 0; border-top: 1px solid var(--line-soft); }
+.top-menu-go { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 8px; color: var(--ink); font-size: .8125rem; text-align: left; }
+.top-menu-go:hover, .top-menu-go:focus-visible { background: var(--wash); }
+.top-menu-go svg { width: 16px; height: 16px; color: var(--muted); }
+.top-menu-go span { flex: 1; }
+.top-menu-go kbd { color: var(--muted); font: .6875rem var(--sans); }
 .mode-switch { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--wash); }
 .mode-switch button { width: 32px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--muted); }
 .mode-switch button svg { width: 16px; height: 16px; }

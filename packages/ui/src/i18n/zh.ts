@@ -49,6 +49,8 @@ export const zh = {
   "top.mode": "日常或开发",
   "top.daily": "日常",
   "top.dev": "开发",
+  "top.menu": "外观和语言",
+  "top.allSettings": "全部设置",
   "nav.conversations": "对话",
   "nav.menu": "菜单",
   "nav.newConversation": "新对话",
