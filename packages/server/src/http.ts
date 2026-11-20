@@ -32,6 +32,7 @@ import { DEVELOPER_PROFILE } from "./profiles.ts";
 import { command, profileFor, sessionWrites } from "./commands.ts";
 import { handleConnections } from "./connections-http.ts";
 import { handleSkills } from "./skills-http.ts";
+import { reviewCommit } from "./commit-review.ts";
 import { branchState, pullRequest, workspaceChanges, workspaceDiff } from "./workspace.ts";
 import type { GoogleConnections } from "./google.ts";
 import type { McpConnectors, ModelAccounts, Skills } from "@alfred/engine-pi";
@@ -117,7 +118,7 @@ function state(home: Home, peer: Peer): StateResponse {
     proposals: listOpenProposals(home.world),
     settings: getSettings(home.world),
     automations: listAutomations(home.world),
-    projects: listProjects(home.world),
+    projects: listProjects(home.world).map((project) => ({ ...project, gitRoot: !!project.trustedAt && existsSync(join(project.path, ".git")) })),
   };
 }
 
@@ -386,13 +387,14 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   }
   // A development session's changes since its snapshot, and one file's diff; where its branch stands (and its pull
   // request, which asks GitHub); committing them, and pushing them with a pull request.
-  const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff|branch|pr|commit|publish)$/.exec(path);
+  const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff|branch|pr|commit|commit-preview|publish)$/.exec(path);
   if (session) {
     needDev(true);
     const found = getConversation(home.world, session[1]);
     if (!found.projectId) throw new HttpError(404, "Not a development session");
     if (method === "POST" && (session[2] === "commit" || session[2] === "publish")) return send(res, 200, (await ask(`session.${session[2]}`, { id: found.id })).result);
-    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    const preview = method === "POST" && session[2] === "commit-preview";
+    if (!preview && method !== "GET") throw new HttpError(405, "Method not allowed");
     const root = sessionRoot(home.world, found);
     if (!root || !existsSync(root)) {
       if (session[2] === "changes") return send(res, 200, { branch: found.branch, base: found.base, files: [], gone: true } satisfies SessionChanges);
@@ -404,7 +406,18 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
       const branch = (await branchState(root)).branch;
       return send(res, 200, { pr: branch ? await pullRequest(root, branch) : null } satisfies SessionPullRequest);
     }
-    return send(res, 200, await workspaceChanges(root, found.base, sessionWrites(home, found.id)) satisfies SessionChanges);
+    const writes = sessionWrites(home, found.id);
+    const changes = await workspaceChanges(root, found.base, writes);
+    if (session[2] === "commit-preview") {
+      if (!preview) throw new HttpError(405, "Method not allowed");
+      const { paths } = await readJson<{ paths?: unknown }>(req);
+      if (!Array.isArray(paths) || paths.length > 1000 || !paths.every((path) => typeof path === "string")) throw new HttpError(400, "Choose files for the preview");
+      const { token, patch } = await reviewCommit(root, paths, changes.files.map((f) => f.path));
+      return send(res, 200, { token, patch });
+    }
+    const touched = new Set(writes.map((entry) => entry.path));
+    const suggested = changes.files.filter((file) => found.worktree || touched.has(file.path)).map((file) => file.path);
+    return send(res, 200, { ...changes, suggested } satisfies SessionChanges);
   }
   // Background processes in a development session. Starting one is the user's own command, so only this machine
   // may (like the terminal); seeing, reading and stopping them is a development session's business.

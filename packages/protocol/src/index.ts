@@ -158,6 +158,8 @@ export type ArchivedConversation = Pick<Conversation, "id" | "title" | "projectI
 export type SessionMode = "plan" | "ask" | "edits";
 /** What a development session has changed since its snapshot (GET /api/conversations/:id/changes). */
 export interface SessionChanges {
+  /** Initially checked in the review. Other changes in a shared checkout can be included explicitly. */
+  suggested?: string[];
   branch: string | null;
   base: string | null;
   files: Array<{ path: string; added: number; removed: number; created: boolean }>;
@@ -204,6 +206,8 @@ export interface SessionProcesses { processes: SessionProcess[] }
 
 /** A folder on the home node Alfred may work in. Sessions start only once the user trusts it. */
 export interface Project {
+  /** Whether the trusted folder itself has a Git administrative entry (home state). */
+  gitRoot?: boolean;
   id: string;
   name: string;
   /** Absolute, on the home node. */

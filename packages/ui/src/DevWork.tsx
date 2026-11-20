@@ -1,7 +1,7 @@
 /** What a development session's panel does with its work (docs/design/dev-mode.md D5): commit the changes, push them
  * with a pull request, and the background processes (dev servers) Alfred or the user started in it.
  *
- * Committing is local and only the session's own files. Pushing and opening a pull request leave the computer and
+ * Committing is local and uses the files and diff selected in the commit card. Pushing and opening a pull request leave the computer and
  * cannot be taken back, so the card says exactly what will be sent where, every time, before it is sent.
  */
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -50,7 +50,7 @@ export function Ship({ id, title, changes, onChanged }: { id: string; title: str
           {!onMain && !branch.remote && <span>{t("ship.noRemote")}</span>}
         </p>
       )}
-      {card === "commit" && <CommitCard id={id} title={title} files={changes.files} onClose={() => setCard(null)} onDone={() => { setCard(null); onChanged(); load(); }} />}
+      {card === "commit" && <CommitCard id={id} title={title} changes={changes} onClose={() => setCard(null)} onDone={() => { setCard(null); onChanged(); load(); }} />}
       {card === "publish" && branch?.branch && (
         <PublishCard id={id} title={title} branch={branch.branch} main={branch.main} pr={pr ?? null} onClose={() => setCard(null)} onDone={(next) => { setCard(null); setPr(next); load(); }} />
       )}
@@ -58,27 +58,58 @@ export function Ship({ id, title, changes, onChanged }: { id: string; title: str
   );
 }
 
-function CommitCard({ id, title, files, onClose, onDone }: { id: string; title: string; files: SessionChanges["files"]; onClose(): void; onDone(): void }) {
+function CommitCard({ id, title, changes, onClose, onDone }: { id: string; title: string; changes: SessionChanges; onClose(): void; onDone(): void }) {
   const [message, setMessage] = useState(title);
+  const [files, setFiles] = useState(changes.files);
+  const [paths, setPaths] = useState(changes.suggested ?? []);
+  const [review, setReview] = useState<{ paths: string[]; token: string; patch: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submit = (event: FormEvent) => {
+  const current = review?.paths === paths ? review : null;
+  useEffect(() => {
+    if (!paths.length) return;
+    let live = true;
+    api.commitPreview(id, paths).then((result) => { if (live) setReview({ ...result, paths }); },
+      (reason) => { if (live) setError(errorOf(reason)); });
+    return () => { live = false; };
+  }, [id, paths]);
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!message.trim() || busy) return;
+    if (!message.trim() || !current || busy) return;
     setBusy(true);
     setError(null);
-    api.commit(id, message.trim()).then(onDone, (reason) => { setError(errorOf(reason)); setBusy(false); });
+    try {
+      await api.commit(id, message.trim(), paths, current.token);
+      onDone();
+    } catch (reason) {
+      setError(errorOf(reason));
+      if (reason instanceof ApiError && (reason.code === "git_changed" || reason.code === "git_nothing")) {
+        setReview(null);
+        try {
+          const next = await api.changes(id);
+          setFiles(next.files);
+          setPaths(paths.filter((path) => next.files.some((file) => file.path === path)));
+        } catch (refreshError) { setError(errorOf(refreshError)); }
+      }
+      setBusy(false);
+    }
   };
   return (
     <Pop onClose={onClose}>
       <form className="ev-edit ship-card" role="dialog" aria-modal="true" aria-label={t("ship.commit")} onSubmit={submit}>
-        <div className="ev-card-head"><b>{t("ship.commitTitle", { n: files.length })}</b><button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")}>×</button></div>
-        <ul className="ship-files">{files.map((file) => <li key={file.path}><span className="p">{file.path}</span><span className="add">+{file.added}</span>{file.removed > 0 && <span className="del">−{file.removed}</span>}</li>)}</ul>
-        <textarea className="ev-field" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} maxLength={5000} aria-label={t("ship.message")} placeholder={t("ship.message")} autoFocus />
+        <div className="ev-card-head"><b>{t("ship.commitTitle", { n: paths.length })}</b><button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")}>×</button></div>
+        <ul className="ship-files">{files.map((file) => <li key={file.path}><label>
+          <input type="checkbox" disabled={busy} checked={paths.includes(file.path)} onChange={(event) => {
+            setError(null);
+            setPaths(event.target.checked ? [...paths, file.path] : paths.filter((path) => path !== file.path));
+          }} /><span className="p" title={file.path}>{file.path}</span>
+        </label></li>)}</ul>
+        {current && <pre className="diff ship-patch" tabIndex={0} aria-label={t("ship.preview")}>{current.patch}</pre>}
+        <textarea className="ev-field" value={message} onChange={(event) => setMessage(event.target.value)} rows={2} maxLength={5000} aria-label={t("ship.message")} placeholder={t("ship.message")} autoFocus />
         <div className="ev-foot">
           <span className={error ? "ev-error" : "quiet"} role={error ? "alert" : undefined}>{error ?? t("ship.commitNote")}</span>
           <button type="button" className="ghost" onClick={onClose}>{t("common.cancel")}</button>
-          <button type="submit" disabled={!message.trim() || busy}>{busy ? t("ship.committing") : t("ship.commit")}</button>
+          <button type="submit" disabled={!message.trim() || busy || !current}>{busy ? t("ship.committing") : t("ship.commit")}</button>
         </div>
       </form>
     </Pop>

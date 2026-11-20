@@ -115,8 +115,9 @@ export const api = {
   /** Where its branch stands, and its pull request (which asks GitHub). */
   branch: (id: string) => call<SessionBranch>(`/api/conversations/${id}/branch`),
   pullRequest: (id: string) => call<SessionPullRequest>(`/api/conversations/${id}/pr`),
-  /** Commits the session's own changed files. */
-  commit: (id: string, message: string) => post<Conversation>(`/api/conversations/${id}/commit`, { requestId: newRequestId(), message }),
+  commitPreview: (id: string, paths: string[]) => post<{ token: string; patch: string }>(`/api/conversations/${id}/commit-preview`, { paths }),
+  /** Submit the exact selection displayed in the commit card. */
+  commit: (id: string, message: string, paths: string[], token: string) => post<Conversation>(`/api/conversations/${id}/commit`, { requestId: newRequestId(), message, paths, token }),
   /** Pushes its branch and opens a pull request (or updates the open one). Outward: the user is asked first. */
   publish: (id: string, title: string, body: string) => post<SessionPublished>(`/api/conversations/${id}/publish`, { requestId: newRequestId(), title, body }),
   processes: (id: string) => call<SessionProcesses>(`/api/conversations/${id}/processes`),

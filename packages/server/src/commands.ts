@@ -20,7 +20,8 @@ import {
 import { applyStep, OpInputError, opInput, runOp, Type, UnknownOpError, type Static, type TSchema } from "@alfred/module-kit";
 import type { Home } from "./home.ts";
 import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE } from "./profiles.ts";
-import { branchName, commitFiles, createWorktree, publish, removeWorktree, restoreWorktree, snapshot, WorkspaceError, workspaceChanges, type ChangedFile } from "./workspace.ts";
+import { branchName, createWorktree, publish, removeWorktree, restoreWorktree, snapshot, WorkspaceError, workspaceChanges, type ChangedFile } from "./workspace.ts";
+import { reviewCommit } from "./commit-review.ts";
 
 interface Extra<X> {
   /** The command's request id, for a command that starts a run of its own under it. */
@@ -189,17 +190,17 @@ const OPS: readonly HarnessOp[] = [
   // shows the user what is sent and asks each time before it sends `session.publish` (outward, not undone).
   define({
     name: "session.commit",
-    input: Type.Object({ id: Id, message: Type.String({ pattern: "\\S", maxLength: 5000 }) }),
+    input: Type.Object({ id: Id, message: Type.String({ pattern: "\\S", maxLength: 5000 }),
+      paths: Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { minItems: 1, maxItems: 1000 }), token: Type.String({ pattern: "^[a-f0-9]{64}$" }) }),
     async prepare(home, input) {
       const conversation = getConversation(home.world, input.id);
       const root = sessionRoot(home.world, conversation);
       if (!root || !existsSync(root)) throw new WorkspaceError("not_git", "This session has no folder to commit in");
-      // The session's own changes, the ones its panel lists; nothing else the user has in the folder.
       const changes = await workspaceChanges(root, conversation.base, sessionWrites(home, conversation.id));
-      if (!changes.files.length) throw new WorkspaceError("nothing", "There is nothing to commit");
-      const commit = await commitFiles(root, changes.files.map((file) => file.path), input.message.trim());
-      // Measured from here on: what is left in the folder is what was there before the session, or is still to do.
-      return { commit, base: await snapshot(root), files: changes.files.length };
+      const result = await reviewCommit(root, input.paths, changes.files.map((f) => f.path), {
+        token: input.token, message: input.message.trim(), base: conversation.base,
+      });
+      return { commit: result.commit, base: result.base, files: new Set(input.paths).size };
     },
     run: (home, input, { prepared }) => recordCommit(home.world, input.id, { commit: prepared.commit, base: prepared.base, message: input.message, files: prepared.files }),
   }),

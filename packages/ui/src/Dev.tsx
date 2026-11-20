@@ -89,9 +89,20 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
       if (event.kind !== "file.changed") processes.reload();
       if (timer.current === null) timer.current = window.setTimeout(() => { timer.current = null; void load(); }, 300);
     });
-    return () => { alive = false; off(); };
+    return () => {
+      alive = false;
+      off();
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+    };
   }, [id, onEvent, reloads]);
-  const show = (path: string) => { setLogs(null); setOpen({ path, diff: null }); api.diff(id, path).then(({ diff }) => setOpen({ path, diff: diff ?? "" })).catch(() => setOpen({ path, diff: "" })); };
+  const show = (path: string) => {
+    const selection = { path, diff: null };
+    setLogs(null);
+    setOpen(selection);
+    const loaded = (diff: string) => setOpen((current) => current === selection ? { path, diff } : current);
+    api.diff(id, path).then(({ diff }) => loaded(diff ?? ""), () => loaded(""));
+  };
   // A dev server's address: in the browser pane where there is one, else a tab of its own.
   const openUrl = (address: string) => {
     if (desktop?.browser) { setBrowser(true); desktop.browser.go(address); } else window.open(address, "_blank", "noopener");
@@ -110,7 +121,7 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
             <header className="dev-bar">
               <button type="button" className="icon-btn" onClick={() => onSession(null)} aria-label={t("dev.back")} title={t("dev.back")}><Icon name="back" /></button>
               <div className="dev-identity">
-                {project && <span className="dev-where" title={[project.path, changes?.branch].filter(Boolean).join(" · ")}><Icon name="folder" /><span>{project.name}{changes?.branch ? ` · ${changes.branch}` : ""}</span></span>}
+                {project && <span className="dev-where" title={[conversation?.worktree ?? project.path, changes?.branch, t(conversation?.worktree ? "dev.isolated" : "dev.shared")].filter(Boolean).join(" · ")}><Icon name={conversation?.worktree ? "layers" : "folder"} /><small>{t(conversation?.worktree ? "dev.isolated" : "dev.shared")}</small><span>{project.name}{changes?.branch ? ` · ${changes.branch}` : ""}</span></span>}
                 <h1 title={title}>{title}</h1>
               </div>
               {usage}
@@ -207,16 +218,19 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
   const [chosen, setChosen] = useState<string | null>(() => projects.find((project) => project.trustedAt)?.id ?? null);
   const [mode, setMode] = useState<SessionMode>("ask");
   // A worktree of its own: a separate folder on a new branch, so the project's own folder is left as it is.
-  const [worktree, setWorktree] = useState(false);
+  const [worktreeChoice, setWorktreeChoice] = useState<{ projectId: string; enabled: boolean } | null>(null);
+  const project = projects.find((candidate) => candidate.id === chosen);
+  const concurrent = !!project?.gitRoot && mode !== "plan" && state.conversations.some((session) =>
+    session.projectId === chosen && !session.archivedAt && session.base && session.mode !== "plan");
+  const worktree = project?.gitRoot !== false && (worktreeChoice && worktreeChoice.projectId === chosen ? worktreeChoice.enabled : concurrent);
   const [draft, setDraft] = useState("");
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attachments = useAttachments();
-  const project = projects.find((candidate) => candidate.id === chosen);
   const fail = (reason: unknown) => setError(reason instanceof ApiError && reason.code === "local_only" ? t("dev.addLocal")
     : reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope")
-    : reason instanceof ApiError && (reason.code === "git_not_git" || reason.code === "git_no_commit") ? t(`git.${reason.code.slice(4)}` as Key)
+    : reason instanceof ApiError && (reason.code === "git_not_git" || reason.code === "git_no_commit" || reason.code === "git_subproject") ? t(`git.${reason.code.slice(4)}` as Key)
     : reason instanceof Error ? reason.message : String(reason));
 
   const trust = (target: Project) => { setError(null); api.trustProject(target.id).catch(fail); };
@@ -260,7 +274,7 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
             <ChoicePicker label={t("mode.title")} value={mode} mode={mode} icon={<Icon name="shield" />}
               options={MODES.map((value) => ({ value, label: t(`mode.${value}` as Key) }))}
               onChange={(value) => setMode(value as SessionMode)} />
-            <button type="button" className="pick toggle" aria-pressed={worktree} onClick={() => setWorktree(!worktree)} disabled={!project?.trustedAt} title={t("dev.worktreeHint")}>
+            <button type="button" className="pick toggle" aria-pressed={worktree} onClick={() => { if (chosen) setWorktreeChoice({ projectId: chosen, enabled: !worktree }); }} disabled={!project?.trustedAt || project.gitRoot === false} title={t(project?.gitRoot === false ? "git.subproject" : "dev.worktreeHint")}>
               <Icon name="branch" /><span>{t("dev.worktree")}</span>
             </button>
             <span className="grow" />

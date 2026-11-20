@@ -545,6 +545,7 @@ test("a session that edits: changes since its snapshot, one file's diff, and 'do
   sh("config", "user.name", "Test");
   writeFileSync(join(folder, "a.txt"), "one\n");
   writeFileSync(join(folder, "b.txt"), "bee\n");
+  writeFileSync(join(folder, "editor.txt"), "first\n");
   sh("add", ".");
   sh("commit", "-qm", "start");
   // The user's own edit from before the session: not the session's change.
@@ -593,11 +594,14 @@ test("a session that edits: changes since its snapshot, one file's diff, and 'do
     assert.equal(detail.conversation.mode, "edits", "don't ask again: the session now changes files without asking");
     assert.deepEqual(detail.receipts[run.id].map((event) => event.kind), ["file.changed", "file.changed"]);
 
+    writeFileSync(join(folder, "editor.txt"), "someone else\n");
     const changes = await (await fetch(`${base}/api/conversations/${session.id}/changes`)).json() as SessionChanges;
     assert.deepEqual(changes.files, [
       { path: "a.txt", added: 1, removed: 0, created: false },
+      { path: "editor.txt", added: 1, removed: 1, created: false },
       { path: "new.txt", added: 2, removed: 0, created: true },
     ], "b.txt was changed before the session, so it is not listed");
+    assert.deepEqual(changes.suggested, ["a.txt", "new.txt"], "external tracked edits require explicit selection");
     assert.ok(changes.branch);
     const diff = await (await fetch(`${base}/api/conversations/${session.id}/diff?path=a.txt`)).json() as { diff: string };
     assert.match(diff.diff, /^\+two$/m);

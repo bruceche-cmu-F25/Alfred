@@ -5,8 +5,8 @@
  * A folder that is not a git repository has no snapshot; its changes are the session's own receipts.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, sep } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, sep } from "node:path";
 
 export interface ChangedFile { path: string; added: number; removed: number; created: boolean }
 export interface WorkspaceChanges {
@@ -44,11 +44,30 @@ export async function snapshot(root: string): Promise<string | null> {
   return head.ok && /^[0-9a-f]{7,64}$/.test(head.out.trim()) ? head.out.trim() : null;
 }
 
-/** A path inside the project, given relative to it; null for anything that would leave it. */
-function inProject(root: string, path: string): string | null {
-  if (!path || isAbsolute(path)) return null;
-  const clean = normalize(path);
-  return clean === ".." || clean.startsWith(`..${sep}`) ? null : clean;
+/** Git names files relative to the selected project. A symlink may itself be a tracked file;
+ * its children belong to the target directory and never participate in a session's review. */
+export function inProject(root: string, path: string): string | null {
+  if (!path || isAbsolute(path) || path.includes("\0")) return null;
+  const parts = path.split(sep);
+  if (parts.some((part) => !part || part === "." || part === ".." || part.toLowerCase() === ".git")) return null;
+  let dir = root;
+  try {
+    for (const part of parts.slice(0, -1)) {
+      dir = join(dir, part);
+      const entry = lstatSync(dir, { throwIfNoEntry: false });
+      if (!entry) break; // a tracked file and its containing folders may have been deleted
+      if (!entry.isDirectory()) return null;
+    }
+  } catch { return null; }
+  return path;
+}
+
+function receiptFile(root: string, entry: ChangedFile): boolean {
+  if (!inProject(root, entry.path)) return false;
+  try {
+    const file = lstatSync(join(root, entry.path), { throwIfNoEntry: false });
+    return !file || file.isFile() || file.isSymbolicLink();
+  } catch { return false; }
 }
 
 const lines = (text: string) => text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
@@ -58,11 +77,11 @@ const lines = (text: string) => text ? text.split("\n").length - (text.endsWith(
 export async function workspaceChanges(root: string, base: string | null, written: ChangedFile[]): Promise<WorkspaceChanges> {
   const branchOut = await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const branch = branchOut.ok ? branchOut.out.trim() || null : null;
-  if (!base) return { branch, base, files: merged(written) };
-  const numstat = await git(root, ["diff", "--numstat", "--relative", base, "--", "."]);
-  if (!numstat.ok) return { branch, base, files: merged(written) };
+  if (!base) return { branch, base, files: merged(written.filter((entry) => receiptFile(root, entry))) };
+  const numstat = await git(root, ["diff", "--numstat", "-z", "--no-renames", "--relative", base, "--", "."]);
+  if (!numstat.ok) return { branch, base, files: merged(written.filter((entry) => receiptFile(root, entry))) };
   const files = new Map<string, ChangedFile>();
-  for (const row of numstat.out.split("\n")) {
+  for (const row of numstat.out.split("\0")) {
     const [added, removed, ...rest] = row.split("\t");
     const path = rest.join("\t");
     if (!path) continue;
@@ -71,13 +90,13 @@ export async function workspaceChanges(root: string, base: string | null, writte
   // New files are untracked, so git's diff leaves them out: take the ones this session wrote, counted as they are now.
   for (const file of written) {
     const path = inProject(root, file.path);
-    if (!path || files.has(path) || !file.created) continue;
+    if (!path || files.has(path) || !file.created || !receiptFile(root, file)) continue;
     const full = join(root, path);
     if (!existsSync(full)) continue;
     const tracked = await git(root, ["ls-files", "--error-unmatch", "--", path]);
     if (tracked.ok) continue;
     let count = 0;
-    try { count = lines(readFileSync(full, "utf8")); } catch { /* unreadable */ }
+    try { count = lines(lstatSync(full).isSymbolicLink() ? readlinkSync(full) : readFileSync(full, "utf8")); } catch { /* unreadable */ }
     files.set(path, { path, added: count, removed: 0, created: true });
   }
   return { branch, base, files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)) };
@@ -118,7 +137,7 @@ function merged(written: ChangedFile[]): ChangedFile[] {
 
 export class WorkspaceError extends Error {
   override name = "WorkspaceError";
-  readonly code: "not_git" | "no_commit" | "dirty" | "nothing" | "failed" | "default_branch" | "detached" | "no_remote" | "no_gh";
+  readonly code: "not_git" | "subproject" | "no_commit" | "dirty" | "large_diff" | "changed" | "nothing" | "failed" | "default_branch" | "detached" | "no_remote" | "no_gh";
   /** For `dirty`: how many files are not committed. */
   readonly count?: number;
   constructor(code: WorkspaceError["code"], message: string, count?: number) { super(message); this.code = code; this.count = count; }
@@ -151,6 +170,8 @@ export function branchName(title: string): string {
  * committed; the project's uncommitted changes stay where they are). The branch is `want`, or `want-2`… if taken. */
 export async function createWorktree(project: string, dir: string, want: string): Promise<{ path: string; branch: string; base: string }> {
   if (!(await git(project, ["rev-parse", "--is-inside-work-tree"])).ok) throw new WorkspaceError("not_git", "This folder is not a git repository, so it cannot have a worktree");
+  const top = await git(project, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || realpathSync(top.out.trim()) !== realpathSync(project)) throw new WorkspaceError("subproject", "To create a worktree, select the root of the Git repository");
   const head = await git(project, ["rev-parse", "HEAD"]);
   if (!head.ok) throw new WorkspaceError("no_commit", "The repository has no commit yet");
   let branch = want;
@@ -186,19 +207,6 @@ export async function restoreWorktree(project: string, dir: string, branch: stri
   mkdirSync(dirname(dir), { recursive: true });
   const made = await tool("git", project, ["worktree", "add", dir, branch]);
   if (!made.ok) throw new WorkspaceError("failed", said(made.err) || "The worktree could not be brought back");
-}
-
-/** Commits these files (the session's changes) and nothing else the user may have staged. Returns the commit. */
-export async function commitFiles(root: string, paths: string[], message: string): Promise<string> {
-  const files = paths.map((path) => inProject(root, path)).filter((path): path is string => !!path);
-  if (!files.length) throw new WorkspaceError("nothing", "There is nothing to commit");
-  const added = await tool("git", root, ["add", "-A", "--", ...files]);
-  if (!added.ok) throw new WorkspaceError("failed", said(added.err) || "The files could not be added");
-  // With paths, git commits only those, as they are in the folder: whatever else is staged stays staged.
-  const committed = await tool("git", root, ["commit", "-m", message, "--", ...files]);
-  if (!committed.ok) throw new WorkspaceError("failed", said(`${committed.out}\n${committed.err}`) || "The commit failed");
-  const head = await git(root, ["rev-parse", "HEAD"]);
-  return head.out.trim();
 }
 
 /** Where a session's branch stands towards its remote and pull request, for the changes panel. */

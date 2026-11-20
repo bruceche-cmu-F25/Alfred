@@ -85,7 +85,10 @@ test("a session in a worktree: its own folder and branch, committed, archived an
     assert.deepEqual(changes.files.map((file) => file.path), ["new.txt"]);
 
     // Committed from the panel: only the session's files, and the panel starts again from there.
-    assert.equal((await post(base, `/api/conversations/${session.id}/commit`, { requestId: "w-c1", message: "Add new.txt" })).status, 200);
+    const paths = changes.suggested!;
+    assert.deepEqual(paths, ["new.txt"]);
+    const { token } = await (await post(base, `/api/conversations/${session.id}/commit-preview`, { paths })).json() as { token: string };
+    assert.equal((await post(base, `/api/conversations/${session.id}/commit`, { requestId: "w-c1", message: "Add new.txt", paths, token })).status, 200);
     assert.equal(String(execFileSync("git", ["-C", session.worktree, "log", "-1", "--format=%s"])).trim(), "Add new.txt");
     changes = await get<SessionChanges>(base, `/api/conversations/${session.id}/changes`);
     assert.deepEqual(changes.files, []);
