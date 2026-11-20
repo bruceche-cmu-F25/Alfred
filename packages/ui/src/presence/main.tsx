@@ -8,6 +8,9 @@
  * side that has room. It looks up when the pointer comes over it, leans as it is carried, and lands with a bump.
  * Click opens the main window; right-click has a small menu. Clicks pass through everything else.
  *
+ * It comes in growing from a point; a press or a landing pokes it (a flinch and a wobble); once it has said the
+ * welcome it unfolds into its net; and it hops when work is done (the figure does that by itself).
+ *
  * In a plain browser, `presence.html?demo` plays sample notices (`?demo=visit` as if the figure were hidden, and
  * `&h=left&v=top` for another corner).
  */
@@ -67,7 +70,7 @@ function Presence() {
   useEffect(() => {
     if (!svg.current) return;
     const dark = () => document.documentElement.dataset.scheme === "dark";
-    const live = createFigure(svg.current, { width: 4.6, dark: dark() });
+    const live = createFigure(svg.current, { width: 4.6, dark: dark(), enter: "grow" });
     figure.current = live;
     // public/scheme.js keeps data-scheme right: the system's appearance, or the one chosen in the app.
     const follow = new MutationObserver(() => live.setDark(dark()));
@@ -110,6 +113,7 @@ function Presence() {
     if (event.button !== 0) return;
     drag.current = { x: event.screenX, y: event.screenY, lastX: event.screenX, moved: false };
     event.currentTarget.setPointerCapture(event.pointerId);
+    figure.current?.play("poke");
     desktop?.dragFigure("start");
   };
   const move = (event: PointerEvent<HTMLButtonElement>) => {
@@ -132,6 +136,7 @@ function Presence() {
     setDragging(false);
     setTilt(0);
     setLanded((n) => n + 1);
+    figure.current?.play("poke");
     if (desktop) desktop.dragFigure("end");
     else {
       setOffset([0, 0]);
@@ -151,6 +156,14 @@ function Presence() {
   // Talking: its words' look. Touched: it looks up at you. Otherwise amber when something waits, turning while it works.
   const mood: FigureState = speech.mood ?? (dragging || pointing ? "hello" : waiting ? "notice" : working ? "work" : "rest");
   useEffect(() => { figure.current?.setState(mood); }, [mood]);
+  // The welcome said, it introduces itself: opens into its net of eight cubes and folds back. (While the words come
+  // out it is the speaking rings; it is the body again once they are all out.)
+  const unfolded = useRef<string | null>(null);
+  useEffect(() => {
+    if (mood !== "hello" || phase !== "speak" || current?.kind !== "welcome" || unfolded.current === current.id) return;
+    unfolded.current = current.id;
+    figure.current?.play("unfold");
+  }, [mood, phase, current]);
 
   const label = working ? t("presence.working") : waiting ? t("presence.waiting") : "Alfred";
   const speaking = phase === "idle" || phase === "next" ? undefined : phase;

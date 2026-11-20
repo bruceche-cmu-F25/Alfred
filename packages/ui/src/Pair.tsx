@@ -49,7 +49,7 @@ export function Pair({ onPaired }: { onPaired: () => void }) {
 
   return (
     <main className="boot pair">
-      <Figure state={busy ? "think" : error ? "error" : "hello"} size={88} />
+      <Figure state={busy ? "flow" : error ? "error" : "hello"} size={88} />
       <p className="wordmark">Alfred</p>
       <h1 className="pair-title">{t("pair.title")}</h1>
       <p className="quiet">{t("pair.sub")}</p>

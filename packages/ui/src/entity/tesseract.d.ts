@@ -1,6 +1,9 @@
-export type FigureState = "rest" | "hello" | "listen" | "think" | "speak" | "work" | "notice" | "done" | "error" | "sleep";
+export type FigureState = "rest" | "hello" | "listen" | "think" | "speak" | "work" | "notice" | "done" | "error" | "sleep" | "ponder" | "flow";
+/** One-shot moves of the body: hop (happy), poke (touched), grow (an entrance from a point), unfold (introducing itself). */
+export type FigureMove = "hop" | "poke" | "grow" | "unfold";
 
 export const STATES: FigureState[];
+export const MOVES: FigureMove[];
 export const LOUD: FigureState[];
 export const PALETTES: Record<"light" | "dark", Record<"ind" | "light" | "amber" | "ok" | "now", string>>;
 
@@ -15,11 +18,16 @@ export interface FigureOptions {
   dark?: boolean;
   /** "auto" reads the nearest ancestor's background; a CSS colour; or null for no depth shading. */
   background?: "auto" | string | null;
+  /** A move to come in with, when the figure starts as the body ("grow": from a point). */
+  enter?: FigureMove | null;
 }
 
 export interface Figure {
   readonly state: FigureState;
   setState(state: FigureState): void;
+  /** Plays a move over the body (rest or hello). False when it cannot: another figure is showing, motion is reduced,
+   * or (unfold) the figure is too small. */
+  play(move: FigureMove): boolean;
   setDark(dark: boolean): void;
   refresh(): void;
   destroy(): void;

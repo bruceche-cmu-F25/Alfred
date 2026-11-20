@@ -1,0 +1,147 @@
+<!doctype html>
+<!--
+  Alfred: how the body moves, drawn by the real figure (packages/ui/src/entity/tesseract.js, linked here as figure.js).
+  The eight moves Bruce kept on 2026-11-20, as they now live in the engine:
+    平静 rest   breathes; now and then blinks (once or twice)          — every resting figure
+    跳一下 hop   crouch, spring, flip inside out in the air, land        — played by itself when work ends
+    被戳 poke    flinch and wobble                                       — pressing any figure; a landing after a drag
+    双旋 ponder  turning in two planes at once                           — "think" held for 8 s turns into this
+    翻涌 flow    rolling through the fourth dimension                    — pairing a device (syncing)
+    长出来 grow  point → line → square → cube → tesseract                 — the first figure on a page, the Mac figure
+    展开 unfold  opens into its net of eight cubes and folds back        — the Mac figure while it says the welcome
+  Dropped the same day: look around, look at you, bow, nod, shake, light walk, dive in, cells apart, sleep and wake.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred · 超立方体的动作</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root { --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", sans-serif; --mono: "SF Mono", ui-monospace, Menlo, monospace; --tile: #fef9f4; --tile-line: var(--line-soft); --tile-ink: #75716c; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+body.dk { --tile: #181612; --tile-line: #2a2723; --tile-ink: #aeaaa5; }
+main { max-width: 1140px; margin: 0 auto; padding: 64px 24px 120px; }
+h1 { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+h2 { margin: 44px 0 2px; font-size: 21px; font-weight: 650; }
+p { margin: 0; }
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+.sub { margin-top: 8px; color: var(--muted); max-width: 720px; }
+
+.top { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 20px; margin-top: 28px; align-items: start; }
+.hero { position: relative; border-radius: 22px; background: var(--tile); box-shadow: inset 0 0 0 1px var(--tile-line); cursor: pointer; }
+.hero svg { display: block; width: 100%; height: auto; aspect-ratio: 1; }
+.hero .hint { position: absolute; left: 16px; bottom: 12px; font-size: 12px; color: var(--tile-ink); }
+.info { display: grid; gap: 14px; min-width: 0; }
+.info h3 { margin: 0; font-size: 26px; line-height: 1.25; font-weight: 650; }
+.info h3 small { margin-left: 10px; font: 12px var(--mono); color: var(--muted); font-weight: 400; }
+.info .desc { color: var(--copy); }
+.use { justify-self: start; display: inline-flex; gap: 8px; align-items: baseline; padding: 8px 12px; border-radius: 12px; background: var(--paper); font-size: 13.5px; color: var(--copy); }
+.use b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.ctl { display: flex; flex-wrap: wrap; gap: 6px; }
+.st { height: 30px; padding: 0 12px; border-radius: 999px; color: var(--copy); font-size: 13px; box-shadow: inset 0 0 0 1px var(--line); }
+.st[aria-pressed="true"] { background: var(--ink); color: var(--bg); box-shadow: none; }
+.sizes { display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: var(--paper); }
+.bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; height: 26px; padding: 0 10px; border-radius: 7px; background: #ebe7e1; color: #292622; font-size: 12px; }
+.panel { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #fffefb; box-shadow: inset 0 0 0 1px var(--line-soft); font-size: 13px; color: #55524d; min-width: 0; }
+.panel b { color: #292622; }
+.panel svg { flex: none; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+.card { display: flex; flex-direction: column; align-items: stretch; text-align: left; border-radius: 14px; background: var(--tile); box-shadow: inset 0 0 0 1px var(--tile-line); padding: 4px 4px 12px; color: var(--tile-ink); font-size: 12.5px; line-height: 1.45; min-width: 0; }
+.card svg { display: block; width: 100%; height: auto; aspect-ratio: 1; }
+.card b { display: block; padding: 0 10px; font-size: 14px; color: var(--ink); font-weight: 600; }
+body.dk .card b { color: #eae7e4; }
+.card span { padding: 2px 10px 0; }
+.card.on { box-shadow: inset 0 0 0 2px var(--alf); }
+body.dk .card.on { box-shadow: inset 0 0 0 2px #86a0f2; }
+
+@media (max-width: 860px) { .top { grid-template-columns: 1fr; } .hero { max-width: 380px; } }
+@media (max-width: 520px) { main { padding: 36px 16px 80px; } h1 { font-size: 28px; } .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .info h3 { font-size: 22px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Alfred · 超立方体的动作</h1>
+  <p class="sub">2026-11-20 · 留下的八个动作，现在都在真正的形象里（呼吸和眨眼合在「平静」里）。这页直接用 app 的那份代码画。点一张卡放大看。</p>
+
+  <div class="top">
+    <div class="hero" id="hero" title="点一下戳它"><svg viewBox="0 0 120 120"></svg><span class="hint">点一下戳它</span></div>
+    <div class="info">
+      <h3 id="name"></h3>
+      <p class="desc" id="desc"></p>
+      <p class="use"><b>什么时候</b><span id="use"></span></p>
+      <div class="ctl">
+        <button class="st" id="replay">重播</button>
+        <button class="st" id="dark" aria-pressed="false">深色</button>
+      </div>
+      <div class="sizes">
+        <div class="bar"><svg viewBox="0 0 120 120" width="18" height="18" id="s18"></svg>Wi-Fi　12:41</div>
+        <div class="panel"><svg viewBox="0 0 120 120" width="36" height="36" id="s36"></svg><span><b>Alfred</b>　在看 · 日程<br>下午 2–4 点我先替你占住了写方案</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>八个动作</h2>
+  <div class="grid" id="grid"></div>
+</main>
+
+<script type="module">
+import { createFigure } from "./figure.js";
+
+/* state: what the figure is set to; move: a one-shot played over it, again every `every` ms. */
+const MOVES = [
+  { id: "rest", name: "平静", en: "breathe + blink", state: "rest",
+    desc: "一直在呼吸：里外两个立方体慢慢靠近再分开，吸得比呼快。每隔几秒眨一次眼（有时两下），每个形象各有各的节奏。", use: "所有平静的形象" },
+  { id: "hop", name: "跳一下", en: "hop", state: "rest", move: "hop", every: 3400,
+    desc: "下蹲，弹起时拉长，在空中沿第四维里外翻一次，落地压扁再回弹。", use: "做完事回到平静时，自己跳一下" },
+  { id: "poke", name: "被戳", en: "poke", state: "rest", move: "poke", every: 2600,
+    desc: "一缩，每个角各自晃一下，越晃越小，再定住。", use: "按到任何一个形象；Mac 上拖着放下" },
+  { id: "ponder", name: "双旋", en: "ponder", state: "ponder",
+    desc: "同时在两个互相垂直的平面里转，从静止慢慢转起来，里外的立方体不停地互相穿过。", use: "「在想」超过 8 秒，八面体换成它" },
+  { id: "flow", name: "翻涌", en: "flow", state: "flow",
+    desc: "一直沿第四维转，里面的立方体不断从侧面翻出来变成外面的。", use: "配对设备时（同步中）" },
+  { id: "grow", name: "长出来", en: "grow", state: "rest", move: "grow", every: 5200,
+    desc: "一个点 → 线 → 正方形 → 立方体 → 超立方体，一维接一维长出来。", use: "页面上第一个出现的形象；Mac 上的形象出场" },
+  { id: "unfold", name: "展开", en: "unfold", state: "rest", move: "unfold", every: 9000,
+    desc: "一格一格折开成八个立方体拼成的十字，转一转，再按相反的顺序折回去。太小（48px 以下）时不展开。", use: "Mac 上的形象说欢迎回来的时候" },
+];
+
+const all = [];
+const add = (svg, m, opts) => { const f = createFigure(svg, { ...opts, state: m.state }); const I = { f, m, svg, last: 0 }; all.push(I); return I; };
+const grid = document.getElementById("grid");
+grid.innerHTML = MOVES.map((m) => `<button class="card" data-id="${m.id}"><svg viewBox="0 0 120 120"></svg><b>${m.name}</b><span>${m.use}</span></button>`).join("");
+MOVES.forEach((m) => add(grid.querySelector(`[data-id="${m.id}"] svg`), m, { width: 4.2 }));
+const big = [add(document.querySelector("#hero svg"), MOVES[0], { width: 3.8 }), add(document.getElementById("s36"), MOVES[0], { width: 5.5, small: true }), add(document.getElementById("s18"), MOVES[0], { width: 7, mono: true })];
+
+/* Moves come round again on their own; the big one starts its move at once when picked. */
+setInterval(() => {
+  const now = performance.now();
+  for (const I of all) if (I.m.move && now - I.last >= I.m.every) { I.f.play(I.m.move); I.last = now; }
+}, 200);
+
+function pick(id) {
+  const m = MOVES.find((x) => x.id === id) || MOVES[0];
+  for (const I of big) { I.m = m; I.f.setState(m.state); I.last = 0; }
+  document.getElementById("name").innerHTML = `${m.name}<small>${m.en}</small>`;
+  document.getElementById("desc").textContent = m.desc;
+  document.getElementById("use").textContent = m.use;
+  document.querySelectorAll(".card").forEach((c) => c.classList.toggle("on", c.dataset.id === m.id));
+  history.replaceState(null, "", "#" + m.id);
+}
+grid.addEventListener("click", (e) => { const c = e.target.closest(".card"); if (c) { pick(c.dataset.id); if (innerWidth < 860) scrollTo({ top: 0, behavior: "smooth" }); } });
+document.getElementById("hero").addEventListener("click", () => big.forEach((I) => I.f.play("poke")));
+document.getElementById("replay").addEventListener("click", () => big.forEach((I) => { if (I.m.move) { I.f.play(I.m.move); I.last = performance.now(); } }));
+let dark = false;
+document.getElementById("dark").addEventListener("click", (e) => {
+  dark = !dark; document.body.classList.toggle("dk", dark); e.currentTarget.setAttribute("aria-pressed", dark);
+  all.forEach((I) => I.f.setDark(dark));
+});
+pick(location.hash.slice(1));
+window.movesPage = { pick, figures: all };
+</script>
+</body>
+</html>
