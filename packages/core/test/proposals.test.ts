@@ -39,6 +39,7 @@ test("accepting runs exactly the previewed steps, once, and records what they wr
   const first = accept();
   assert.equal(first.result.state, "executed");
   assert.equal(first.result.outcome?.receipts?.length, 2);
+  assert.equal(first.result.outcome?.deliveryQueued, false, "both changes have already been applied locally");
   assert.deepEqual(toys(w), ["yoyo"]);
   // The same click again replays; nothing runs twice.
   assert.equal(accept().replayed, true);
@@ -103,9 +104,9 @@ test("a proposal nobody decided in a week expires by itself, and its notice goes
 
 test("settings: the language is set once, audited, and checked", () => {
   const w = world();
-  assert.deepEqual(getSettings(w), { locale: null, model: null, thinking: null });
+  assert.deepEqual(getSettings(w), { locale: null, preferredName: null, model: null, thinking: null });
   assert.equal(userLocale(w), "en");
-  assert.deepEqual(updateSettings(w, { locale: "zh" }), { locale: "zh", model: null, thinking: null });
+  assert.deepEqual(updateSettings(w, { locale: "zh" }), { locale: "zh", preferredName: null, model: null, thinking: null });
   updateSettings(w, { locale: "zh" });
   assert.equal(listEvents(w).events.filter((event) => event.kind === "settings.changed").length, 1, "an unchanged value records nothing");
   assert.equal(userLocale(w), "zh");
@@ -113,12 +114,25 @@ test("settings: the language is set once, audited, and checked", () => {
   assert.throws(() => updateSettings(w, { theme: "dark" }), /Unknown setting/);
 });
 
+test("settings: Alfred remembers the user's chosen name across reads", () => {
+  const w = world();
+  assert.equal(updateSettings(w, { preferredName: "  小 林  " }).preferredName, "小 林");
+  updateSettings(w, { preferredName: "小 林" });
+  assert.equal(listEvents(w).events.filter((event) => event.kind === "settings.changed").length, 1);
+  for (const invalid of ["", "  ", 123, "小\n林", "小林\u0085", "🦊".repeat(41)]) {
+    assert.throws(() => updateSettings(w, { preferredName: invalid }), SettingsError);
+  }
+  assert.equal(getSettings(w).preferredName, "小 林");
+  assert.equal(updateSettings(w, { preferredName: "🦊".repeat(40) }).preferredName?.length, 80);
+  assert.equal(updateSettings(w, { preferredName: null }).preferredName, null);
+});
+
 test("settings: the default model and thinking level are checked", () => {
   const w = world();
-  assert.deepEqual(updateSettings(w, { model: "anthropic/claude-opus-5-5", thinking: "high" }), { locale: null, model: "anthropic/claude-opus-5-5", thinking: "high" });
+  assert.deepEqual(updateSettings(w, { model: "anthropic/claude-opus-5-5", thinking: "high" }), { locale: null, preferredName: null, model: "anthropic/claude-opus-5-5", thinking: "high" });
   assert.throws(() => updateSettings(w, { model: "no-slash" }), SettingsError);
   assert.throws(() => updateSettings(w, { model: 3 }), SettingsError);
   assert.throws(() => updateSettings(w, { thinking: "huge" }), SettingsError);
-  assert.deepEqual(updateSettings(w, { model: null, thinking: null }), { locale: null, model: null, thinking: null });
+  assert.deepEqual(updateSettings(w, { model: null, thinking: null }), { locale: null, preferredName: null, model: null, thinking: null });
 });
 

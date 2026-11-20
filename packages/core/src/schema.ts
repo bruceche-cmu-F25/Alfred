@@ -1,6 +1,7 @@
 /** The core's own tables. Modules add theirs through their own migrations, in
  * the same database, so a module change and its core event share a transaction.
  */
+import { migrateResultDelivery } from "./result-delivery.ts";
 import type { Migration } from "./world.ts";
 
 export const RUN_STATES = [
@@ -289,5 +290,33 @@ CREATE TABLE core_files (
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX core_files_run ON core_files(run_id);
+`,
+}, {
+  // Older clients could resume from the conversation without acknowledging the interruption.
+  // A run may have stopped again since; only the interruption after its last resume is current.
+  id: "core:19",
+  sql: `
+UPDATE core_notices
+SET state = 'acknowledged', claimed_by = NULL, claim_until = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE kind = 'run_interrupted' AND state IN ('pending','claimed','presented')
+  AND (NOT EXISTS (
+    SELECT 1 FROM core_runs r WHERE r.id = json_extract(core_notices.payload, '$.runId') AND r.state = 'interrupted'
+  ) OR EXISTS (
+    SELECT 1 FROM core_events e WHERE e.run_id = json_extract(core_notices.payload, '$.runId')
+      AND e.kind = 'run.resumed' AND e.seq > core_notices.event_seq
+  ));
+`,
+}, {
+  id: "core:20",
+  sql: `
+CREATE INDEX core_notices_run_result ON core_notices(json_extract(payload, '$.runId')) WHERE kind = 'run_result';
+CREATE INDEX core_runs_updated_at ON core_runs(updated_at);
+`,
+  apply: migrateResultDelivery,
+}, {
+  // Only new ordinary replies set this marker. An upgrade never marks the user's existing history unread.
+  id: "core:21",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN unread_reply_id TEXT REFERENCES core_runs(id);
 `,
 }];

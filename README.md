@@ -18,7 +18,7 @@ On first open, the app installs the home node as a launchd user agent (`~/Librar
 - **The home node is independent of the app.** Closing the window or quitting the app does not stop a run. The node also starts again at login. Its log is at `~/Library/Logs/Alfred/alfred.home-node.log`.
 - **Alfred's figure stays on screen.** It sits in the bottom-right corner, always on top, and never takes focus. It shows when Alfred is working or has something waiting. Click it to open the main window.
 - **Returning from away gets one greeting.** When you lock the screen and come back after 10 minutes or more, the figure greets you once with what actually happened while you were away. Change the 10 minutes with `ALFRED_AWAY_MINUTES`.
-- **Results reach you when the window is not in front.** They arrive as system notifications. Clicking one opens the conversation at that run.
+- **Chat replies stay in their conversation.** Unseen replies have an unread dot. Ask Alfred to notify you when it finishes to receive an Inbox delivery. Read the morning brief in Inbox and browse previous editions in Automations.
 - **⌥Space opens Alfred from anywhere.** The menu bar item shows whether the home node is online, can hide the figure, and can restart or stop the node.
 
 Running the app from source, macOS shows it as "Electron" and asks once for permission to show notifications. A packaged `Alfred.app` is not built yet.

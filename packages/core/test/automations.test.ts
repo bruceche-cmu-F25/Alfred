@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   CORE_MIGRATIONS, createAutomation, createRunDrain, deleteAutomation, ensureTemplates, fireDueAutomations, getConversation, latestSlot,
-  listAutomations, listDevices, listEvents, listNotices, listRuns, nextSlot, openWorld, runAutomationNow, updateAutomation, updateSettings,
+  listAutomationRuns, listAutomations, listDevices, listEvents, listNotices, listRuns, nextSlot, openWorld, runAutomationNow, submitRun, updateAutomation, updateSettings,
   type EnginePort, type RunProfile, type World,
 } from "../src/index.ts";
 
@@ -15,6 +15,44 @@ const at = (day: number, hours: number, minutes = 0) => new Date(2026, 10, day, 
 const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7];
 const tick = (w: World, now: number) => fireDueAutomations(w, { profile: "automation", now });
 const kinds = (w: World, prefix: string) => listEvents(w).events.map((event) => event.kind).filter((kind) => kind.startsWith(prefix));
+
+test("history pages through the same rule's runs even when two start at the same time", () => {
+  const w = world();
+  try {
+    const schedule = { at: "07:30", days: EVERY_DAY };
+    const brief = createAutomation(w, { template: "brief", schedule });
+    const other = createAutomation(w, { template: "mail_todos", schedule });
+    const options = { profile: "automation", now: at(20, 8) };
+    const first = runAutomationNow(w, brief.id, "first", options);
+    const foreign = runAutomationNow(w, other.id, "other", options);
+    const second = runAutomationNow(w, brief.id, "second", options);
+    const page = listAutomationRuns(w, brief.id, null, 1);
+    assert.deepEqual(page.runs.map((run) => run.id), [second.id]);
+    assert.equal(page.nextCursor, second.id);
+    const older = listAutomationRuns(w, brief.id, page.nextCursor, 1);
+    assert.deepEqual(older.runs.map((run) => run.id), [first.id]);
+    assert.equal(older.nextCursor, null);
+    assert.deepEqual(listAutomationRuns(w, brief.id, foreign.id).runs, []);
+  } finally { w.close(); }
+});
+
+test("only the built-in brief transcript stays out of chat pickers until the user follows up", () => {
+  const w = world();
+  try {
+    const schedule = { at: "07:30", days: EVERY_DAY };
+    const brief = createAutomation(w, { template: "brief", schedule });
+    const custom = createAutomation(w, { name: "Morning brief", goal: "My own report", schedule });
+    const auto = { profile: "automation" };
+    const result = runAutomationNow(w, brief.id, "one", auto);
+    const other = runAutomationNow(w, custom.id, "custom", auto);
+    assert.equal(getConversation(w, result.conversationId).briefOnly, true);
+    assert.equal(listAutomationRuns(w, brief.id, null).runs[0].id, result.id);
+    assert.equal(getConversation(w, other.conversationId).briefOnly, false);
+    submitRun(w, { conversationId: result.conversationId, requestId: "followup", goal: "Why do that one first?", profile: "assistant" });
+    runAutomationNow(w, brief.id, "tomorrow", auto);
+    assert.equal(getConversation(w, result.conversationId).briefOnly, false);
+  } finally { w.close(); }
+});
 
 test("slots: the latest due and the next, by local time and weekday", () => {
   const weekdays = { at: "07:30", days: [1, 2, 3, 4, 5] };

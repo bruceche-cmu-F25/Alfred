@@ -14,6 +14,7 @@ import { join } from "node:path";
 import webpush from "web-push";
 import { listDevices, userLocale, type Outlet, type World } from "@alfred/core";
 import { translate, type Key } from "@alfred/ui/i18n";
+import { inboxTarget, inboxUrl } from "@alfred/ui/notice";
 import { plainText } from "@alfred/ui/markdown";
 import type { Reach } from "./attention.ts";
 import type { SecretStore } from "./secrets.ts";
@@ -79,32 +80,34 @@ export function noticeMessage(notice: { id: string; kind: string; payload: Recor
   const goal = cut(String(notice.payload.goal ?? ""), 120);
   const conversation = typeof notice.payload.conversationId === "string" ? notice.payload.conversationId : null;
   const at = conversation ? `/#c=${encodeURIComponent(conversation)}` : "/";
+  const inbox = inboxUrl(inboxTarget(notice));
   const base = { tag: `notice:${notice.id}`, notice: notice.id };
   if (notice.kind === "proposal") {
-    return { ...base, title: say("mac.proposal.title"), body: cut(String(notice.payload.title ?? ""), 200), url: "/#p=core.inbox", ack: false };
+    return { ...base, title: say("mac.proposal.title"), body: cut(String(notice.payload.title ?? ""), 200), url: inbox, ack: false };
   }
   if (notice.kind === "run_request") {
     const title = say(notice.payload.kind === "permission" ? "mac.permission.title" : "mac.input.title");
-    return { ...base, title, body: cut(String(notice.payload.question ?? goal), 200), url: at, ack: false };
+    return { ...base, title, body: cut(String(notice.payload.question ?? goal), 200), url: inboxTarget(notice) ? inbox : at, ack: false };
   }
-  if (notice.kind === "run_interrupted") return { ...base, title: say("mac.interrupted.title"), body: say("mac.interrupted.body", { goal }), url: at, ack: true };
+  if (notice.kind === "run_interrupted") return { ...base, title: say("mac.interrupted.title"), body: say("mac.interrupted.body", { goal }), url: inbox, ack: false };
   if (notice.kind === "outbound") {
     // A change outside Alfred (an event, an email) after the user's yes: it is told on the phone when it did not go
     // through, or may not have. That stays in the inbox until they have looked.
     const preview = cut(String(notice.payload.preview ?? ""), 120);
     const error = notice.payload.error ? cut(String(notice.payload.error), 100) : "";
-    const inbox = "/#p=core.inbox";
     if (notice.payload.state === "failed") return { ...base, title: say("mac.outbound.failed"), body: error ? say("mac.outbound.failedBody", { preview, error }) : preview, url: inbox, ack: false };
     if (notice.payload.state === "unknown") return { ...base, title: say("mac.outbound.unknown"), body: say("mac.outbound.unknownBody", { preview }), url: inbox, ack: false };
-    return { ...base, title: say("mac.outbound.done"), body: preview, url: inbox, ack: true };
+    return { ...base, title: say("mac.outbound.done"), body: preview, url: inbox, ack: false };
   }
+  const target = inboxTarget(notice);
+  const destination = target ? { url: inbox, ack: false } : { url: at, ack: true };
   const status = notice.payload.status;
-  if (status === "failed") return { ...base, title: say("mac.failed.title"), body: say("mac.goal", { goal }), url: at, ack: true };
-  if (status === "cancelled") return { ...base, title: say("mac.cancelled.title"), body: say("mac.goal", { goal }), url: at, ack: true };
+  if (status === "failed") return { ...base, title: say("mac.failed.title"), body: say("mac.goal", { goal }), ...destination };
+  if (status === "cancelled") return { ...base, title: say("mac.cancelled.title"), body: say("mac.goal", { goal }), ...destination };
   // A reply is written in Markdown; a notification shows it as plain text.
   const said = typeof notice.payload.reply === "string" ? plainText(notice.payload.reply).trim() : "";
   const reply = said ? cut(said, 200) : say("mac.done.body", { goal });
-  return { ...base, title: "Alfred", body: reply, url: at, ack: true };
+  return { ...base, title: "Alfred", body: reply, ...destination };
 }
 
 export interface PushOptions {

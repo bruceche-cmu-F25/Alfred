@@ -14,6 +14,7 @@ import { appendEvent, recordDomainEvent } from "./events.ts";
 import { listRunFiles, type FileInfo } from "./files.ts";
 import { newId } from "./ids.ts";
 import { getSettings } from "./settings.ts";
+import { completionNotification } from "./result-delivery.ts";
 import {
   claimNextRun, conversationBefore, finishRun, heartbeatRun, openRequest, RUN_LEASE_MS, runAnswers, sweepRuns,
   type Run, type RunRequest, type ViewContext,
@@ -172,7 +173,7 @@ const DENIED = "The user did not allow this. Nothing was changed; do not try it 
 /** Returns the finished run, or the run as it stood when this executor lost
  * its lease (it then writes nothing more; the sweep records the interruption).
  */
-async function drive(world: World, run: Run, engine: EnginePort, options: ExecuteOptions): Promise<Run> {
+async function drive(world: World, run: Run, engine: EnginePort, options: ExecuteOptions, finishSteering?: () => Promise<void>): Promise<Run> {
   const leaseMs = options.leaseMs ?? RUN_LEASE_MS;
   const profile = Object.hasOwn(options.profiles, run.profile) ? options.profiles[run.profile] : undefined;
   if (!profile) return finishRun(world, run.id, options.owner, { status: "failed", error: "unknown_profile" });
@@ -315,12 +316,14 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   try {
     // An engine that finished despite a cancel request reports what it actually did.
     const { reply } = await withCoreContext(context, () => engine.submit(request, controller.signal));
+    await finishSteering?.();
     return finishRun(world, run.id, options.owner, { status: "completed", reply });
   } catch (error) {
     const stop = controller.signal.reason instanceof Stop ? controller.signal.reason.reason : null;
     if (!stop) options.onEngineError?.(run, error);
     if (stop === "lease") return { ...run, state: "interrupted" };
     try {
+      await finishSteering?.();
       return finishRun(world, run.id, options.owner, stop === "cancel" ? { status: "cancelled" } : { status: "failed", error: errorCode(error) });
     } catch {
       return { ...run, state: "interrupted" };
@@ -350,6 +353,7 @@ export interface RunDrain {
 export function createRunDrain(world: World, engine: EnginePort, options: ExecuteOptions & { concurrency?: number }): RunDrain {
   const concurrency = options.concurrency ?? 3;
   const active = new Map<string, Promise<unknown>>();
+  const steering = new Map<string, Set<Promise<boolean>>>();
   const working = () => (world.db.prepare(`SELECT count(*) AS n FROM core_runs WHERE lease_owner = ? AND state IN ('running', 'cancelling')`)
     .get(options.owner)!.n as number);
 
@@ -359,9 +363,15 @@ export function createRunDrain(world: World, engine: EnginePort, options: Execut
     while (working() < concurrency) {
       const run = claimNextRun(world, options.owner, { leaseMs: options.leaseMs });
       if (!run) break;
-      const job = drive(world, run, engine, options)
+      const pending = new Set<Promise<boolean>>();
+      steering.set(run.id, pending);
+      const job = drive(world, run, engine, options, async () => {
+        // An accepted last-minute steer can change the destination of the result.
+        steering.delete(run.id);
+        await Promise.allSettled(pending);
+      })
         .catch((error: unknown) => options.onEngineError?.(run, error))
-        .finally(() => { active.delete(run.id); pump(); });
+        .finally(() => { steering.delete(run.id); active.delete(run.id); pump(); });
       active.set(run.id, job);
     }
   };
@@ -375,13 +385,19 @@ export function createRunDrain(world: World, engine: EnginePort, options: Execut
     },
     async steer(runId, text) {
       const words = text.trim().slice(0, 8000);
-      if (!words || !active.has(runId) || !engine.steer) return false;
+      const pending = steering.get(runId);
+      if (!words || !pending || !engine.steer) return false;
       const run = world.db.prepare("SELECT state, conversation_id FROM core_runs WHERE id = ?").get(runId);
       // A run waiting on a question takes an answer, not more words.
       if (!run || run.state !== "running") return false;
-      if (!(await engine.steer(String(run.conversation_id), words))) return false;
-      world.tx((db) => appendEvent(db, { kind: "run.steered", subject: `run:${runId}`, runId, actor: "user", payload: { text: words.slice(0, 2000) } }));
-      return true;
+      const accepted = engine.steer(String(run.conversation_id), words).then((ok) => {
+        if (ok) world.tx((db) => appendEvent(db, { kind: "run.steered", subject: `run:${runId}`, runId, actor: "user",
+          payload: { text: words.slice(0, 2000), notifyOnCompletion: completionNotification(words) } }));
+        return ok;
+      });
+      pending.add(accepted);
+      try { return await accepted; }
+      finally { pending.delete(accepted); }
     },
   };
 }

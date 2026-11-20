@@ -17,6 +17,7 @@
  * by that welcome (docs/design/attention.md): it is not said one by one after.
  */
 import type { DatabaseSync } from "node:sqlite";
+import { awayChanges, awayResults } from "./result-delivery.ts";
 import { appendEvent } from "./events.ts";
 import { iso } from "./ids.ts";
 import { noticeClass } from "./attention.ts";
@@ -45,7 +46,11 @@ export interface AwayDigest {
   since: string;
   awayMs: number;
   /** Runs that finished while away. */
-  runs: { completed: number; failed: number; interrupted: number; goals: string[] };
+  runs: {
+    completed: number; failed: number; interrupted: number; goals: string[];
+    /** Up to three recent everyday results. Older saved welcomes only have goal fragments. */
+    results?: Array<{ runId: string; conversationId: string; at: string; name: string | null }>;
+  };
   /** World changes Alfred or the system made, by module (`todo`, …). Yours are not news. */
   changes: Record<string, number>;
   /** Things that wait on the user right now (a question, a proposal, an interrupted run, a change outside that
@@ -59,28 +64,14 @@ const CLIENT = /^[A-Za-z0-9._:-]{1,80}$/;
 const localDay = (ms: number) => new Date(ms).toDateString();
 
 function digest(db: DatabaseSync, since: { seq: number; at: string }, now: number): AwayDigest {
-  const runs = db.prepare(`SELECT state, goal FROM core_runs WHERE updated_at > ?
-    AND state IN ('completed', 'failed', 'interrupted') ORDER BY updated_at`).all(since.at) as { state: string; goal: string }[];
-  const changes: Record<string, number> = {};
-  for (const row of db.prepare(`SELECT kind, sum(coalesce(json_extract(payload, '$.count'), 1)) AS n FROM core_events
-    WHERE seq > ? AND kind NOT LIKE 'run.%' AND kind NOT LIKE 'presence.%' AND kind NOT LIKE 'notice.%' AND actor IN ('alfred', 'system') GROUP BY kind`)
-    .all(since.seq) as { kind: string; n: number }[]) {
-    const module = row.kind.split(".")[0];
-    changes[module] = (changes[module] ?? 0) + row.n;
-  }
   const open = db.prepare(`SELECT kind, payload FROM core_notices WHERE kind != 'welcome'
     AND state IN ('pending', 'claimed', 'presented') AND (expires_at IS NULL OR expires_at > ?)`).all(iso(now)) as { kind: string; payload: string }[];
   const waiting = open.filter((row) => noticeClass(row.kind, JSON.parse(row.payload) as Record<string, unknown>) === "needs_you").length;
   return {
     since: since.at,
     awayMs: now - Date.parse(since.at),
-    runs: {
-      completed: runs.filter((run) => run.state === "completed").length,
-      failed: runs.filter((run) => run.state === "failed").length,
-      interrupted: runs.filter((run) => run.state === "interrupted").length,
-      goals: runs.filter((run) => run.state === "completed").slice(-3).map((run) => run.goal.slice(0, 80)),
-    },
-    changes,
+    runs: awayResults(db, since.at, iso(now)),
+    changes: awayChanges(db, since.seq, cursor(db)),
     waiting,
   };
 }

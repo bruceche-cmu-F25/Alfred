@@ -13,6 +13,8 @@ export interface Migration {
   /** `<owner>:<n>`, for example `core:1` or `todo:1`. Applied once, in the order given. */
   id: string;
   sql: string;
+  /** Data upgrades that reuse domain rules, in the same transaction as the SQL. */
+  apply?(db: DatabaseSync): void;
 }
 
 export interface World {
@@ -112,6 +114,7 @@ function migrate(world: World, migrations: readonly Migration[]): void {
     if (applied.has(migration.id)) continue;
     world.tx((db) => {
       db.exec(migration.sql);
+      migration.apply?.(db);
       db.prepare("INSERT INTO world_migrations (id, applied_at) VALUES (?, ?)").run(migration.id, new Date().toISOString());
     });
   }

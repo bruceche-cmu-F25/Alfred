@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  answerRequest, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, heartbeatRun, listConversations, listEvents, listNotices,
+  addProject, answerRequest, claimNextRun, finishRun, markConversationReplyRead, startSession, trustProject, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, heartbeatRun, listConversations, listEvents, listNotices,
   openWorld, recordDomainEvent, requestCancel, RunError, submitRun, sweepRuns, updateConversation, updateSettings,
   type EnginePort, type RunProfile, type RunTool, type World,
 } from "../src/index.ts";
@@ -33,6 +36,59 @@ function askUser(): RunTool {
 }
 const profiles = (w: World): Record<string, RunProfile> => ({ tasks: { instructions: "", tools: [addToy(w), dropToy(w), askUser()] } });
 const tool = (request: Parameters<EnginePort["submit"]>[0], name: string) => request.tools.find((candidate) => candidate.name === name)!;
+
+test("ordinary replies stay unread until that reply is viewed; archive clears the dot and stale reads cannot clear a later one", () => {
+  const w = world();
+  const reply = (requestId: string, conversationId?: string) => {
+    const run = submitRun(w, { requestId, conversationId, goal: "What time is it?", profile: "assistant" }).run;
+    assert.equal(claimNextRun(w, "home")?.id, run.id);
+    finishRun(w, run.id, "home", { status: "completed", reply: "Noon." });
+    return run;
+  };
+  const first = reply("one");
+  const chat = first.conversationId;
+  assert.equal(listConversations(w)[0].unreadReplyId, first.id);
+  assert.equal(listNotices(w).some((n) => n.payload.runId === first.id), false);
+  const second = reply("two", chat);
+  markConversationReplyRead(w, chat, first.id);
+  assert.equal(getConversation(w, chat).unreadReplyId, second.id);
+  const lastActivity = getConversation(w, chat).updatedAt;
+  markConversationReplyRead(w, chat, second.id);
+  markConversationReplyRead(w, chat, second.id);
+  assert.equal(getConversation(w, chat).unreadReplyId, null);
+  assert.equal(getConversation(w, chat).updatedAt, lastActivity);
+  assert.equal(listEvents(w).events.filter((e) => e.kind === "conversation.read").length, 1);
+  reply("three", chat);
+  updateConversation(w, chat, { archived: true });
+  assert.equal(updateConversation(w, chat, { archived: false }).unreadReplyId, null);
+  w.close();
+});
+
+test("upgrading leaves old chats read and a new unread project reply survives a restart", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "alfred-unread-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "world.sqlite");
+  const prior = openWorld(path, CORE_MIGRATIONS.filter((m) => m.id !== "core:21"));
+  const old = submitRun(prior, { requestId: "old", goal: "Old question", profile: "assistant" }).run;
+  prior.db.prepare("UPDATE core_runs SET state = 'completed', outcome = ? WHERE id = ?")
+    .run(JSON.stringify({ status: "completed", reply: "Earlier reply", receipts: [] }), old.id);
+  prior.close();
+
+  const upgraded = openWorld(path, CORE_MIGRATIONS);
+  assert.equal(getConversation(upgraded, old.conversationId).unreadReplyId, null);
+  const project = trustProject(upgraded, addProject(upgraded, { path: dir }).id);
+  const session = startSession(upgraded, { title: "Review", projectId: project.id });
+  const run = submitRun(upgraded, { requestId: "fresh", conversationId: session.id, goal: "Explain this function", profile: "developer" }).run;
+  assert.equal(claimNextRun(upgraded, "home")?.id, run.id);
+  finishRun(upgraded, run.id, "home", { status: "completed", reply: "It loads the settings." });
+  upgraded.close();
+
+  const reopened = openWorld(path, CORE_MIGRATIONS);
+  t.after(() => reopened.close());
+  assert.equal(getConversation(reopened, session.id).unreadReplyId, run.id);
+  markConversationReplyRead(reopened, session.id, run.id);
+  assert.equal(getConversation(reopened, session.id).unreadReplyId, null);
+});
 
 test("a first message starts a conversation named after it; later ones continue it", () => {
   const w = world();

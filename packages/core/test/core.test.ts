@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
-  acknowledgeNotice, claimNotice, CommandConflictError, CORE_MIGRATIONS, createNotice, createRunDrain, executeNextRun, getRun,
-  interruptOrphanedRuns, listEvents, listNotices, NoticeStateError, onEvents, openWorld, presentNotice, recordDomainEvent,
+  acknowledgeNotice, answerRequest, claimNextRun, claimNotice, CommandConflictError, CORE_MIGRATIONS, createNotice, createRunDrain, executeNextRun, finishRun, getRun,
+  interruptOrphanedRuns, listEvents, listNotices, listRuns, NoticeStateError, onEvents, openRequest, openWorld, presentNotice, recordDomainEvent,
   requestCancel, resumeRun, runCommand, RunError, RunLeaseLostError, submitRun, withCoreContext,
-  type EnginePort, type RunProfile, type World,
+  undeliveredNotices, type EnginePort, type RunProfile, type World,
 } from "../src/index.ts";
 
 const TOY = { id: "toy:1", sql: "CREATE TABLE toys (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL) STRICT;" };
@@ -45,7 +48,7 @@ test("a request id replays its run and refuses different content", () => {
   assert.throws(() => submitRun(w, { requestId: "r1", goal: "something else", profile: "tasks" }), RunError);
 });
 
-test("a run's receipts are the domain events written under it, and it leaves one notice", async () => {
+test("a run's receipts remain in the conversation without a separate result notice", async () => {
   const w = world();
   const engine: EnginePort = {
     async submit(request) {
@@ -62,10 +65,8 @@ test("a run's receipts are the domain events written under it, and it leaves one
   assert.equal(receipt.actor, "alfred");
   assert.deepEqual(done.outcome?.receipts, [receipt.id]);
   assert.deepEqual(toys(w), ["kite"]);
-  const notices = listNotices(w);
-  assert.equal(notices.length, 1);
-  assert.equal(notices[0].kind, "run_result");
-  assert.equal(notices[0].payload.reply, "Added a kite.");
+  assert.deepEqual(listNotices(w), []);
+  assert.equal(done.outcome?.reply, "Added a kite.");
 });
 
 test("a reply that claims work without a tool call has no receipts", async () => {
@@ -111,6 +112,7 @@ test("a restart interrupts the dead executor's run; it is never re-run until res
   assert.equal(calls, 1, "the drain must not pick an interrupted run up again");
 
   resumeRun(w, run.id);
+  assert.equal(listNotices(w).some((item) => item.kind === "run_interrupted"), false, "resuming from any surface removes the old interruption");
   await createRunDrain(w, ok, { owner: "node-new", profiles: profiles(w) }).kick();
   const resumed = getRun(w, run.id).run;
   assert.equal(resumed.state, "completed");
@@ -144,7 +146,7 @@ test("an unknown profile fails without calling the engine", async () => {
 
 test("only the claiming device presents a notice, and never twice", async () => {
   const w = world();
-  submitRun(w, { requestId: "r1", goal: "x", profile: "tasks" });
+  submitRun(w, { requestId: "r1", goal: "Notify me when done.", profile: "tasks" });
   await executeNextRun(w, { submit: async () => ({ reply: "done" }) }, { owner: "a", profiles: profiles(w) });
   const [notice] = listNotices(w);
   claimNotice(w, notice.id, "mac");
@@ -187,6 +189,48 @@ test("notices nobody dismissed do not keep a new one from being listed", () => {
   assert.equal(listed.length, 50);
   assert.equal(listed.at(-1)!.id, fresh.id, "the newest is there, last");
   assert.equal(listed[0].id, old[11].id, "the oldest are the ones left out");
+});
+
+test("a device keeps unanswered runs beyond its visible recent history, until answered", () => {
+  const w = world();
+  const now = Date.now();
+  const submit = (id: string, conversationId?: string) =>
+    submitRun(w, { requestId: id, conversationId, goal: id, profile: "tasks", now }).run;
+  const waiting = submit("wait");
+  claimNextRun(w, "home", { now });
+  const question = openRequest(w, waiting.id, "home", { kind: "input", question: "Which day?", now });
+  const hidden = submit("private");
+  claimNextRun(w, "home", { now });
+  openRequest(w, hidden.id, "home", { kind: "permission", question: "Apply edit?", now });
+  const recent = Array.from({ length: 51 }, (_, i) => submit(`new-${i}`, waiting.conversationId));
+  submit("hidden-new", hidden.conversationId);
+  const options = { limit: 50, includeWaiting: true, hiddenConversations: [hidden.conversationId] };
+  const visible = recent.slice(-50).reverse().map((run) => run.id);
+  assert.deepEqual(listRuns(w, options).map((run) => run.id), [...visible, waiting.id]);
+  assert.deepEqual(listRuns(w, { ...options, conversationId: waiting.conversationId }).map((run) => run.id), [...visible, waiting.id]);
+  answerRequest(w, waiting.id, { requestId: question.id, answer: "Monday", now });
+  assert.deepEqual(listRuns(w, options).map((run) => run.id), visible);
+  w.close();
+});
+
+test("old unresolved receipts and interruptions survive newer results within a device's scope", () => {
+  const w = world();
+  const now = Date.now();
+  const tell = (kind: string, payload: Record<string, unknown>) => w.tx((db) => {
+    const event = recordDomainEvent(w, { kind: "toy.added", payload: {}, now });
+    return createNotice(db, { eventSeq: event.seq, kind, payload, now }).id;
+  });
+  const pending = ["failed", "unknown"].map((state) => tell("outbound", { state }));
+  pending.push(tell("run_interrupted", { conversationId: "public" }));
+  tell("outbound", { state: "done" });
+  tell("run_interrupted", { conversationId: "private" });
+  const news = Array.from({ length: 51 }, () => tell("run_result", { conversationId: "public" }));
+  tell("run_result", { conversationId: "private" });
+  const visible = () => listNotices(w, { includeNeedsYou: true, hiddenConversations: ["private"] }).map((notice) => notice.id);
+  assert.deepEqual(visible(), [...pending, ...news.slice(-50)]);
+  acknowledgeNotice(w, pending[0]);
+  assert.deepEqual(visible(), [...pending.slice(1), ...news.slice(-50)]);
+  w.close();
 });
 
 test("a command runs once per request id and rolls back with its change", () => {
@@ -235,4 +279,40 @@ test("a listener hears the kinds of events each commit recorded, each once, and 
   off();
   addToy(w, "e");
   assert.equal(heard.length, 2);
+});
+
+test("upgrading closes legacy interruption notices for completed runs and superseded attempts", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "alfred-interruption-upgrade-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "world.sqlite");
+  const prior = openWorld(path, CORE_MIGRATIONS.filter((migration) => Number(migration.id.split(":")[1]) < 19));
+  const stop = (id: string) => {
+    assert.equal(claimNextRun(prior, "old-home")!.id, id);
+    interruptOrphanedRuns(prior, "new-home");
+    return listNotices(prior).find((notice) => notice.kind === "run_interrupted" && notice.payload.runId === id)!;
+  };
+  const complete = submitRun(prior, { requestId: "finish", goal: "Notify me when finished.", profile: "tasks" }).run;
+  const finishedNotice = stop(complete.id);
+  resumeRun(prior, complete.id);
+  claimNextRun(prior, "new-home");
+  finishRun(prior, complete.id, "new-home", { status: "completed" });
+
+  const stopped = submitRun(prior, { requestId: "again", goal: "stopped twice", profile: "tasks" }).run;
+  const first = stop(stopped.id);
+  resumeRun(prior, stopped.id);
+  const current = stop(stopped.id);
+  // Restore exactly what older versions left behind when a different surface handled the interruption.
+  prior.db.prepare("UPDATE core_notices SET state = 'presented', claimed_by = 'phone' WHERE id = ?").run(finishedNotice.id);
+  prior.db.prepare("UPDATE core_notices SET state = 'claimed', claimed_by = 'mac', claim_until = ? WHERE id = ?")
+    .run(new Date(Date.now() + 60_000).toISOString(), first.id);
+  prior.close();
+
+  const w = openWorld(path, CORE_MIGRATIONS);
+  t.after(() => w.close());
+  const open = listNotices(w, { states: ["pending", "claimed", "presented"], includeNeedsYou: true });
+  assert.deepEqual(open.filter((n) => n.kind === "run_interrupted").map((n) => n.id), [current.id]);
+  assert.deepEqual(undeliveredNotices(w).filter((n) => n.kind === "run_interrupted").map((n) => n.id), [current.id]);
+  assert.ok(open.some((n) => n.kind === "run_result" && n.payload.runId === complete.id));
+  assert.deepEqual(listNotices(w, { states: ["acknowledged"] }).filter((n) => n.kind === "run_interrupted")
+    .map((n) => [n.id, n.claimedBy, n.claimUntil]), [[finishedNotice.id, null, null], [first.id, null, null]]);
 });

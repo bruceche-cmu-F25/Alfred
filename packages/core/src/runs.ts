@@ -9,11 +9,12 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { DatabaseSync } from "node:sqlite";
-import { CONVERSATION_ID, ConversationError, createConversation, titleFrom, touchConversation } from "./conversations.ts";
+import { CONVERSATION_ID, ConversationError, createConversation, recordUnreadReply, titleFrom, touchConversation } from "./conversations.ts";
 import { appendEvent, readRunEvents, type CoreEvent } from "./events.ts";
 import { attachFiles } from "./files.ts";
 import { iso, newId } from "./ids.ts";
 import { createNotice } from "./notices.ts";
+import { resultDestination, retirePreviousBriefs } from "./result-delivery.ts";
 import { TEMPLATE_TEXT, type AutomationTemplate } from "./automation-templates.ts";
 import { localeOf } from "./settings.ts";
 import { RUN_STATES } from "./schema.ts";
@@ -155,10 +156,10 @@ function receiptsOf(db: DatabaseSync, runId: string): string[] {
   return readRunEvents(db, runId).filter((event) => !event.kind.startsWith("run.")).map((event) => event.id);
 }
 
-/** A question nobody can answer any more stops being shown. */
-function closeRequestNotices(db: DatabaseSync, runId: string, now: number): void {
+/** The question or interrupted attempt is no longer waiting for a decision. */
+function closeWaitingNotices(db: DatabaseSync, runId: string, now: number): void {
   db.prepare(`UPDATE core_notices SET state = 'acknowledged', claimed_by = NULL, claim_until = NULL, updated_at = ?
-    WHERE kind = 'run_request' AND state IN ('pending', 'claimed', 'presented') AND json_extract(payload, '$.runId') = ?`).run(iso(now), runId);
+    WHERE kind IN ('run_request', 'run_interrupted') AND state IN ('pending', 'claimed', 'presented') AND json_extract(payload, '$.runId') = ?`).run(iso(now), runId);
 }
 
 /** What a notice calls a run (`goal`): the user's words, or for an automation's run, the automation's name, which is
@@ -172,7 +173,7 @@ function said(db: DatabaseSync, run: Run): { goal: string; automationId?: string
 
 function interrupt(db: DatabaseSync, run: Run, now: number): void {
   setState(db, run, "interrupted", now, { lease_owner: null, lease_until: null, request: null });
-  closeRequestNotices(db, run.id, now);
+  closeWaitingNotices(db, run.id, now);
   const event = runEvent(db, run, "interrupted", now, { attempt: run.attempt });
   createNotice(db, { eventSeq: event.seq, kind: "run_interrupted", payload: { runId: run.id, conversationId: run.conversationId, ...said(db, run) }, now });
 }
@@ -305,16 +306,22 @@ export function finishRun(world: World, id: string, owner: string, result: Omit<
       receipts,
     };
     setState(db, run, result.status, now, { lease_owner: null, lease_until: null, outcome: JSON.stringify(outcome), request: null });
-    closeRequestNotices(db, id, now);
+    closeWaitingNotices(db, id, now);
     touchConversation(db, run.conversationId, now);
     const event = runEvent(db, run, result.status, now, { receipts: receipts.length });
-    createNotice(db, {
-      eventSeq: event.seq, kind: "run_result", now,
-      payload: {
-        runId: id, conversationId: run.conversationId, status: result.status, ...said(db, run), receipts: receipts.length,
-        ...(outcome.reply ? { reply: outcome.reply.slice(0, 280) } : {}),
-      },
-    });
+    const destination = resultDestination(db, run, result.status);
+    if (destination) {
+      createNotice(db, {
+        eventSeq: event.seq, kind: "run_result", now,
+        payload: {
+          runId: id, conversationId: run.conversationId, status: result.status, ...said(db, run), ...destination, receipts: receipts.length,
+          ...(outcome.reply ? { reply: outcome.reply.slice(0, 280) } : {}),
+        },
+      });
+      if (destination.template === "brief" && result.status === "completed" && run.automationId) retirePreviousBriefs(db, run.automationId, id);
+    } else if (!run.automationId && result.status === "completed" && outcome.reply) {
+      recordUnreadReply(db, run.conversationId, id);
+    }
     return load(db, id);
   });
 }
@@ -329,10 +336,11 @@ export function requestCancel(world: World, id: string, options: { now?: number 
     if (TERMINAL.includes(run.state) || run.state === "cancelling") return run;
     if (run.state === "queued" || run.state === "interrupted") {
       setState(db, run, "cancelled", now, { outcome: JSON.stringify({ status: "cancelled", receipts: receiptsOf(db, id) }) });
+      closeWaitingNotices(db, id, now);
       runEvent(db, run, "cancelled", now);
     } else {
       setState(db, run, "cancelling", now, { cancel_requested: 1, request: null });
-      closeRequestNotices(db, id, now);
+      closeWaitingNotices(db, id, now);
       runEvent(db, run, "cancel_requested", now);
     }
     return load(db, id);
@@ -347,6 +355,7 @@ export function resumeRun(world: World, id: string, options: { now?: number } = 
     if (run.state !== "interrupted") throw new RunError("state");
     setState(db, run, "queued", now, { cancel_requested: 0 });
     touchConversation(db, run.conversationId, now);
+    closeWaitingNotices(db, id, now);
     runEvent(db, run, "resumed", now);
     return load(db, id);
   });
@@ -409,7 +418,7 @@ export function answerRequest(world: World, id: string, input: { requestId: stri
     // anew, so what the answer allows is not refused before the executor's next heartbeat.
     const lapsed = Date.parse(run.leaseUntil!) <= now;
     setState(db, run, "running", now, { request: null, ...(lapsed ? { lease_until: iso(now + RUN_LEASE_MS) } : {}) });
-    closeRequestNotices(db, id, now);
+    closeWaitingNotices(db, id, now);
     appendEvent(db, {
       kind: "run.answered", subject: `run:${id}`, runId: id, actor: "user", now,
       payload: { requestId: run.request.id, kind: run.request.kind, question: run.request.question.slice(0, 200), answer: answer.slice(0, 200) },
@@ -424,11 +433,36 @@ export function getRun(world: World, id: string): { run: Run; events: CoreEvent[
   return { run: load(world.db, id), events: readRunEvents(world.db, id) };
 }
 
-/** Newest first. */
-export function listRuns(world: World, options: { conversationId?: string; limit?: number } = {}): Run[] {
+/** Newest first. A device can keep unanswered requests visible beyond its window of recent runs. */
+export function listRuns(world: World, options: {
+  conversationId?: string; limit?: number; includeWaiting?: boolean; hiddenConversations?: readonly string[];
+} = {}): Run[] {
   const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 200);
-  return world.db.prepare(`SELECT * FROM core_runs WHERE (? IS NULL OR conversation_id = ?)
-    ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(options.conversationId ?? null, options.conversationId ?? null, limit).map(toRun);
+  const scope = `FROM core_runs WHERE (? IS NULL OR conversation_id = ?)
+    AND conversation_id NOT IN (SELECT value FROM json_each(?))`;
+  const args = [options.conversationId ?? null, options.conversationId ?? null, JSON.stringify(options.hiddenConversations ?? [])];
+  const recent = world.db.prepare(`SELECT *, rowid AS position ${scope} ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(...args, limit);
+  if (options.includeWaiting && recent.length === limit) {
+    const boundary = recent[limit - 1];
+    const waiting = world.db.prepare(`SELECT * ${scope} AND request IS NOT NULL AND (created_at, rowid) < (?, ?)
+      ORDER BY created_at DESC, rowid DESC`).all(...args, boundary.created_at, boundary.position);
+    return [...recent, ...waiting].map(toRun);
+  }
+  return recent.map(toRun);
+}
+
+/** Page through a rule's own runs, including manual triggers. Ordinary follow-up turns in the conversation stay out. */
+export function listAutomationRuns(world: World, automationId: string, before: string | null = null, limit = 20) {
+  const scope = "FROM core_runs WHERE automation_id = ?";
+  const order = "ORDER BY created_at DESC, rowid DESC LIMIT ?";
+  const size = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const rows = before === null
+    ? world.db.prepare(`SELECT * ${scope} ${order}`).all(automationId, size + 1)
+    : world.db.prepare(`SELECT * ${scope} AND (created_at, rowid) <
+        (SELECT created_at, rowid FROM core_runs WHERE id = ? AND automation_id = ?) ${order}`)
+      .all(automationId, before, automationId, size + 1);
+  const runs = rows.slice(0, size).map(toRun);
+  return { runs, nextCursor: rows.length > size ? runs[runs.length - 1].id : null };
 }
 
 /** The bounded recent exchange before `run` in its conversation, oldest first.

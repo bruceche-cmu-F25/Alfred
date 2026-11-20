@@ -55,7 +55,7 @@ async function waitForEvent(base: string, after: number, until: (event: CoreEven
   }
 }
 
-test("a sentence becomes a run, a todo, a receipt and a notice, streamed to devices", async () => {
+test("an ordinary chat streams its result and leaves an unread reply in the conversation", async () => {
   const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [todoModule] });
   const { server, base } = await start(home);
   try {
@@ -78,8 +78,11 @@ test("a sentence becomes a run, a todo, a receipt and a notice, streamed to devi
     const after = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
     const todos = (after.modules.todo as TodoSnapshot).todos;
     assert.deepEqual(todos.map((todo) => [todo.title, todo.due]), [["Hand in report", "2026-11-20"]]);
-    const [notice] = after.notices;
-    assert.equal(notice.payload.runId, run.id);
+    assert.equal(after.notices.some((notice) => notice.payload.runId === run.id), false);
+    assert.equal(after.conversations.find((conversation) => conversation.id === run.conversationId)?.unreadReplyId, run.id);
+    assert.equal((await post(base, `/api/conversations/${run.conversationId}/read`, { runId: run.id })).status, 200);
+    const read = await (await fetch(`${base}/api/conversations/${run.conversationId}`)).json() as ConversationDetail;
+    assert.equal(read.conversation.unreadReplyId, null);
 
     // Retrying the same submit returns the same run, and nothing runs twice.
     const replay = await post(base, "/api/runs", { requestId: "r-1", goal: "add Hand in report" });
@@ -87,10 +90,6 @@ test("a sentence becomes a run, a todo, a receipt and a notice, streamed to devi
     assert.equal(((await replay.json()) as SubmitRunResponse).run.id, run.id);
     assert.equal((await post(base, "/api/runs", { requestId: "r-1", goal: "something else" })).status, 409);
 
-    // One device presents the notice; another cannot.
-    assert.equal((await post(base, `/api/notices/${notice.id}/claim`, { client: "mac" })).status, 200);
-    assert.equal((await post(base, `/api/notices/${notice.id}/claim`, { client: "phone" })).status, 409);
-    assert.equal((await post(base, `/api/notices/${notice.id}/present`, { client: "mac" })).status, 200);
   } finally {
     server.close(); server.closeAllConnections();
     home.close();
@@ -105,7 +104,7 @@ test("a notice is shown in one place: the window the user is looking at is hande
     // Two windows are open; the user is in the second.
     await post(base, "/api/outlets", { client: "tab-a", kind: "window", attending: false, idleMs: 60_000 });
     await post(base, "/api/outlets", { client: "tab-b", kind: "window", attending: true, idleMs: 500 });
-    await post(base, "/api/runs", { requestId: "r-1", goal: "add Hand in report" });
+    await post(base, "/api/runs", { requestId: "r-1", goal: "Add a todo and let me know when it is done." });
     const events = await waitForEvent(base, 0, (event) => event.kind === "notice.assigned");
     assert.equal(events.at(-1)!.payload.to, "tab-b");
     const [notice] = await notices();
@@ -115,7 +114,7 @@ test("a notice is shown in one place: the window the user is looking at is hande
 
     // Nobody is looking any more, and no phone has notifications on: the next one waits.
     await post(base, "/api/outlets", { client: "tab-b", kind: "window", attending: false, idleMs: 0 });
-    await post(base, "/api/runs", { requestId: "r-2", goal: "add Call the bank" });
+    await post(base, "/api/runs", { requestId: "r-2", goal: "Add a todo. Notify me when done." });
     await waitForEvent(base, 0, (event) => event.kind === "run.completed" && event.seq > events.at(-1)!.seq);
     await new Promise((resolve) => setTimeout(resolve, 100));
     const waiting = (await notices()).find((item) => item.id !== notice.id)!;
@@ -407,6 +406,11 @@ test("automations over HTTP: made by the user, fired once by the clock, unattend
     assert.equal(mine.lastRun?.reply, "Two todos are due today.");
     const detail = (await (await fetch(`${base}/api/conversations/${mine.conversationId}`)).json()) as ConversationDetail;
     assert.deepEqual(detail.runs.map((run) => run.automationId), [automation.id, automation.id], "both runs went to its conversation");
+
+    const history = await (await fetch(`${base}/api/automations/${automation.id}/runs`)).json() as { runs: RunDetail["run"][]; nextCursor: string | null };
+    assert.deepEqual(history.runs.map((run) => run.id), [...detail.runs].reverse().map((run) => run.id));
+    assert.equal(history.nextCursor, null);
+    assert.equal(history.runs[0].outcome?.reply, "Two todos are due today.");
 
     const off = await post(base, `/api/automations/${automation.id}`, { requestId: "a-off", patch: { enabled: false } });
     assert.equal(((await off.json()) as StateResponse["automations"][number]).nextAt, null);

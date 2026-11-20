@@ -51,11 +51,14 @@ test("only real push services are accepted as endpoints", () => {
 });
 
 test("a notice reads on a lock screen as on the Mac, in the user's language", () => {
+  const brief = noticeMessage({ id: "brief", kind: "run_result", payload: { automationId: "morning", runId: "today", conversationId: "all-briefs", reply: "First meeting at 10." } }, "en");
+  assert.equal(brief.url, "/#p=core.inbox&item=n%3Abrief");
+  assert.equal(brief.ack, false, "opening a push leaves the report available to the Inbox reader");
   const done = noticeMessage({ id: "n1", kind: "run_result", payload: { goal: "Book", reply: "Booked for Friday.", conversationId: "c 1", status: "completed" } }, "en");
   assert.deepEqual(done, { tag: "notice:n1", notice: "n1", title: "Alfred", body: "Booked for Friday.", url: "/#c=c%201", ack: true });
-  const proposal = noticeMessage({ id: "n2", kind: "proposal", payload: { title: "Move 3 todos to next week?" } }, "zh");
+  const proposal = noticeMessage({ id: "n2", kind: "proposal", payload: { proposalId: "change-1", title: "Move 3 todos to next week?" } }, "zh");
   assert.equal(proposal.title, "Alfred 有个提议等你决定");
-  assert.equal(proposal.url, "/#p=core.inbox");
+  assert.equal(proposal.url, "/#p=core.inbox&item=p%3Achange-1");
   assert.equal(proposal.ack, false);
   const question = noticeMessage({ id: "n3", kind: "run_request", payload: { kind: "input", question: "Which Friday?", conversationId: "c1" } }, "zh");
   assert.deepEqual([question.title, question.body, question.ack], ["Alfred 在等你回答", "Which Friday?", false]);
@@ -93,13 +96,13 @@ test("a change outside that failed or may not have happened reaches the phone; o
     push.subscribe(phone.id, APPLE);
     watch();
     notice(world, "outbound", { state: "done", preview: "Add “Dentist” to Me: Fri 15:00" });
-    notice(world, "outbound", { state: "unknown", preview: "Email ana@example.com: Plan" });
+    const uncertain = notice(world, "outbound", { state: "unknown", preview: "Email ana@example.com: Plan" });
     notice(world, "outbound", { state: "failed", preview: "Reply to leo@example.com: Contract", error: "Gmail answered 400" });
     await wait(150);
     assert.deepEqual(sent.map((message) => message.title).sort(), ["Not sure it went through", "That didn't go through"]);
     const unsure = sent.find((message) => message.title === "Not sure it went through")!;
     assert.match(unsure.body, /^Email ana@example.com: Plan\. Google didn't confirm it/);
-    assert.deepEqual([unsure.url, unsure.ack], ["/#p=core.inbox", false], "it opens the inbox, and stays there until looked at");
+    assert.deepEqual([unsure.url, unsure.ack], [`/#p=core.inbox&item=n%3A${uncertain.id}`, false], "it opens the exact receipt and stays until explicitly reviewed");
     assert.equal(sent.find((message) => message.title === "That didn't go through")!.body, "Reply to leo@example.com: Contract: Gmail answered 400");
     assert.deepEqual(listNotices(world, { states: ["pending", "claimed", "presented"] }).map((item) => [item.payload.state, item.state, item.claimedBy]).sort(),
       [["done", "pending", null], ["failed", "presented", "push"], ["unknown", "presented", "push"]]);

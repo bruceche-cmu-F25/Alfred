@@ -44,7 +44,8 @@ export interface Proposal {
   updatedAt: string;
   expiresAt: string;
   decidedAt: string | null;
-  outcome: { error?: string; receipts?: string[] } | null;
+  /** deliveryQueued records whether approving these steps queued an external change. Older outcomes omit it. */
+  outcome: { error?: string; receipts?: string[]; deliveryQueued?: boolean } | null;
   /** Derived, for open proposals: something it touches has changed since. */
   stale?: boolean;
 }
@@ -183,7 +184,10 @@ export function acceptProposal(world: World, id: string, apply: (step: ProposalS
     // The receipts: what the steps actually wrote.
     const receipts = db.prepare("SELECT * FROM core_events WHERE seq > ? AND seq <= ? AND kind NOT LIKE 'proposal.%' ORDER BY seq")
       .all(decided.seq, latestEventSeq(world)).map(toEvent);
-    setState(db, id, "executed", now, { decided: true, outcome: { receipts: receipts.map((receipt) => receipt.id) } });
+    setState(db, id, "executed", now, { decided: true, outcome: {
+      receipts: receipts.map((receipt) => receipt.id),
+      deliveryQueued: receipts.some((receipt) => receipt.kind === "outbound.queued"),
+    } });
     event(world, proposal, "proposal.executed", { steps: proposal.steps.length, receipts: receipts.length }, now);
     closeNotices(db, id, now);
     return load(db, id);

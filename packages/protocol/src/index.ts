@@ -129,6 +129,10 @@ export interface Conversation {
   /** Runs that need the user: a question waiting, or interrupted. */
   attention: number;
   lastGoal: string | null;
+  /** Latest ordinary reply still to be read, shared across the user's devices. */
+  unreadReplyId?: string | null;
+  /** The built-in brief transcript without a user turn. Readable through its result or history. */
+  briefOnly?: boolean;
   /** The project it works in (a development session); null for an everyday conversation. Fixed at creation. */
   projectId: string | null;
   /** A development session's permission mode; null for an everyday conversation. */
@@ -264,6 +268,8 @@ export type Locale = "zh" | "en";
 export interface UserSettings {
   /** Null until a device sets it from its system language. */
   locale: Locale | null;
+  /** How the user wants Alfred to address them. Null until they have chosen a name. */
+  preferredName: string | null;
   /** The model a conversation uses unless it chose its own (`provider/model`); null: the engine's default. */
   model: string | null;
   /** The thinking level a conversation uses unless it chose its own; null: the model's default. */
@@ -295,7 +301,8 @@ export interface Proposal {
   updatedAt: string;
   expiresAt: string;
   decidedAt: string | null;
-  outcome: { error?: string; receipts?: string[] } | null;
+  /** deliveryQueued records whether approving these steps queued an external change. Older outcomes omit it. */
+  outcome: { error?: string; receipts?: string[]; deliveryQueued?: boolean } | null;
   /** Open ones: something it touches changed since; accepting would run nothing. */
   stale?: boolean;
 }
@@ -355,7 +362,11 @@ export interface PresenceResponse { returned: boolean; notice: Notice | null }
 export interface AwayDigest {
   since: string;
   awayMs: number;
-  runs: { completed: number; failed: number; interrupted: number; goals: string[] };
+  runs: {
+    completed: number; failed: number; interrupted: number; goals: string[];
+    /** Up to three recent everyday results. Older saved welcomes only have goal fragments. */
+    results?: Array<{ runId: string; conversationId: string; at: string; name: string | null }>;
+  };
   changes: Record<string, number>;
   /** How many things wait on the user right now (questions, proposals, interrupted runs, changes outside that
    * failed or may not have happened). What only waited to be told is told by this welcome and not said again. */
@@ -468,6 +479,7 @@ export interface PairRequest { code: string; name: string; kind: DeviceKind }
  *
  *   POST /api/automations                 NewAutomationRequest -> Automation
  *   POST /api/automations/:id             UpdateAutomationRequest -> Automation (rename, reword, reschedule, on/off)
+ *   GET  /api/automations/:id/runs       AutomationHistory (newest first, optional before cursor)
  *   POST /api/automations/:id/run         { requestId } -> Run (now, outside the schedule)
  *   POST /api/automations/:id/delete      { requestId } -> {} (its runs and conversation stay)
  */
@@ -491,6 +503,7 @@ export interface Automation {
   nextAt: string | null;
   lastRun: { id: string; state: RunState; at: string; reply: string | null } | null;
 }
+export interface AutomationHistory { runs: Run[]; nextCursor: string | null }
 export interface NewAutomationRequest { requestId: string; name: string; goal: string; schedule: Schedule; enabled?: boolean }
 export interface UpdateAutomationRequest { requestId: string; patch: { name?: string; goal?: string; schedule?: Schedule; enabled?: boolean } }
 

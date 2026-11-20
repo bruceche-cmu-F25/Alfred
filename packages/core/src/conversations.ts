@@ -23,6 +23,10 @@ export interface Conversation {
   busy: number;
   /** Runs that need the user: a question waiting, or interrupted. */
   attention: number;
+  /** Latest ordinary reply the user has yet to see, shared across devices. */
+  unreadReplyId: string | null;
+  /** The transcript of the built-in brief before the user has spoken in it. */
+  briefOnly: boolean;
   /** The newest request in it, for a list preview. */
   lastGoal: string | null;
   /** The project it works in (a development session); null for an everyday conversation. Fixed at creation. */
@@ -56,6 +60,10 @@ export function titleFrom(goal: string): string {
 }
 
 const SELECT = `SELECT c.*,
+  EXISTS (SELECT 1 FROM core_automations a WHERE a.template = 'brief' AND a.conversation_id = c.id
+    AND NOT EXISTS (SELECT 1 FROM core_runs r WHERE r.conversation_id = c.id AND
+      (r.automation_id IS NOT a.id OR EXISTS (SELECT 1 FROM core_events e WHERE e.run_id = r.id
+        AND e.actor = 'user' AND e.kind IN ('run.steered', 'run.answered'))))) AS brief_only,
   (SELECT count(*) FROM core_runs r WHERE r.conversation_id = c.id AND r.state IN ('queued', 'running', 'cancelling')) AS busy,
   (SELECT count(*) FROM core_runs r WHERE r.conversation_id = c.id AND r.state IN ('waiting_input', 'waiting_permission', 'interrupted')) AS attention,
   (SELECT r.goal FROM core_runs r WHERE r.conversation_id = c.id ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1) AS last_goal
@@ -66,6 +74,8 @@ function toConversation(row: Record<string, unknown>): Conversation {
     id: row.id as string, title: row.title as string, createdAt: row.created_at as string, updatedAt: row.updated_at as string,
     archivedAt: row.archived_at as string | null, model: row.model as string | null, thinking: row.thinking as ThinkingLevel | null,
     busy: row.busy as number, attention: row.attention as number,
+    unreadReplyId: (row.unread_reply_id as string | null) ?? null,
+    briefOnly: row.brief_only === 1,
     lastGoal: row.last_goal ? String(row.last_goal).slice(0, 120) : null,
     projectId: (row.project_id as string | null) ?? null,
     mode: (row.mode as SessionMode | null) ?? null,
@@ -102,6 +112,22 @@ export function startSession(world: World, input: { projectId: string; title: st
 export function touchConversation(db: DatabaseSync, id: string, now: number): void {
   const changed = db.prepare("UPDATE core_conversations SET updated_at = ? WHERE id = ?").run(iso(now), id);
   if (changed.changes === 0) throw new ConversationError("missing");
+}
+
+/** Called inside the run's completion transaction; that event also refreshes the conversation list. */
+export function recordUnreadReply(db: DatabaseSync, conversationId: string, runId: string): void {
+  db.prepare(`UPDATE core_conversations SET unread_reply_id = ?
+    WHERE id = ? AND archived_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM core_proposals WHERE run_id = ? AND state = 'open')`).run(runId, conversationId, runId);
+}
+
+/** A slow read from another device must never clear a newer reply. Reading does not reorder the conversation. */
+export function markConversationReplyRead(world: World, conversationId: string, runId: string): void {
+  world.tx((db) => {
+    if (!db.prepare("SELECT 1 FROM core_conversations WHERE id = ?").get(conversationId)) throw new ConversationError("missing");
+    const changed = db.prepare("UPDATE core_conversations SET unread_reply_id = NULL WHERE id = ? AND unread_reply_id = ?").run(conversationId, runId);
+    if (changed.changes) appendEvent(db, { kind: "conversation.read", subject: `conversation:${conversationId}`, actor: "user", runId, payload: {}, now: Date.now() });
+  });
 }
 
 export function getConversation(world: World, id: string): Conversation {
@@ -170,7 +196,7 @@ export function updateConversation(
       }
     }
     if (change.archived !== undefined && change.archived !== (row.archived_at !== null)) {
-      db.prepare("UPDATE core_conversations SET archived_at = ? WHERE id = ?").run(change.archived ? iso(now) : null, id);
+      db.prepare("UPDATE core_conversations SET archived_at = ?, unread_reply_id = NULL WHERE id = ?").run(change.archived ? iso(now) : null, id);
       appendEvent(db, { kind: change.archived ? "conversation.archived" : "conversation.restored", subject: `conversation:${id}`, payload: {}, runId: null, now });
     }
   });

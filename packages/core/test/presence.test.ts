@@ -97,7 +97,7 @@ test("the welcome says what Alfred did while the user was away, not what the use
   reportPresence(w, { clientId: "mac", kind: "active", now: T0 });
   reportPresence(w, { clientId: "mac", kind: "away", now: T0 + MIN });
   // While away: a run adds a toy; the user's own phone edit is not news.
-  const { run } = submitRun(w, { requestId: "r1", goal: "add a kite", profile: "tasks", now: T0 + 2 * MIN });
+  const { run } = submitRun(w, { requestId: "r1", goal: "Add a kite and notify me when done.", profile: "tasks", now: T0 + 2 * MIN });
   claimNextRun(w, "home", { now: T0 + 2 * MIN });
   withCoreContext({ actor: "alfred", run: { id: run.id, owner: "home" } }, () => w.tx(() =>
     recordDomainEvent(w, { kind: "toy.added", subject: "toy:kite", payload: {}, now: T0 + 2.5 * MIN })));
@@ -107,7 +107,7 @@ test("the welcome says what Alfred did while the user was away, not what the use
   const back = reportPresence(w, { clientId: "mac", kind: "active", now: T0 + 40 * MIN });
   const digest = back.notice!.payload as { runs: { completed: number; goals: string[] }; changes: Record<string, number>; waiting: number };
   assert.equal(digest.runs.completed, 1);
-  assert.deepEqual(digest.runs.goals, ["add a kite"]);
+  assert.deepEqual(digest.runs.goals, ["Add a kite and notify me when done."]);
   assert.deepEqual(digest.changes, { toy: 1 });
   assert.equal(digest.waiting, 0, "a result is news, and the runs above say it: nothing here waits on the user");
 });

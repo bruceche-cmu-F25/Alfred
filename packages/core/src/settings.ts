@@ -14,6 +14,8 @@ export type Locale = (typeof LOCALES)[number];
 export interface UserSettings {
   /** The language Alfred speaks on every device. Null until a device sets it from its system language. */
   locale: Locale | null;
+  /** How the user wants Alfred to address them. Null until they have chosen a name. */
+  preferredName: string | null;
   /** The model a conversation uses unless it chose its own (`provider/model`); null: the engine's default. */
   model: string | null;
   /** The thinking level a conversation uses unless it chose its own; null: the model's default. */
@@ -24,7 +26,7 @@ export class SettingsError extends Error {
   override name = "SettingsError";
 }
 
-const DEFAULTS: UserSettings = { locale: null, model: null, thinking: null };
+const DEFAULTS: UserSettings = { locale: null, preferredName: null, model: null, thinking: null };
 const MODEL = /^[A-Za-z0-9._-]{1,64}\/[^\s/][^\s]{0,199}$/;
 
 export function getSettings(world: World): UserSettings {
@@ -50,6 +52,16 @@ function pick(value: Record<string, unknown>): Partial<UserSettings> {
   if ("locale" in value) {
     if (value.locale !== null && !LOCALES.includes(value.locale as Locale)) throw new SettingsError(`locale must be one of: ${LOCALES.join(", ")}`);
     out.locale = value.locale as Locale | null;
+  }
+  if ("preferredName" in value) {
+    const name = value.preferredName;
+    if (name === null) out.preferredName = null;
+    else {
+      if (typeof name !== "string" || /\p{Cc}/u.test(name)) throw new SettingsError("preferredName must be text without control characters");
+      const trimmed = name.trim();
+      if (!trimmed || trimmed.length > 80) throw new SettingsError("preferredName must be between 1 and 80 characters");
+      out.preferredName = trimmed;
+    }
   }
   if ("model" in value) {
     if (value.model !== null && (typeof value.model !== "string" || !MODEL.test(value.model))) throw new SettingsError("model is provider/model, or null");

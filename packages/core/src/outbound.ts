@@ -109,11 +109,15 @@ function end(world: World, db: DatabaseSync, outbound: Outbound, state: "done" |
     payload: { outboundId: outbound.id, module: outbound.module, action: outbound.action, preview: outbound.preview, ...(extra.error ? { error: extra.error.slice(0, 300) } : {}) },
   });
   if (outbound.quiet && state === "done") return load(db, outbound.id);
+  // The account a person needs when checking a Gmail send or Calendar change. Other payloads stay private.
+  const googleAction = (outbound.module === "mail" && outbound.action === "send") || outbound.module === "calendar";
+  const input = outbound.payload;
+  const account = googleAction && input && typeof input === "object" && "account" in input && typeof input.account === "string" ? input.account : null;
   createNotice(db, {
     eventSeq: event.seq, kind: "outbound", now,
     payload: {
       outboundId: outbound.id, module: outbound.module, action: outbound.action, state, preview: outbound.preview,
-      ...(outbound.proposalId ? { proposalId: outbound.proposalId } : {}), ...(extra.error ? { error: extra.error.slice(0, 300) } : {}),
+      ...(account ? { account } : {}), ...(outbound.proposalId ? { proposalId: outbound.proposalId } : {}), ...(extra.error ? { error: extra.error.slice(0, 300) } : {}),
     },
   });
   return load(db, outbound.id);

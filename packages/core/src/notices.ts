@@ -9,6 +9,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { noticeClass, type NoticeClass } from "./attention.ts";
 import { appendEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
+import { refreshResultRecaps } from "./result-delivery.ts";
 import { NOTICE_STATES } from "./schema.ts";
 import type { World } from "./world.ts";
 
@@ -114,15 +115,28 @@ export function isOpen(notice: Pick<Notice, "state" | "claimUntil">, now: number
 
 /** Undelivered notices, oldest first. When there are more than `limit`, the newest ones: old notices nobody
  * dismissed must not keep a new one from being told. A lapsed claim counts as pending again. */
-export function listNotices(world: World, options: { states?: NoticeState[]; limit?: number; now?: number } = {}): Notice[] {
+export function listNotices(world: World, options: {
+  states?: NoticeState[]; limit?: number; now?: number; includeNeedsYou?: boolean; hiddenConversations?: readonly string[];
+} = {}): Notice[] {
   const now = options.now ?? Date.now();
   const states = options.states ?? ["pending", "claimed"];
   for (const state of states) if (!NOTICE_STATES.includes(state)) throw new Error("Unknown notice state");
   const limit = Math.min(Math.max(Math.trunc(options.limit ?? 50), 1), 200);
   return world.tx((db) => {
     expire(db, now);
-    return db.prepare(`SELECT * FROM core_notices WHERE state IN (SELECT value FROM json_each(?))
-      ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(JSON.stringify(states), limit).map(toNotice).reverse();
+    const scope = `FROM core_notices WHERE state IN (SELECT value FROM json_each(?))
+      AND coalesce(json_extract(payload, '$.conversationId'), '') NOT IN (SELECT value FROM json_each(?))`;
+    const args = [JSON.stringify(states), JSON.stringify(options.hiddenConversations ?? [])];
+    const recent = db.prepare(`SELECT *, rowid AS position ${scope} ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(...args, limit);
+    if (options.includeNeedsYou && recent.length === limit) {
+      const boundary = recent[limit - 1];
+      // Ordinary results and greetings never require a decision. Inspect the remaining candidates using the
+      // same classification as delivery, including receipts whose significance depends on the outcome.
+      const older = db.prepare(`SELECT * ${scope} AND kind NOT IN ('run_result', 'welcome') AND (created_at, rowid) < (?, ?)
+        ORDER BY created_at, rowid`).all(...args, boundary.created_at, boundary.position).map(toNotice);
+      return [...older.filter((notice) => notice.class === "needs_you"), ...recent.map(toNotice).reverse()];
+    }
+    return recent.map(toNotice).reverse();
   });
 }
 
@@ -184,6 +198,7 @@ export function acknowledgeNotice(world: World, id: string, options: { now?: num
     if (notice.state === "acknowledged") return notice;
     if (notice.state === "expired") throw new NoticeStateError("state");
     db.prepare("UPDATE core_notices SET state = 'acknowledged', claimed_by = NULL, claim_until = NULL, updated_at = ? WHERE id = ?").run(iso(now), id);
+    if (notice.kind === "run_result" && notice.payload.delivery === "inbox") refreshResultRecaps(db, [notice.createdAt]);
     appendEvent(db, { kind: "notice.acknowledged", subject: `notice:${id}`, actor: "user", runId: null, now, payload: { noticeId: id, kind: notice.kind } });
     return load(db, id);
   });

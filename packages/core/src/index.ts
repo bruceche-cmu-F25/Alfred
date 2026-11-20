@@ -13,11 +13,11 @@ export {
 } from "./events.ts";
 export {
   submitRun, claimNextRun, heartbeatRun, finishRun, requestCancel, resumeRun, sweepRuns, interruptOrphanedRuns,
-  getRun, listRuns, conversationBefore, RunError, RUN_LEASE_MS, openRequest, answerRequest, runAnswers, PERMISSION_ANSWERS,
+  getRun, listRuns, listAutomationRuns, conversationBefore, RunError, RUN_LEASE_MS, openRequest, answerRequest, runAnswers, PERMISSION_ANSWERS,
   type Run, type RunOutcome, type RunRequest, type RunState, type SubmitRunInput, type ViewContext, viewContext,
 } from "./runs.ts";
 export {
-  getConversation, listConversations, updateConversation, startSession, isSession, runInSession, sessionIds, sessionEvent, titleFrom, ConversationError, CONVERSATION_ID, THINKING_LEVELS,
+  getConversation, markConversationReplyRead, listConversations, updateConversation, startSession, isSession, runInSession, sessionIds, sessionEvent, titleFrom, ConversationError, CONVERSATION_ID, THINKING_LEVELS,
   type Conversation, type ThinkingLevel,
 } from "./conversations.ts";
 export {

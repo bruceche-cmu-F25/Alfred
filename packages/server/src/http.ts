@@ -16,7 +16,7 @@ import type { AddressInfo } from "node:net";
 import { extname, join, normalize, sep } from "node:path";
 import {
   AREAS, getSettings, listOpenProposals, userLocale, withCoreContext, listAutomations, type World,
-  acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
+  acknowledgeNotice, answerRequest, claimNotice, getConversation, markConversationReplyRead, getRun, listAutomationRuns, getAutomation, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
   getProject, listProjects, getFile, listRunFiles, isSession, runInSession, sessionEvent, sessionIds,
@@ -99,18 +99,18 @@ function state(home: Home, peer: Peer): StateResponse {
   for (const module of home.modules) if (module.snapshot) modules[module.id] = module.snapshot(home.world);
   // A device without `dev` gets a development session's title and whether it is busy, and nothing it said or did.
   const hidden = mayDev(peer) ? null : sessionIds(home.world);
-  const runs = listRuns(home.world, { limit: 50 }).filter((run) => !hidden?.has(run.conversationId));
+  const hiddenConversations = hidden ? [...hidden] : [];
+  const runs = listRuns(home.world, { limit: 50, includeWaiting: true, hiddenConversations });
   const views: StateResponse["views"] = {};
   for (const module of home.modules) if (module.views?.length) views[module.id] = module.views.map((view) => ({ id: view.id, title: view.title }));
   return {
     protocol: PROTOCOL_VERSION,
     cursor: latestEventSeq(home.world),
-    conversations: listConversations(home.world).map((conversation) => (hidden?.has(conversation.id) ? { ...conversation, lastGoal: null, commands: [] } : conversation)),
+    conversations: listConversations(home.world).map((conversation) => (hidden?.has(conversation.id) ? { ...conversation, lastGoal: null, commands: [], unreadReplyId: null } : conversation)),
     runs,
     receipts: listRunReceipts(home.world, runs.map((run) => run.id)),
     // Presented ones too: the device that showed one keeps showing it until acknowledged.
-    notices: listNotices(home.world, { states: ["pending", "claimed", "presented"] })
-      .filter((notice) => !hidden?.has(String(notice.payload.conversationId ?? ""))),
+    notices: listNotices(home.world, { states: ["pending", "claimed", "presented"], includeNeedsYou: true, hiddenConversations }),
     modules,
     views,
     areas: [...AREAS],
@@ -132,7 +132,7 @@ function sessionWrites(home: Home, conversationId: string): ChangedFile[] {
 
 function conversationDetail(home: Home, id: string): ConversationDetail {
   const conversation = getConversation(home.world, id);
-  const runs = listRuns(home.world, { conversationId: id, limit: 100 }).reverse();
+  const runs = listRuns(home.world, { conversationId: id, limit: 100, includeWaiting: true }).reverse();
   const ids = runs.map((run) => run.id);
   return { conversation, runs, receipts: listRunReceipts(home.world, ids), activity: listRunActivity(home.world, ids), files: listRunFiles(home.world, ids) };
 }
@@ -331,6 +331,14 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   if (method === "POST" && path === "/api/projects") return send(res, 200, (await ask("project.add")).result);
   const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
   if (project && method === "POST") return send(res, 200, (await ask(`project.${project[2]}`, { id: project[1] })).result);
+  const readReply = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/read$/.exec(path);
+  if (readReply && method === "POST") {
+    needDev(isSession(home.world, readReply[1]));
+    const { runId } = await readJson<{ runId?: unknown }>(req);
+    if (typeof runId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(runId)) throw new HttpError(400, "runId is required");
+    markConversationReplyRead(home.world, readReply[1], runId);
+    return send(res, 200, {});
+  }
   const conversation = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})$/.exec(path);
   if (conversation) needDev(isSession(home.world, conversation[1]));
   if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
@@ -473,6 +481,14 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   if (method === "POST" && path === "/api/automations") {
     const made = (await ask("automation.create")).result as { id: string };
     return send(res, 200, automationView(home.world, made.id) ?? made);
+  }
+  const history = /^\/api\/automations\/([A-Za-z0-9_-]{1,64})\/runs$/.exec(path);
+  if (history && method === "GET") {
+    const rule = getAutomation(home.world, history[1]);
+    if (rule.conversationId) needDev(isSession(home.world, rule.conversationId));
+    const before = url.searchParams.get("before");
+    if (before !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(before)) throw new HttpError(400, "Invalid history cursor");
+    return send(res, 200, listAutomationRuns(home.world, rule.id, before));
   }
   const automation = /^\/api\/automations\/([A-Za-z0-9_-]{1,64})(?:\/(run|delete))?$/.exec(path);
   if (automation && method === "POST") {
