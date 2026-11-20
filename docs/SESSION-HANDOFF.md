@@ -54,7 +54,7 @@ Alfred 是从 pi-web-robin 抽出来的开源个人助手 harness：一个常驻
 | 多文件输入的剩余部分：扫描件转图片、对话删除时删文件、真实模型下验证 | 第一版已做（2026-11-19） | `docs/design/attachments.md` §2、§3 |
 | 开发页浏览器的第三步（Alfred 点和填）、截图给模型、后台进程；整套在真的 Alfred.app 里验证 | 终端和"能看、Alfred 能读"的浏览器已做第一版（2026-11-19） | `docs/design/dev-terminal-browser.md` §4、§5 |
 | 日常页"少说话"：底部一行、就地改 | Bruce 已选"底部一行"；只有原型，没有设计文档，没进应用 | `prototype/less-talk.html` |
-| 开发模式 D5：worktree、提交和开 PR 的按钮、后台进程面板 | 没做 | `docs/design/dev-mode.md` §6 |
+| 开发模式 D5：worktree、提交和开 PR 的按钮、后台进程面板 | **已做（2026-11-20，未提交）**；没对真实 GitHub 推送过 | `docs/design/dev-mode.md` §6 |
 | 语音：快速对话热键、词表、形象的"在听"状态、打包 Python | 没做 | `docs/research/voice-input.md` |
 | 注意力 A6：语音出口 | 排在后面 | `docs/design/attention.md` |
 | 远程访问的 tsnet 版本 | 以后 | `docs/research/remote-access.md` |
@@ -62,6 +62,24 @@ Alfred 是从 pi-web-robin 抽出来的开源个人助手 harness：一个常驻
 | 打包 Alfred.app | 按计划留到最后 | |
 | Google 应用验证（公开发布前） | 没做；现在是"已发布、未验证"，上限 100 人 | 设置与连接 §3.1 |
 | 公开名字 | "Alfred" 和一个知名 macOS 应用重名，发布前要换 | |
+
+### 5.1 结构上看到、还没动的（2026-11-20）
+
+提交 `ed7cbda` 整理结构时看过、留下没改的两处。改法已经想好，都还没做。
+
+**`http.ts` 的 `route()`：值得改，等 Bruce 说做。** 问题不在长（216 行），在"只许本机"的判断散在两处：`dispatch` 拦三条（`/api/connections`、`/api/skills`、POST `/api/projects`），`route()` 里又各自拦两条（`/api/desktop/requests`、会话的终端）。改法：
+
+1. 在 `dispatch` 里放一张"只许本机的地址"表，五条都在里面，判断一次；`route()` 里那两处删掉。加一个测试：配对的设备访问这五条，都是 403 `local_only`。
+2. 新建 `sessions-http.ts`（形状照 `connections-http.ts`），项目、会话、终端、改动和 diff 搬过去，约 70 行；`route()` 剩约 140 行，都是一两行一条的命令转发，不再拆。
+
+`needDev` 进不了那张表：它要先查这条对话、这个 run、这个文件是不是开发会话的，留在用的地方。行为不变，没配对仍然先答 401。
+
+**日历和邮件的同步：先不动，接第三个按账号镜像的服务时再合。** `syncCalendar` 和 `syncMail` 相同的是账号状态这一套（挑可读的账号、清掉断开的、逐个读、出错记错误和要不要重连、成功记时间和摘要、变了才发事件），不同的只有怎么读、读到的怎么存。两种改法：
+
+- 只抽循环和出错判断、表不动：每边省十来行，要传五六个回调。不值得，不要这样做。
+- 把"账号来源"这一行（现在是 `calendar_sources`、`mail_sources` 各一张，列不一样）收成 module-kit 里一张共用的表，状态整个由它管，模块只交三样：怎么读、怎么存、账号没了删什么。每个模块省约 45 行，"要重连"只剩一处。代价是两张表要迁移，读状态的地方和测试跟着改。
+
+现在的计划里没有第三个这样的服务，所以没到做的时候；到了就按第二种做。
 
 ## 6. Robin 里有、Alfred 里还没有的
 
@@ -100,7 +118,7 @@ Alfred 是从 pi-web-robin 抽出来的开源个人助手 harness：一个常驻
 ### 6.3 建议的顺序（还没定）
 
 1. **Links**：小，独立，顺便把"搬一个模块"的流程走顺（规则、测试、只读导入旧数据、Robin 侧停写）。
-2. **Notes 第一刀**（草稿 → Obsidian）。
+2. **Notes**：方案在 `docs/design/notes.md`（2026-11-20 **已批准**，第 8 节六条都按建议）。它把"草稿 → 归档到 Obsidian"改成了"Alfred 自己的笔记系统：笔记从一开始就是一个文件夹里的 `.md`"。Bruce 定的：库默认是 Alfred 新建的 `Alfred Notes`，和 Obsidian 的库分开；新笔记落在里面的「随手记」；Obsidian 的钩子挪到最后、可选。分 N1 读、N2 写、N3 和 Links 连、N4 可选。原型 `prototype/notes.html` 做了（Bruce 还没看过）；代码没开始，下一步 N1 和 N2 连着做。
 3. **Gmail 回顾的另一半 + 周计划**：都落在已有的日历 / 邮件 / 提议上，和"少说话"一起设计。
 4. **语音层**（Higgs）：先设计文档，再建。它决定 Alfred 像不像"一个在场的助手"，但要先定数据流和打断规则。
 5. **Learning Hub**：先数据和首页，后教练。
@@ -109,7 +127,7 @@ Alfred 是从 pi-web-robin 抽出来的开源个人助手 harness：一个常驻
 ### 6.4 要 Bruce 定的
 
 1. 求职、外联、产品实验室、研究台：哪些现在还在用？不用的不搬。
-2. Notes 的 Canvas 和 Mind map 要不要进 Alfred，还是只要草稿 → Obsidian？
+2. ~~Notes 的 Canvas 和 Mind map 要不要进 Alfred，还是只要草稿 → Obsidian？~~ 已定（2026-11-20）：不搬；笔记按 `docs/design/notes.md` 做。
 3. Higgs：继续用 Boson 的云端 Realtime，还是等本地全双工模型（见 `docs/research/full-duplex-voice.md`）？私人查询结果进不进 Boson？
 4. Telegram 还要不要？
 5. 个人模块放哪：本仓库（公开）里，还是一个私有的模块目录？这决定求职、学习这些怎么搬。
@@ -134,6 +152,7 @@ Node 24 以上，直接运行 `.ts`（只用可擦除的语法）。原型用 `.
 - `docs/design/dev-mode.md`：日常与开发（已批准）。
 - `docs/design/settings-and-connections.md`：设置、Google、模型、连接器。
 - `docs/design/attention.md`：注意力（已批准）。
+- `docs/design/notes.md`：笔记和 Obsidian（已批准，没开始做）。
 - `docs/research/`：形象、视觉、远程访问、语音输入、全双工语音、工作台能力。
 
 ## 9. 这一轮的状态（2026-11-19 结束时）
