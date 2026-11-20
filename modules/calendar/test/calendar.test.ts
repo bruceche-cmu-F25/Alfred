@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CORE_MIGRATIONS, listEvents as coreEvents, openWorld, type World } from "@alfred/core";
 import { ServiceError, type GoogleService } from "@alfred/module-kit";
-import { calendarModule, describeEvents, mapEvent, syncCalendar, type CalendarSnapshot } from "../src/index.ts";
+import { calendarModule, describeEvents, mapEvent, mirrorWindow, syncCalendar, type CalendarSnapshot } from "../src/index.ts";
 
 const world = (): World => openWorld(":memory:", [...CORE_MIGRATIONS, ...calendarModule.migrations]);
 /** Local time on the home node, as Google would send it (an instant). 2026-11-19 is a Thursday. */
@@ -105,7 +105,8 @@ test("an account that cannot be read keeps its last events and says why; one dis
   assert.match(describeEvents(w, "2026-11-19", "2026-11-19"), /Could not read me@example\.com just now/);
 
   await syncCalendar(w, { google: fakeGoogle({}, { accounts: () => [] }) }, undefined, NOW);
-  assert.deepEqual((calendarModule.snapshot!(w) as CalendarSnapshot), { today: "2026-11-19", from: "2026-11-12", to: "2026-12-24", events: [], pending: [], sources: [] });
+  const empty = calendarModule.snapshot!(w) as CalendarSnapshot;
+  assert.deepEqual(empty, { today: empty.today, ...mirrorWindow(empty.today), events: [], pending: [], sources: [] });
   assert.match(describeEvents(w, "2026-11-19", "2026-11-19"), /not connected/);
   await syncCalendar(w, {}, undefined, NOW);
 });
@@ -119,4 +120,10 @@ test("Alfred reads the schedule with calendar_list, a week by default", async ()
   const text = tool.execute(w, {} as never);
   assert.match(text, /10:00–11:00 Review/);
   assert.equal(text.split("\n").filter((line) => /^\w{3} \d{4}-/.test(line)).length, 7);
+});
+
+test("the mirror holds this month and the next, whole, with a week on either side", () => {
+  assert.deepEqual(mirrorWindow("2026-11-19"), { from: "2026-10-25", to: "2027-01-07" });
+  assert.deepEqual(mirrorWindow("2026-12-01"), { from: "2026-11-24", to: "2027-02-07" }, "on the 1st: still a week back, and across the year");
+  assert.deepEqual(mirrorWindow("2027-01-31"), { from: "2026-12-25", to: "2027-03-07" }, "February ends on its own last day");
 });

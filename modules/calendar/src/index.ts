@@ -1,7 +1,7 @@
 /** The calendar module: the user's Google Calendar, mirrored for reading (docs/design/workspace-architecture.md W6).
  *
  * Google is the source of truth; Alfred keeps no second calendar. A sync every few minutes reads each connected
- * account's shown calendars, a week back to five weeks ahead, and replaces that account's events here. Devices and
+ * account's shown calendars, this month and the next (and a week on either side), and replaces that account's events here. Devices and
  * runs read the mirror, so a question about the schedule never waits on Google. Writing (moving a meeting, holding
  * time) is only ever proposed by a run; the user adds and changes events themselves on the calendar page. Either way
  * the change is delivered by write.ts, and what Google answers is written into the mirror at once.
@@ -19,7 +19,12 @@ export { calendarSources } from "./mirror.ts";
 export { mapEvent, addDays, type GoogleEvent } from "./google.ts";
 export { deliverCalendar, newEventId, type AddInput, type DeleteInput, type EditInput, type MoveInput, type RespondInput } from "./write.ts";
 
-const WINDOW = { back: 7, ahead: 35 };
+/** The days the mirror holds: this month and the next, whole, with a week before and after (the days a month's page
+ * shows of its neighbours). So the month the user is in is all there, and never less than a week back. */
+export function mirrorWindow(today: string): { from: string; to: string } {
+  const [y, m] = today.split("-").map(Number);
+  return { from: addDays(`${today.slice(0, 8)}01`, -7), to: addDays(localDate(new Date(y, m + 1, 0)), 7) };
+}
 const MIGRATIONS = [{
   id: "calendar:1",
   sql: `
@@ -114,7 +119,8 @@ export async function syncCalendar(world: World, services: ModuleServices, signa
     let failure: { error: string; reconnect: boolean } | null = null;
     try {
       const session = await google!.session(account);
-      result = await readAccount(session, addDays(today, -WINDOW.back), addDays(today, WINDOW.ahead), signal);
+      const window = mirrorWindow(today);
+      result = await readAccount(session, window.from, window.to, signal);
     } catch (error) {
       if (signal?.aborted) return;
       failure = { error: (error as Error).message.slice(0, 300), reconnect: error instanceof ServiceError && error.code === "reconnect" };
@@ -227,7 +233,7 @@ export const calendarModule = defineModule({
   ].join(" "),
   snapshot(world): CalendarSnapshot {
     const today = localDate();
-    const from = addDays(today, -WINDOW.back), to = addDays(today, WINDOW.ahead);
+    const { from, to } = mirrorWindow(today);
     return { today, from, to, events: listEvents(world, from, to), pending: pendingChanges(world), sources: calendarSources(world) };
   },
   sync: { everyMs: 5 * 60_000, run: syncCalendar },

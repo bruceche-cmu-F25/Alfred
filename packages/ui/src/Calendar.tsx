@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { CalendarEvent, CalendarPending, CalendarSnapshot, CalendarSource, CalendarWhen } from "@alfred/module-calendar/types";
 import { api } from "./api.ts";
@@ -14,6 +14,8 @@ const parse = (day: string) => { const [y, m, d] = day.split("-").map(Number); r
 const addDays = (day: string, n: number) => { const date = parse(day); date.setDate(date.getDate() + n); return ymd(date); };
 /** Weeks start on Monday. */
 const mondayOf = (day: string) => addDays(day, -((parse(day).getDay() + 6) % 7));
+const firstOf = (day: string) => `${day.slice(0, 8)}01`;
+const addMonths = (first: string, n: number) => { const date = parse(first); return ymd(new Date(date.getFullYear(), date.getMonth() + n, 1)); };
 const hhmm = (iso: string) => { const date = new Date(iso); return `${pad(date.getHours())}:${pad(date.getMinutes())}`; };
 const minutesOf = (iso: string) => { const date = new Date(iso); return date.getHours() * 60 + date.getMinutes(); };
 const key = (event: Pick<CalendarEvent, "account" | "calendarId">) => `${event.account}|${event.calendarId}`;
@@ -129,13 +131,28 @@ const whenText = (event: CalendarEvent) => event.allDay || !event.start
   ? `${event.startDate}${event.endDate !== event.startDate ? ` – ${event.endDate}` : ""} · ${t("cal.allDay")}`
   : `${parse(event.startDate).toLocaleDateString(intlLocale(), { weekday: "short", month: "short", day: "numeric" })} ${hhmm(event.start)} – ${hhmm(event.end!)}`;
 
+/** What opens over the calendar: a card in the middle of the window, the page blurred behind it. One event's details,
+ * the event being typed, and the question before a delete are all shown this way, one at a time in the same place.
+ * Escape, or a click beside the card, puts it away. */
+function Pop({ onClose, children }: { onClose(): void; children: ReactNode }) {
+  useEffect(() => {
+    const escape = (press: KeyboardEvent) => { if (press.key === "Escape" && !press.isComposing) onClose(); };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  });
+  return createPortal(
+    <div className="ev-pop" role="presentation" onMouseDown={(down) => { if (down.target === down.currentTarget) onClose(); }}>{children}</div>,
+    document.body,
+  );
+}
+
 function EventCard({ event, onClose, onEdit, onDelete }: { event: Shown; onClose(): void; onEdit?: () => void; onDelete?: () => void }) {
   const when = whenText(event);
   return (
-    <div className="ev-card" data-k={event.k} role="dialog" aria-label={event.title}>
+    <div className="ev-edit ev-view" data-k={event.k} role="dialog" aria-modal="true" aria-label={event.title}>
       <div className="ev-card-head">
-        <b>{event.title}</b>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")}>×</button>
+        <b><span className="mark" data-k={event.k} />{event.title}</b>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")} autoFocus>×</button>
       </div>
       <p>{when}</p>
       {event.location && <p><Linked text={event.location} /></p>}
@@ -147,7 +164,7 @@ function EventCard({ event, onClose, onEdit, onDelete }: { event: Shown; onClose
       </p>
       <p className="ev-card-links">
         {onEdit && <button type="button" className="link" onClick={onEdit}>{t("cal.edit")}</button>}
-        {onDelete && <button type="button" className="link" onClick={onDelete}>{t("cal.delete")}</button>}
+        {onDelete && <button type="button" className="link ev-delete" onClick={onDelete}>{t("cal.delete")}</button>}
         {event.meeting && <OutLink href={event.meeting}>{t("cal.join")}</OutLink>}
         {event.link && <OutLink href={event.link}>{t("cal.open")}</OutLink>}
         {event.pending && <span className="quiet">{t("cal.pending")}</span>}
@@ -172,26 +189,21 @@ function DeleteAsk({ event, onClose, onDeleted }: { event: CalendarEvent; onClos
     }).catch((reason: Error) => setError(reason.message)).finally(() => setBusy(false));
   };
   const hint = event.attendees > 1 ? t("cal.tellsGuests", { n: event.attendees - 1 }) : event.recurring ? t("cal.deleteOne") : "";
-  return createPortal(
-    <div className="ev-pop" role="presentation" onMouseDown={(down) => { if (down.target === down.currentTarget) onClose(); }}>
-      <div className="ev-edit ev-ask" data-k={event.k} role="alertdialog" aria-modal="true" aria-label={t("cal.deleteAsk", { title: event.title })}
-        onKeyDown={(press) => { if (press.key === "Escape") onClose(); }}>
-        <b>{t("cal.deleteAsk", { title: event.title })}</b>
-        <p>{whenText(event)}{hint && ` · ${hint}`}</p>
-        <div className="ev-foot">
-          <span className={error ? "ev-error" : undefined} role={error ? "alert" : undefined}>{error}</span>
-          <button type="button" className="ghost" onClick={onClose} autoFocus>{t("common.cancel")}</button>
-          <button type="button" className="danger" disabled={busy} onClick={remove}>{t(busy ? "cal.deleting" : "cal.delete")}</button>
-        </div>
+  return (
+    <div className="ev-edit ev-ask" data-k={event.k} role="alertdialog" aria-modal="true" aria-label={t("cal.deleteAsk", { title: event.title })}>
+      <b>{t("cal.deleteAsk", { title: event.title })}</b>
+      <p>{whenText(event)}{hint && ` · ${hint}`}</p>
+      <div className="ev-foot">
+        <span className={error ? "ev-error" : undefined} role={error ? "alert" : undefined}>{error}</span>
+        <button type="button" className="ghost" onClick={onClose} autoFocus>{t("common.cancel")}</button>
+        <button type="button" className="danger" disabled={busy} onClick={remove}>{t(busy ? "cal.deleting" : "cal.delete")}</button>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 
-/** The event being typed, in a card over the page (the page behind it is blurred): its title, when it is, where it
- * goes, and Save. Saving is the user's yes: it goes to Google with no proposal in between, and `onSaved` gets what to
- * draw until Google answers. Escape, or a click beside the card, puts it away. */
+/** The event being typed: its title, when it is, where it goes, and Save. Saving is the user's yes: it goes to Google
+ * with no proposal in between, and `onSaved` gets what to draw until Google answers. */
 function EventEditor({ draft, targets, k, range, onChange, onClose, onSaved, onDelete }: {
   draft: Draft; targets: Target[]; k: string; range: { from: string; to: string };
   onChange(next: Draft): void; onClose(): void; onSaved(change: CalendarPending): void; onDelete?: () => void;
@@ -240,10 +252,9 @@ function EventEditor({ draft, targets, k, range, onChange, onClose, onSaved, onD
   };
 
   const hint = event && event.attendees > 1 ? t("cal.tellsGuests", { n: event.attendees - 1 }) : event?.recurring ? t("cal.onlyThis") : "";
-  return createPortal(
-    <div className="ev-pop" role="presentation" onMouseDown={(down) => { if (down.target === down.currentTarget) onClose(); }}>
+  return (
     <form className="ev-edit" data-k={k} role="dialog" aria-modal="true" aria-label={t(event ? "cal.edit" : "cal.newEvent")} onSubmit={save}
-      onKeyDown={(press) => { if (press.nativeEvent.isComposing) return; if (press.key === "Escape") onClose(); else if (press.key === "Enter" && (press.metaKey || press.ctrlKey)) save(); }}>
+      onKeyDown={(press) => { if (!press.nativeEvent.isComposing && press.key === "Enter" && (press.metaKey || press.ctrlKey)) save(); }}>
       <div className="ev-card-head">
         <input className="ev-title" value={draft.title} onChange={(change) => set({ title: change.target.value })} placeholder={t("cal.title")} aria-label={t("cal.title")} maxLength={300} autoFocus />
         <button type="button" className="icon-btn" onClick={onClose} aria-label={t("common.close")}>×</button>
@@ -280,8 +291,6 @@ function EventEditor({ draft, targets, k, range, onChange, onClose, onSaved, onD
         <button type="submit" disabled={!when || !draft.title.trim() || saving}>{t(saving ? "cal.saving" : "cal.save")}</button>
       </div>
     </form>
-    </div>,
-    document.body,
   );
 }
 
@@ -345,10 +354,80 @@ function CalendarPicker({ sources, hidden, onToggle }: { sources: CalendarSource
   );
 }
 
-/** The calendar page: the user's Google Calendar, a week at a time. */
+/** The page shows a week (its hours) or a month (its days); which, this device remembers. */
+type View = "week" | "month";
+const VIEW_KEY = "alfred.calendar.view";
+function savedView(): View {
+  try { return localStorage.getItem(VIEW_KEY) === "month" ? "month" : "week"; } catch { return "week"; }
+}
+
+/** How tall a day's number and one of its events are in the month, for working out how many events a day has room for. */
+const MONTH_HEAD = 32, MONTH_ROW = 22;
+
+/** A month as weeks of days: each day's events by name, as many as its box has room for, and how many more there
+ * are. A day's number opens its week; an empty part of the day starts a new event on it. In a narrow page a day is
+ * its number over a dot per colour, and the whole of it opens its week. */
+function MonthGrid({ days, month, today, events, known, canAdd, onOpen, onAdd, onDay }: {
+  days: string[]; month: string; today: string; events: Shown[];
+  known(day: string): boolean; canAdd(day: string): boolean; onOpen(event: Shown): void; onAdd(day: string): void; onDay(day: string): void;
+}) {
+  const body = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState(3);
+  const weeks = days.length / 7;
+  useEffect(() => {
+    const element = body.current;
+    if (!element) return;
+    const measure = () => setRoom(Math.max(2, Math.floor((element.clientHeight / weeks - MONTH_HEAD) / MONTH_ROW)));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [weeks]);
+  const label = (day: string, options: Intl.DateTimeFormatOptions) => parse(day).toLocaleDateString(intlLocale(), options);
+  return (
+    <div className="month-grid">
+      <div className="mo-head">{days.slice(0, 7).map((day) => <span key={day}>{label(day, { weekday: "short" })}</span>)}</div>
+      <div className="mo-body" ref={body}>
+        {days.map((day) => {
+          const todays = events.filter((event) => event.startDate <= day && event.endDate >= day);
+          const fits = todays.length > room ? room - 1 : todays.length;
+          const whole = label(day, { month: "short", day: "numeric" });
+          return (
+            <div key={day} className="mo-cell" data-today={day === today || undefined} data-past={day < today || undefined} data-other={!day.startsWith(month.slice(0, 7)) || undefined}
+              data-weekend={parse(day).getDay() % 6 === 0 || undefined} data-unread={!known(day) || undefined} data-open={canAdd(day) || undefined}
+              onClick={(click) => {
+                if (click.target !== click.currentTarget) return;
+                // In a narrow page (the dots are what shows) a day is one thing to tap.
+                if (click.currentTarget.querySelector<HTMLElement>(".mo-dots")?.offsetParent) onDay(day);
+                else if (canAdd(day)) onAdd(day);
+              }}>
+              <button type="button" className="mo-day" onClick={() => onDay(day)} aria-label={t("cal.openDay", { day: whole })}>{day.endsWith("-01") ? whole : parse(day).getDate()}</button>
+              {todays.slice(0, fits).map((event) => inGrid(event) ? (
+                <button type="button" key={event.id} className="mo-ev" data-k={event.k} data-declined={event.response === "declined" || undefined}
+                  data-pending={event.pending || undefined} data-draft={event.draft || undefined} onClick={() => onOpen(event)}>
+                  <span className="mark" data-k={event.k} /><time>{hhmm(event.start!)}</time><span>{event.title}</span>
+                </button>
+              ) : (
+                <button type="button" key={event.id} className="ev ev-chip" data-k={event.k} data-declined={event.response === "declined" || undefined}
+                  data-pending={event.pending || undefined} data-draft={event.draft || undefined} onClick={() => onOpen(event)}>{event.title}</button>
+              ))}
+              {todays.length > fits && <button type="button" className="mo-more" onClick={() => onDay(day)}>{t("cal.more", { n: todays.length - fits })}</button>}
+              <span className="mo-dots" aria-hidden="true">{[...new Set(todays.map((event) => event.k))].slice(0, 4).map((k) => <span key={k} className="mark" data-k={k} />)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The calendar page: the user's Google Calendar, a week or a month at a time. */
 export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined }) {
   const today = snapshot?.today ?? ymd(new Date());
+  const [view, setView] = useState<View>(savedView);
   const [week, setWeek] = useState(() => mondayOf(today));
+  /** The month shown, as its first day. */
+  const [month, setMonth] = useState(() => firstOf(today));
   const [hidden, setHidden] = useState<ReadonlySet<string>>(savedHidden);
   const [picked, setPicked] = useState<Pick<CalendarEvent, "account" | "id"> | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -367,13 +446,21 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
   useEffect(() => setSent([]), [snapshot]);
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(week, index)), [week]);
-  const last = days[6];
+  /** The month's weeks, whole: from the Monday on or before its first day. */
+  const monthDays = useMemo(() => {
+    const start = mondayOf(month);
+    const weeks = Math.ceil((dayDiff(start, addDays(addMonths(month, 1), -1)) + 1) / 7);
+    return Array.from({ length: weeks * 7 }, (_, index) => addDays(start, index));
+  }, [month]);
+  /** The days on the page. */
+  const visible = view === "month" ? monthDays : days;
+  const first = visible[0], last = visible[visible.length - 1];
   /** Where a new event may go: the calendars the user may change, their main one first. And when: the days the mirror
    * holds, since an event outside them would not be seen again here. */
   const targets: Target[] = sources.flatMap((source) => source.canWrite ? source.calendars.filter((calendar) => calendar.writable).map((calendar) => ({ account: source.account, id: calendar.id, name: calendar.name, k: calendar.k })) : []);
   const range = { from: snapshot?.from ?? addDays(today, -7), to: snapshot?.to ?? addDays(today, 35) };
   const inRange = (day: string) => day >= range.from && day <= range.to;
-  const outside = week > range.to || last < range.from;
+  const outside = first > range.to || last < range.from;
 
   const events = useMemo(() => withPending(snapshot?.events ?? [], [...(snapshot?.pending ?? []), ...sent], sources), [snapshot, sent]);
   const pickedEvent = picked ? events.find((event) => same(event, picked)) ?? null : null;
@@ -386,7 +473,7 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
         title: draft.title.trim() || t("cal.newEvent"), location: draft.location.trim() || undefined, ...whenFields(draftWhenNow), draft: true,
       }]
     : events;
-  const shown = drawn.filter((event) => (event.draft || !hidden.has(key(event))) && event.endDate >= week && event.startDate <= last)
+  const shown = drawn.filter((event) => (event.draft || !hidden.has(key(event))) && event.endDate >= first && event.startDate <= last)
     .sort((a, b) => a.startDate.localeCompare(b.startDate) || Number(inGrid(a)) - Number(inGrid(b)) || (a.start ?? "").localeCompare(b.start ?? ""));
   const timed = shown.filter(inGrid);
   const banner = shown.filter((event) => !inGrid(event));
@@ -399,7 +486,7 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
   useEffect(() => {
     const at = week === mondayOf(today) ? Math.max(from, new Date().getHours() - 1) : Math.max(from, 8);
     if (scroller.current) scroller.current.scrollTop = (at - from) * HOUR;
-  }, [week, from, today]);
+  }, [week, from, today, view]);
 
   const label = (day: string, options: Intl.DateTimeFormatOptions) => parse(day).toLocaleDateString(intlLocale(), options);
   const toggle = (calendar: string) => setHidden((current) => {
@@ -411,6 +498,16 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
   const nowDate = new Date(now);
   const nowTop = ((nowDate.getHours() - from) * 60 + nowDate.getMinutes()) / 60 * HOUR;
 
+  const show = (next: View, day?: string) => {
+    // Going over to the other view stays where the user is: today's week or month if it is on the page.
+    const here = today >= first && today <= last;
+    if (next === "month") setMonth(firstOf(day ?? (here ? today : addDays(week, 3))));
+    else setWeek(mondayOf(day ?? (here ? today : month)));
+    setView(next);
+    try { localStorage.setItem(VIEW_KEY, next); } catch { /* this view only */ }
+  };
+  const step = (n: number) => (view === "month" ? setMonth(addMonths(month, n)) : setWeek(addDays(week, 7 * n)));
+  const atNow = view === "month" ? month === firstOf(today) : week === mondayOf(today);
   const open = (event: Shown) => { if (event.draft) return; setDraft(null); setNoWrite(false); setPicked({ account: event.account, id: event.id }); };
   const edit = (event: CalendarEvent) => { setPicked(null); setDraft(draftOf(event)); };
   const askDelete = (event: CalendarEvent) => { setDraft(null); setRemoving(event); };
@@ -426,7 +523,7 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
   };
   /** From the button, or a day of the list: the coming hour today, nine on another day. */
   const add = (day?: string) => {
-    const on = day ?? (today >= week && today <= last ? today : days.find(inRange) ?? today);
+    const on = day ?? (today >= first && today <= last ? today : view === "month" && inRange(month) ? month : visible.find(inRange) ?? today);
     const at = on === today ? Math.min(23, new Date().getHours() + 1) * 60 : 9 * 60;
     place(on, at, at + 60);
   };
@@ -479,20 +576,35 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
       </SourceBar>
       <div className="cal-bar">
         <div className="cal-nav">
-          <button type="button" className="icon-btn" onClick={() => setWeek(addDays(week, -7))} aria-label={t("cal.prev")}>‹</button>
-          <button type="button" className="ghost small" disabled={week === mondayOf(today)} onClick={() => setWeek(mondayOf(today))}>{t("cal.thisWeek")}</button>
-          <button type="button" className="icon-btn" onClick={() => setWeek(addDays(week, 7))} aria-label={t("cal.next")}>›</button>
-          <b>{t("cal.week", { from: label(week, { month: "short", day: "numeric" }), to: label(last, { month: "short", day: "numeric" }) })}</b>
+          <button type="button" className="icon-btn" onClick={() => step(-1)} aria-label={t(view === "month" ? "cal.prevMonth" : "cal.prev")}>‹</button>
+          <button type="button" className="ghost small" disabled={atNow} onClick={() => (view === "month" ? setMonth(firstOf(today)) : setWeek(mondayOf(today)))}>{t(view === "month" ? "cal.thisMonth" : "cal.thisWeek")}</button>
+          <button type="button" className="icon-btn" onClick={() => step(1)} aria-label={t(view === "month" ? "cal.nextMonth" : "cal.next")}>›</button>
+          <b>{view === "month" ? label(month, { year: "numeric", month: "long" }) : t("cal.week", { from: label(week, { month: "short", day: "numeric" }), to: label(days[6], { month: "short", day: "numeric" }) })}</b>
         </div>
-        {sources.length > 0 && <button type="button" className="cal-add" disabled={outside || !!draft?.event} onClick={() => add()} aria-label={t("cal.newEvent")}><Icon name="plus" /><span>{t("cal.new")}</span></button>}
+        <div className="cal-tools">
+          <div className="mode-switch cal-view" role="group" aria-label={t("cal.view")}>
+            {(["week", "month"] as const).map((each) => <button type="button" key={each} aria-pressed={view === each} onClick={() => show(each)}>{t(`cal.view.${each}`)}</button>)}
+          </div>
+          {sources.length > 0 && <button type="button" className="cal-add" disabled={outside || !!draft?.event} onClick={() => add()} aria-label={t("cal.newEvent")}><Icon name="plus" /><span>{t("cal.new")}</span></button>}
+        </div>
       </div>
       {noWrite && !targets.length && <p className="cal-note"><span>{t("cal.noWrite")}</span><a href="#p=core.settings">{t("cal.noWrite.go")}</a></p>}
-      {pickedEvent && !draft && <EventCard event={pickedEvent} onClose={() => setPicked(null)}
-        onEdit={pickedEvent.editable && !pickedEvent.pending ? () => edit(pickedEvent) : undefined} onDelete={pickedEvent.editable && !pickedEvent.pending ? () => askDelete(pickedEvent) : undefined} />}
-      {draft && <EventEditor draft={draft} targets={targets} k={draftK} range={range} onChange={setDraft} onClose={() => setDraft(null)} onSaved={sentOne}
-        onDelete={draft.event ? () => askDelete(draft.event!) : undefined} />}
-      {removing && <DeleteAsk event={removing} onClose={() => setRemoving(null)} onDeleted={(change) => { sentOne(change); setPicked(null); }} />}
+      {(removing || draft || pickedEvent) && (
+        <Pop onClose={() => (removing ? setRemoving(null) : draft ? setDraft(null) : setPicked(null))}>
+          {removing ? <DeleteAsk event={removing} onClose={() => setRemoving(null)} onDeleted={(change) => { sentOne(change); setPicked(null); }} />
+            : draft ? <EventEditor draft={draft} targets={targets} k={draftK} range={range} onChange={setDraft} onClose={() => setDraft(null)} onSaved={sentOne}
+                onDelete={draft.event ? () => askDelete(draft.event!) : undefined} />
+            : pickedEvent && <EventCard event={pickedEvent} onClose={() => setPicked(null)}
+                onEdit={pickedEvent.editable && !pickedEvent.pending ? () => edit(pickedEvent) : undefined} onDelete={pickedEvent.editable && !pickedEvent.pending ? () => askDelete(pickedEvent) : undefined} />}
+        </Pop>
+      )}
 
+      {view === "month" && sources.length > 0 && !visible.every(inRange) && <p className="cal-note quiet">{t("cal.unread")}</p>}
+      {view === "month" && (
+        <MonthGrid days={monthDays} month={month} today={today} events={shown} known={inRange} canAdd={(day) => targets.length > 0 && inRange(day) && !draft?.event}
+          onOpen={open} onAdd={add} onDay={(day) => show("week", day)} />
+      )}
+      {view === "week" && <>
       <div className="week-grid" ref={scroller}>
         <div className="wk-top">
         <div className="wk-head">
@@ -567,7 +679,8 @@ export function Calendar({ snapshot }: { snapshot: CalendarSnapshot | undefined 
           );
         })}
       </ol>
-      {sources.length > 0 && shown.length === 0 && <p className="quiet empty-list">{t(outside ? "cal.outside" : "cal.empty")}</p>}
+      </>}
+      {sources.length > 0 && view === "week" && shown.length === 0 && <p className="quiet empty-list">{t(outside ? "cal.outside" : "cal.empty")}</p>}
     </section>
   );
 }

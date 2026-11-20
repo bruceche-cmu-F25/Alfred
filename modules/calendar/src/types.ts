@@ -70,7 +70,8 @@ export interface CalendarPending {
 export interface CalendarSnapshot {
   /** The home node's local date. */
   today: string;
-  /** The days the mirror holds, inclusive: a week back to five weeks ahead. Outside them nothing is known. */
+  /** The days the mirror holds, inclusive: this month and the next, and a week on either side. Outside them nothing
+   * is known. */
   from: string;
   to: string;
   /** Every event touching those days, by start. */

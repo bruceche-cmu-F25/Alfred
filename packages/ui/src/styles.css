@@ -525,6 +525,7 @@ select.area-pick { appearance: none; -webkit-appearance: none; height: 26px; pad
   .todo-at { font-size: .75rem; }
   .todo-day-empty { padding-left: 54px; }
 }
+@media (hover: none) { .remove { opacity: .7; } }
 
 /* Inbox (通知): a list of what needs you on the left, the chosen item on the right. */
 .inbox { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; container: inbox / inline-size; }
@@ -553,9 +554,6 @@ select.area-pick { appearance: none; -webkit-appearance: none; height: 26px; pad
 .inbox-actions button { min-height: 34px; padding: 0 16px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .8125rem; }
 .inbox-actions button.ghost { background: none; color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
 .inbox-actions button.ghost:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--copy); }
-.revise { display: flex; flex-direction: column; gap: 8px; }
-.revise textarea { width: 100%; padding: 10px 12px; border: 0; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); outline: none; resize: vertical; line-height: 1.5; }
-.revise textarea:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
 /* When the page is narrow (Alfred's panel open, a small window): one column, like the phone — the list, or the chosen item with a way back. */
 @container inbox (max-width: 680px) {
   .split { grid-template-columns: minmax(0, 1fr); }
@@ -836,22 +834,19 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 @container page (max-width: 380px) { .cal-pick-name { display: none; } }
 /* A calendar of the user's own has a colour per series: its mark shows three of them. */
 .mark[data-varied] { background: conic-gradient(oklch(.6 .15 250) 0 33.3%, oklch(.63 .15 45) 0 66.6%, oklch(.62 .15 142) 0); }
-.ev-card { flex: none; max-width: 520px; margin: 0 0 10px; padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--k-fill); box-shadow: inset 3px 0 0 var(--k-solid); color: var(--copy); font-size: .8125rem; }
 .ev-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.ev-card-head b { color: var(--k-text, var(--ink)); font-size: .9375rem; font-weight: 600; }
-.ev-card p { margin-top: 3px; }
-.ev-card-links { display: flex; gap: 14px; }
-.ev-card-links a { color: var(--k-text, var(--accent)); }
-.ev-card-links { flex-wrap: wrap; align-items: baseline; row-gap: 2px; }
-.ev-card-links button.link { color: var(--k-text, var(--accent)); text-decoration-color: color-mix(in oklch, currentColor 35%, transparent); }
+.ev-card-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; }
+.ev-card-links a, .ev-card-links button.link { color: var(--accent); text-decoration-color: color-mix(in oklch, currentColor 35%, transparent); }
+.ev-card-links button.ev-delete { color: var(--bad); }
 /* Adding and changing events by hand: a button for a new one, and the event being typed in a card over the page. */
 .cal-add { flex: none; min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 12px 0 8px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .75rem; white-space: nowrap; }
 .cal-add svg { width: 14px; height: 14px; }
 .cal-note { flex: none; display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0 0 10px; color: var(--copy); font-size: .8125rem; }
 .cal-note a { color: var(--accent); }
-/* The card is over the page, which blurs behind it: near the top, so a phone's keyboard does not cover it. */
-.ev-pop { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: min(16vh, 140px) 16px 16px; overflow-y: auto; background: color-mix(in oklch, var(--bg) 40%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); animation: ev-pop-in 160ms var(--ease) both; }
-.ev-edit { width: min(464px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 16px 16px 14px 18px; border-radius: 18px; background: var(--raise); box-shadow: 0 20px 60px oklch(0 0 0 / .18), inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: .8125rem; animation: ev-edit-in 200ms var(--ease) both; }
+/* The card is over the page, which blurs behind it, in the middle of the window (`margin: auto`, so a card taller
+   than a short window still scrolls from its top). */
+.ev-pop { position: fixed; inset: 0; z-index: 40; display: flex; padding: 16px; overflow-y: auto; background: color-mix(in oklch, var(--bg) 40%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); animation: ev-pop-in 160ms var(--ease) both; }
+.ev-edit { width: min(464px, 100%); margin: auto; display: flex; flex-direction: column; gap: 10px; padding: 16px 16px 14px 18px; border-radius: 18px; background: var(--raise); box-shadow: 0 20px 60px oklch(0 0 0 / .18), inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: .8125rem; animation: ev-edit-in 200ms var(--ease) both; }
 @keyframes ev-pop-in { from { opacity: 0; } }
 @keyframes ev-edit-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .ev-pop, .ev-edit { animation: none; } }
@@ -918,6 +913,38 @@ textarea.ev-field:disabled { opacity: .5; }
 .mail-list { min-height: 0; overflow-y: auto; padding: 6px 8px 24px 12px; border-right: 1px solid var(--line-soft); }
 .mail-row { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; padding: 9px 10px; border-radius: 10px; color: var(--copy); text-align: left; }
 .mail-row:hover { background: var(--wash); }
+/* The week or the month: the switch sits with the New button, at the bar's far end. */
+.cal-tools { flex: none; display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.cal-view button { width: auto; min-width: 34px; padding: 0 10px; font-size: .75rem; white-space: nowrap; }
+/* The month: weeks of day boxes, as tall as the page lets them be. A day holds as many events as fit (Calendar.tsx
+   counts them by these heights: 32px for the number, 22px an event) and says how many more there are. */
+.month-grid { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding-bottom: 64px; }
+.mo-head { flex: none; position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--line-soft); background: var(--bg); }
+.mo-head span { padding: 6px 0 8px; color: var(--muted); font-size: .75rem; text-align: center; }
+.mo-body { flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-auto-rows: minmax(98px, 1fr); }
+.mo-cell { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px 3px; overflow: hidden; border-left: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.mo-cell:nth-child(7n + 1) { border-left: 0; }
+.mo-cell[data-weekend] { background-color: color-mix(in srgb, var(--paper) 55%, transparent); }
+.mo-cell[data-today] { background-color: color-mix(in oklch, var(--now) 4%, transparent); }
+/* A day Alfred has not read: hatched, so an empty box is not taken for a free day. */
+.mo-cell[data-unread] { background-image: repeating-linear-gradient(135deg, transparent 0 7px, var(--line-soft) 7px 8px); }
+.mo-cell[data-open] { cursor: cell; }
+.mo-day { flex: none; align-self: flex-start; min-width: 24px; height: 24px; margin-bottom: 2px; padding: 0 7px; border-radius: 12px; color: var(--ink); font-size: .8125rem; font-weight: 500; white-space: nowrap; }
+.mo-day:hover { background: var(--wash); }
+.mo-cell[data-other] .mo-day { color: var(--muted); font-weight: 400; }
+.mo-cell[data-today] .mo-day, .mo-cell[data-today] .mo-day:hover { background: var(--now); color: #fff; }
+.mo-cell .ev.ev-chip { flex: none; height: 20px; padding: 0 6px 0 8px; font-size: .6875rem; line-height: 20px; cursor: pointer; }
+.mo-ev { flex: none; width: 100%; height: 20px; display: flex; align-items: center; gap: 5px; padding: 0 5px; border-radius: 6px; color: var(--ink); font-size: .6875rem; text-align: left; white-space: nowrap; }
+.mo-ev:hover, .mo-more:hover { background: var(--wash); }
+.mo-ev .mark { width: 6px; height: 6px; }
+.mo-ev time { flex: none; color: var(--muted); font: .625rem var(--mono); }
+.mo-ev > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mo-ev[data-declined] > span:last-child { text-decoration: line-through; opacity: .6; }
+.mo-cell[data-past] :is(.mo-ev, .ev-chip) { opacity: .55; }
+.mo-ev[data-pending] { opacity: .6; }
+.mo-ev[data-draft], .mo-cell[data-past] .mo-ev[data-draft] { opacity: 1; box-shadow: inset 0 0 0 1.5px var(--k-solid); }
+.mo-more { flex: none; align-self: flex-start; height: 18px; padding: 0 5px; border-radius: 6px; color: var(--muted); font-size: .6875rem; white-space: nowrap; }
+.mo-dots { display: none; }
 .mail-row[aria-current] { background: var(--wash); box-shadow: inset 0 0 0 1px var(--line-soft); }
 .mail-dot { width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; }
 .mail-row[data-unread] .mail-dot { background: var(--accent); }
