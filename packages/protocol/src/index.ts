@@ -124,6 +124,7 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  archivePlan?: "now" | "finish" | "stop" | null;
   /** `provider/model` chosen for this conversation; null for the engine's default. */
   model: string | null;
   thinking: ThinkingLevel | null;
@@ -253,7 +254,7 @@ export interface ConversationDetail {
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface UpdateConversationRequest {
-  requestId?: string; title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode;
+  requestId?: string; title?: string; archived?: boolean; archiveRuns?: "finish" | "stop"; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode;
   /** Takes back a command allowed for the rest of the session: it asks again. */
   forgetCommand?: string;
 }

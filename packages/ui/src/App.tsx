@@ -230,9 +230,15 @@ function Workspace({ state, alfred }: { state: StateResponse; alfred: Alfred }) 
   const [showArchive, setShowArchive] = useState(false);
   const [archived, setArchived] = useState<{ conversation: Conversation; reopen?: () => boolean } | null>(null);
   const dismissArchive = useCallback(() => setArchived(null), []);
-  async function archiveConversation(conversation: Conversation, worktree?: "keep" | "discard") {
-    const saved = await api.updateConversation(conversation.id, { archived: true, worktree });
-    setArchived({ conversation: saved, reopen: route.leaveArchived(conversation) });
+  useEffect(() => onEvent((event) => {
+    if (event.kind !== "conversation.archived" || !event.payload.deferred) return;
+    const id = event.subject?.slice("conversation:".length);
+    if (route.session === id) route.go({ session: null });
+  }), [onEvent, route.session, route.go]);
+
+  async function archiveConversation(conversation: Conversation, worktree?: "keep" | "discard", archiveRuns?: "finish" | "stop") {
+    const saved = await api.updateConversation(conversation.id, { archived: true, worktree, archiveRuns });
+    if (saved.archivedAt) setArchived({ conversation: saved, reopen: route.leaveArchived(conversation) });
     alfred.refresh();
   }
   async function restoreConversation({ id }: { id: string }) {

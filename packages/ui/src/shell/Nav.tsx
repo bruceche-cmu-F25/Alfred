@@ -34,7 +34,7 @@ export interface NavProps {
   session: string | null;
   onSession(id: string | null): void;
   connection: Connection;
-  onArchive(conversation: Conversation, worktree?: "keep" | "discard"): Promise<void>;
+  onArchive(conversation: Conversation, worktree?: "keep" | "discard", archiveRuns?: "finish" | "stop"): Promise<void>;
   onShowArchive(): void;
   onPage(key: string): void;
   onSelect(id: string | null): void;
@@ -67,18 +67,24 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
   };
   // A session whose worktree holds work not committed: archiving it asks whether to keep that folder or drop it.
   const [dirty, setDirty] = useState<{ conversation: Conversation; count: number } | null>(null);
+  const [unfinished, setUnfinished] = useState<{ conversation: Conversation; count: number } | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState("");
-  async function archive(conversation: Conversation, worktree?: "keep" | "discard") {
+  async function archive(conversation: Conversation, worktree?: "keep" | "discard", archiveRuns?: "finish" | "stop") {
     if (archiving) return;
     setArchiving(true);
     setArchiveError("");
     try {
-      await onArchive(conversation, worktree);
+      await onArchive(conversation, worktree, archiveRuns);
+      setUnfinished(null);
       setDirty(null);
     } catch (reason) {
       if (reason instanceof ApiError && reason.code === "git_dirty") {
+        setUnfinished(null);
         setDirty({ conversation, count: reason.count ?? 1 });
+      } else if (reason instanceof ApiError && reason.code === "archive_busy") {
+        setDirty(null);
+        setUnfinished({ conversation, count: reason.count ?? Math.max(1, conversation.busy + conversation.attention) });
       } else {
         setArchiveError(reason instanceof Error ? reason.message : String(reason));
       }
@@ -150,7 +156,7 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
                       onClick={() => onSession(conversation.id)} title={conversation.lastGoal ?? conversation.title}>
                       <ConversationStatus conversation={conversation} />
                       <span className="ct">{conversation.title}</span>
-                      <span className="time">{when(conversation.updatedAt)}</span>
+                      <span className="time">{conversation.archivePlan ? t(conversation.archivePlan === "stop" ? "archive.stopping" : "archive.planned") : when(conversation.updatedAt)}</span>
                     </button>
                     <button type="button" className="archive" disabled={archiving} aria-label={t("nav.archive", { title: conversation.title })} onClick={() => archive(conversation)}>
                       <Icon name="archive" />
@@ -191,12 +197,32 @@ export function Nav({ state, pages, page, mode, selected, session, onSession, co
       </ul>
       </>}
 
-      {archiveError && !dirty && <p className="problem" role="alert">{archiveError}</p>}
+      {archiveError && !dirty && !unfinished && <p className="problem" role="alert">{archiveError}</p>}
       <div className="nav-foot">
         <p className="connection" data-state={connection} title={t(CONNECTION[connection])}><span aria-hidden="true" /><b>{t(CONNECTION[connection])}</b></p>
         {/* On a phone, which has no top bar, the theme and language buttons live here. */}
         {onClose && <ViewButtons onLanguage={onLanguage} />}
       </div>
+      {unfinished && (
+        <Pop onClose={() => setUnfinished(null)}>
+          <div className="ev-edit" role="alertdialog" aria-modal="true" aria-label={t("archive.unfinished", { n: unfinished.count })}>
+            <div className="ev-card-head"><b>{t("archive.unfinished", { n: unfinished.count })}</b><button type="button" className="icon-btn" onClick={() => setUnfinished(null)} aria-label={t("common.close")}>×</button></div>
+            <p>{t("archive.waitHint")}</p>
+            {archiveError && <p className="problem" role="alert">{archiveError}</p>}
+            <div className="ev-foot">
+              {unfinished.conversation.archivePlan === "finish" && <button type="button" disabled={archiving} onClick={async () => {
+                setArchiving(true);
+                try { await api.updateConversation(unfinished.conversation.id, { archived: false }); setUnfinished(null); }
+                catch (reason) { setArchiveError(reason instanceof Error ? reason.message : String(reason)); }
+                finally { setArchiving(false); }
+              }}>{t("archive.withdraw")}</button>}
+              <span />
+              <button type="button" className="danger" disabled={archiving} onClick={() => archive(unfinished.conversation, undefined, "stop")}>{t("archive.stop")}</button>
+              <button type="button" disabled={archiving} autoFocus onClick={() => archive(unfinished.conversation, undefined, "finish")}>{t("archive.finish")}</button>
+            </div>
+          </div>
+        </Pop>
+      )}
       {dirty && (
         <Pop onClose={() => setDirty(null)}>
           <div className="ev-edit" role="alertdialog" aria-modal="true" aria-label={t("archive.dirty", { n: dirty.count })}>

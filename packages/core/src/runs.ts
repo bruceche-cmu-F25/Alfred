@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { DatabaseSync } from "node:sqlite";
-import { CONVERSATION_ID, ConversationError, createConversation, recordUnreadReply, titleFrom, touchConversation } from "./conversations.ts";
+import { CONVERSATION_ID, ConversationError, createConversation, requireOpenSession, recordUnreadReply, titleFrom, touchConversation } from "./conversations.ts";
 import { appendEvent, readRunEvents, type CoreEvent } from "./events.ts";
 import { attachFiles } from "./files.ts";
 import { iso, newId } from "./ids.ts";
@@ -218,7 +218,7 @@ export function submitRun(world: World, input: SubmitRunInput): { run: Run; repl
       return { run: toRun(existing), replayed: true };
     }
     let conversationId = input.conversationId;
-    if (conversationId) touchConversation(db, conversationId, now);
+    if (conversationId) { requireOpenSession(db, conversationId); touchConversation(db, conversationId, now); }
     else conversationId = createConversation(db, { title: titleFrom(goal), now });
     const id = newId();
     db.prepare(`INSERT INTO core_runs (id, request_id, request_hash, conversation_id, goal, profile, state, created_at, updated_at, context, automation_id)
@@ -356,6 +356,7 @@ export function resumeRun(world: World, id: string, options: { now?: number } = 
   return world.tx((db) => {
     const run = load(db, id);
     if (run.state !== "interrupted") throw new RunError("state");
+    requireOpenSession(db, run.conversationId, true);
     setState(db, run, "queued", now, { cancel_requested: 0 });
     touchConversation(db, run.conversationId, now);
     closeWaitingNotices(db, id, now);

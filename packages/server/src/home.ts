@@ -13,6 +13,7 @@ import { moduleMigrations, type AlfredModule, type ModuleServices } from "@alfre
 import { Outlets, watchAttention, type Reach } from "./attention.ts";
 import { FileStore, type FileStoreOptions } from "./files.ts";
 import { Terminals } from "./terminals.ts";
+import { SessionArchives } from "./archives.ts";
 import { Processes } from "./processes.ts";
 import { Desk } from "./desk.ts";
 import { modulePasses } from "./passes.ts";
@@ -57,6 +58,7 @@ export interface Home {
   terminals: Terminals;
   /** Background processes in development sessions (dev servers), started by Alfred or the user. */
   processes: Processes;
+  archives: SessionArchives;
   /** Where a development session's worktree is made: one folder per session, under the data directory. */
   worktreeDir(projectId: string, conversationKey: string): string;
   /** Requests to the Mac app (what is in its browser pane); the app comes and takes them. */
@@ -135,6 +137,7 @@ export function openHome(options: HomeOptions): Home {
   const terminals = options.terminals ?? new Terminals({ log: options.log });
   const desk = new Desk();
   const processes = new Processes();
+  const archives = new SessionArchives(world, processes, terminals, options.log);
   const drain = createRunDrain(world, options.engine, {
     owner,
     profiles: profiles(world, options.modules, { terminals, desk, processes }),
@@ -176,6 +179,7 @@ export function openHome(options: HomeOptions): Home {
     files,
     terminals,
     processes,
+    archives,
     worktreeDir: (projectId, key) => join(options.dataDir, "worktrees", projectId, key),
     desk,
     outlets,
@@ -192,6 +196,7 @@ export function openHome(options: HomeOptions): Home {
     idle: () => current,
     close() {
       clearInterval(clock);
+      archives.close();
       passes.close();
       files.close();
       terminals.closeAll();

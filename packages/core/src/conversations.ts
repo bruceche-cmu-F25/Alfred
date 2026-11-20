@@ -16,6 +16,7 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  archivePlan: "now" | "finish" | "stop" | null;
   /** `provider/model` this conversation uses; null for the engine's default. */
   model: string | null;
   /** How hard the model thinks; null for the default. */
@@ -49,10 +50,12 @@ export interface Conversation {
 
 export class ConversationError extends Error {
   override name = "ConversationError";
-  readonly code: "missing" | "invalid";
-  constructor(code: "missing" | "invalid", message?: string) {
+  readonly code: "missing" | "invalid" | "archive_busy" | "session_closed";
+  readonly count?: number;
+  constructor(code: ConversationError["code"], message?: string, count?: number) {
     super(message ?? (code === "missing" ? "No such conversation" : "Invalid conversation"));
     this.code = code;
+    this.count = count;
   }
 }
 
@@ -83,6 +86,7 @@ function toConversation(row: Record<string, unknown>): Conversation {
   return {
     id: row.id as string, title: row.title as string, createdAt: row.created_at as string, updatedAt: row.updated_at as string,
     archivedAt: row.archived_at as string | null, model: row.model as string | null, thinking: row.thinking as ThinkingLevel | null,
+    archivePlan: (row.archive_plan as Conversation["archivePlan"]) ?? null,
     speed: (row.speed as Speed | null) ?? null,
     busy: row.busy as number, attention: row.attention as number,
     unreadReplyId: (row.unread_reply_id as string | null) ?? null,
@@ -178,6 +182,22 @@ export function touchConversation(db: DatabaseSync, id: string, now: number): vo
   if (changed.changes === 0) throw new ConversationError("missing");
 }
 
+/** No new run can enter a coding session once archiving starts. Previously interrupted work may resume when
+ * the user asked to finish it before archiving. Read in the same transaction that queues the run. */
+export function requireOpenSession(db: DatabaseSync, id: string, resume = false): void {
+  const row = db.prepare("SELECT * FROM core_conversations WHERE id = ?").get(id);
+  if (row?.project_id && (row.archived_at || (row.archive_plan && !(resume && row.archive_plan === "finish")))) {
+    throw new ConversationError("session_closed", "This session is archived or waiting to archive");
+  }
+}
+
+export function setArchivePlan(world: World, id: string, plan: Conversation["archivePlan"]): void {
+  world.tx((db) => {
+    const changed = db.prepare("UPDATE core_conversations SET archive_plan = ? WHERE id = ? AND archive_plan IS NOT ?").run(plan, id, plan);
+    if (changed.changes) appendEvent(db, { kind: "conversation.archive_plan", subject: `conversation:${id}`, runId: null, payload: { plan }, now: Date.now() });
+  });
+}
+
 /** Called inside the run's completion transaction; that event also refreshes the conversation list. */
 export function recordUnreadReply(db: DatabaseSync, conversationId: string, runId: string): void {
   db.prepare(`UPDATE core_conversations SET unread_reply_id = ?
@@ -248,7 +268,7 @@ export function updateConversation(
   if (change.thinking !== undefined && change.thinking !== null && !THINKING_LEVELS.includes(change.thinking)) throw new ConversationError("invalid", "Unknown thinking level");
   if (change.speed !== undefined && change.speed !== null && !SPEEDS.includes(change.speed)) throw new ConversationError("invalid", "Unknown speed");
   world.tx((db) => {
-    const row = db.prepare("SELECT title, archived_at, model, thinking, speed, project_id, mode FROM core_conversations WHERE id = ?").get(id);
+    const row = db.prepare("SELECT title, archived_at, archive_plan, model, thinking, speed, project_id, mode FROM core_conversations WHERE id = ?").get(id);
     if (!row) throw new ConversationError("missing");
     if (change.mode !== undefined && change.mode !== row.mode) {
       if (!row.project_id) throw new ConversationError("invalid", "Only a development session has a permission mode");
@@ -271,10 +291,10 @@ export function updateConversation(
       }
     }
     if (change.archived !== undefined && change.archived !== (row.archived_at !== null)) {
-      db.prepare("UPDATE core_conversations SET archived_at = ?, unread_reply_id = NULL WHERE id = ?").run(change.archived ? iso(now) : null, id);
+      db.prepare("UPDATE core_conversations SET archived_at = ?, archive_plan = NULL, unread_reply_id = NULL WHERE id = ?").run(change.archived ? iso(now) : null, id);
       // Include an old conversation in the bounded recent list when the user brings it back.
       if (!change.archived) touchConversation(db, id, now);
-      appendEvent(db, { kind: change.archived ? "conversation.archived" : "conversation.restored", subject: `conversation:${id}`, payload: {}, runId: null, now });
+      appendEvent(db, { kind: change.archived ? "conversation.archived" : "conversation.restored", subject: `conversation:${id}`, payload: row.archive_plan === "finish" || row.archive_plan === "stop" ? { deferred: true } : {}, runId: null, now });
     }
   });
   return getConversation(world, id);

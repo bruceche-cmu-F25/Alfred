@@ -20,7 +20,7 @@ import {
 import { applyStep, OpInputError, opInput, runOp, Type, UnknownOpError, type Static, type TSchema } from "@alfred/module-kit";
 import type { Home } from "./home.ts";
 import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE } from "./profiles.ts";
-import { branchName, createWorktree, publish, removeWorktree, restoreWorktree, snapshot, WorkspaceError, workspaceChanges, type ChangedFile } from "./workspace.ts";
+import { branchName, createWorktree, publish, restoreWorktree, snapshot, WorkspaceError, workspaceChanges, type ChangedFile } from "./workspace.ts";
 import { reviewCommit } from "./commit-review.ts";
 
 interface Extra<X> {
@@ -153,6 +153,7 @@ const OPS: readonly HarnessOp[] = [
     name: "conversation.update", unnumbered: true,
     input: Type.Object({
       id: Id, title: Type.Optional(Type.String()), archived: Type.Optional(Type.Boolean()),
+      archiveRuns: Type.Optional(Type.Union([Type.Literal("finish"), Type.Literal("stop")])),
       model: Type.Optional(Type.Union([Type.String(), Type.Null()])), thinking: Type.Optional(Type.Union([Type.String(), Type.Null()])), mode: Type.Optional(Type.String()),
       speed: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       /** A command allowed for the rest of the session, taken back: it asks again. */
@@ -165,22 +166,23 @@ const OPS: readonly HarnessOp[] = [
     // One that comes back gets its worktree again, on its branch.
     async prepare(home, input) {
       if (input.archived === undefined) return;
-      const conversation = getConversation(home.world, input.id);
-      if (!conversation.projectId || (conversation.archivedAt !== null) === input.archived) return;
-      const project = (() => { try { return getProject(home.world, conversation.projectId!); } catch { return null; } })();
-      if (input.archived) {
-        if (conversation.worktree && project && input.worktree !== "keep") await removeWorktree(project.path, conversation.worktree, input.worktree === "discard");
-        home.processes.stopSession(conversation.id);
-        home.terminals.close(conversation.id);
-      } else if (conversation.worktree && conversation.branch && project && !existsSync(conversation.worktree)) {
-        await restoreWorktree(project.path, conversation.worktree, conversation.branch);
+      let conversation = getConversation(home.world, input.id);
+      if (!conversation.projectId) return;
+      if (input.archived) { await home.archives.request(input.id, input.archiveRuns, input.worktree); return; }
+      if (conversation.archivePlan) {
+        await home.archives.withdraw(input.id);
+        conversation = getConversation(home.world, input.id);
+      }
+      if (conversation.archivedAt && conversation.worktree && conversation.branch && !existsSync(conversation.worktree)) {
+        const project = (() => { try { return getProject(home.world, conversation.projectId!); } catch { return null; } })();
+        if (project) await restoreWorktree(project.path, conversation.worktree, conversation.branch);
       }
     },
     // Which models, levels and modes there are is the core's to say.
     run: (home, input) => {
       if (input.forgetCommand !== undefined) revokeCommand(home.world, input.id, input.forgetCommand);
       return updateConversation(home.world, input.id, {
-        title: input.title, archived: input.archived, model: input.model,
+        title: input.title, archived: input.archived && getConversation(home.world, input.id).projectId ? undefined : input.archived, model: input.model,
         thinking: input.thinking as ThinkingLevel | null | undefined, speed: input.speed as Speed | null | undefined, mode: input.mode as SessionMode | undefined,
       });
     },
@@ -259,10 +261,15 @@ export async function command(home: Home, name: string, sent: Record<string, unk
   const input = opInput(op, { ...fields, ...where });
   const done = commandReplay(home.world, { requestId, command: op.name, input });
   if (done) return { result: done.result, replayed: true };
-  const prepared = op.prepare ? await op.prepare(home, input) : undefined;
-  const outcome = runOp(home.world, { name: op.name, input: op.input, run: () => op.run(home, input, { requestId, prepared }) }, { requestId, input });
-  // Whatever it was, there may now be a run to start or an accepted change to send.
-  home.kick();
-  home.deliver();
-  return outcome;
+  const release = name === "session.commit" || name === "session.publish" ? home.archives.beginWorkspaceOperation((input as { id: string }).id) : undefined;
+  try {
+    const prepared = op.prepare ? await op.prepare(home, input) : undefined;
+    const outcome = runOp(home.world, { name: op.name, input: op.input, run: () => op.run(home, input, { requestId, prepared }) }, { requestId, input });
+    // Whatever it was, there may now be a run to start or an accepted change to send.
+    home.kick();
+    home.deliver();
+    return outcome;
+  } finally {
+    release?.();
+  }
 }

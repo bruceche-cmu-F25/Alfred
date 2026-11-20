@@ -100,7 +100,7 @@ export const api = {
   },
   readConversationReply: (id: string, runId: string) => post<Record<string, never>>(`/api/conversations/${id}/read`, { runId }),
   /** `worktree`: what to do with a session's worktree that has uncommitted changes, when archiving it. */
-  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; speed?: "fast" | null; mode?: SessionMode; forgetCommand?: string; worktree?: "keep" | "discard" }) =>
+  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; speed?: "fast" | null; mode?: SessionMode; forgetCommand?: string; worktree?: "keep" | "discard"; archiveRuns?: "finish" | "stop" }) =>
     post<Conversation>(`/api/conversations/${id}`, { requestId: newRequestId(), ...change }),
   /** Words into the run now working; rejects with 409 when it is not. */
   steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),

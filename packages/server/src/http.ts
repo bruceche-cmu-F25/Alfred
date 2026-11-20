@@ -19,7 +19,7 @@ import {
   acknowledgeNotice, answerRequest, claimNotice, getConversation, markConversationReplyRead, getRun, listAutomationRuns, getAutomation, latestEventSeq, listConversations, listArchivedConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, conversationRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
-  getProject, listProjects, getFile, listRunFiles, isSession, runInSession, sessionEvent, sessionIds, sessionRoot,
+  getProject, listProjects, getFile, listRunFiles, requireOpenSession, isSession, runInSession, sessionEvent, sessionIds, sessionRoot,
 } from "@alfred/core";
 import { invokeOp, runQuery } from "@alfred/module-kit";
 import type {
@@ -381,6 +381,7 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     }
     if (method !== "POST") throw new HttpError(405, "Method not allowed");
     const body = await readJson<{ cols?: unknown; rows?: unknown; data?: unknown }>(req);
+    if (!action || action === "input") requireOpenSession(home.world.db, id);
     if (!action) {
       const project = getProject(home.world, found.projectId);
       if (!project.trustedAt) throw new HttpError(409, "This folder is not trusted yet", "untrusted");
@@ -441,6 +442,7 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
       const body = await readJson<{ command?: unknown; name?: unknown }>(req);
       const root = sessionRoot(home.world, found);
       if (!root || typeof body.command !== "string") throw new HttpError(400, "command is required");
+      requireOpenSession(home.world.db, id);
       return send(res, 201, home.processes.start(id, { command: body.command, cwd: root, name: typeof body.name === "string" ? body.name : undefined, by: "user" }));
     }
     throw new HttpError(405, "Method not allowed");

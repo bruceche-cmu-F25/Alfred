@@ -162,5 +162,20 @@ export class Terminals {
     record.listeners.clear();
   }
 
+  /** A worktree may be removed immediately afterwards, so wait for the real PTY exit. */
+  async closeForArchive(id: string): Promise<void> {
+    const record = this.#open.get(id);
+    if (!record) return;
+    if (record.exit === null) {
+      await new Promise<void>((resolve, reject) => {
+        const force = setTimeout(() => { try { record.pty.kill("SIGKILL"); } catch { /* exiting */ } }, 3000);
+        const timeout = setTimeout(() => reject(new TerminalError("invalid", "The terminal is still stopping. Try archiving again.")), 5000);
+        record.pty.onExit(() => { clearTimeout(force); clearTimeout(timeout); resolve(); });
+        try { record.pty.kill(); } catch { /* wait for the exit event */ }
+      });
+    }
+    this.close(id);
+  }
+
   closeAll(): void { for (const id of [...this.#open.keys()]) this.close(id); }
 }

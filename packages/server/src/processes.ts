@@ -135,12 +135,21 @@ export class Processes {
     setTimeout(() => { if (entry.exit === null) kill(pid, "SIGKILL"); }, 4000).unref();
   }
 
-  /** Stops every process of a session (it was archived). */
-  stopSession(session: string): void {
-    for (const entry of [...this.#all.values()]) if (entry.session === session) {
-      if (entry.exit === null && entry.child?.pid) kill(entry.child.pid, "SIGTERM");
-      this.#all.delete(entry.id);
+  /** Wait for the process groups before their working directory can be removed. */
+  async stopSession(session: string): Promise<void> {
+    const entries = [...this.#all.values()].filter((entry) => entry.session === session);
+    const groups = entries.flatMap((entry) => entry.child?.pid ? [entry.child.pid] : []);
+    for (const pid of groups) kill(pid, "SIGTERM");
+    let remaining = groups;
+    for (let attempt = 0; remaining.length && attempt < 100; attempt++) {
+      remaining = remaining.filter((pid) => {
+        try { process.kill(-pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+      });
+      if (attempt === 60) for (const pid of remaining) kill(pid, "SIGKILL");
+      if (remaining.length) await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    if (remaining.length) throw new ProcessError("invalid", "A background process is still stopping. Try archiving again.");
+    for (const entry of entries) this.#all.delete(entry.id);
     this.#changed(session);
   }
 

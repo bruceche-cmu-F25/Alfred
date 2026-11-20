@@ -335,6 +335,12 @@ CREATE INDEX core_runs_updated_at ON core_runs(updated_at);
 ALTER TABLE core_conversations ADD COLUMN unread_reply_id TEXT REFERENCES core_runs(id);
 `,
 }, {
+  id: "core:22",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN archive_plan TEXT CHECK (archive_plan IN ('now', 'finish', 'stop'));
+CREATE INDEX core_conversations_archiving ON core_conversations(archive_plan) WHERE archive_plan IS NOT NULL;
+`,
+}, {
   // Large replies live beside the compact outcomes used in /state and result previews.
   id: "core:23",
   sql: `
