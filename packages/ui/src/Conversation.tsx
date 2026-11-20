@@ -47,14 +47,14 @@ function useNow(on: boolean): number {
 
 /** Where a reply stands, shown by the dot beside it, and the one line on what it is doing while it works. */
 type Phase = "idle" | "busy" | "waiting" | "failed";
-function phase(run: Run, live: string | undefined, runSteps: Array<{ label: string; status: string }>): { dot: Phase; label: string | null } {
+function phase(run: Run, live: string | undefined, runSteps: Array<{ label: string; about: string; status: string; command: boolean }>): { dot: Phase; label: string | null } {
   if (run.request) return { dot: "waiting", label: null };
   switch (run.state) {
     case "queued": return { dot: "busy", label: t("run.queued") };
     case "cancelling": return { dot: "busy", label: t("run.cancelling") };
     case "running": {
       const step = runSteps.findLast((candidate) => candidate.status === "started");
-      if (step) return { dot: "busy", label: step.label };
+      if (step) return { dot: "busy", label: step.command ? step.about : step.label };
       return { dot: "busy", label: live ? null : t("run.thinking") };
     }
     case "failed": case "interrupted": return { dot: "failed", label: null };
@@ -62,15 +62,49 @@ function phase(run: Run, live: string | undefined, runSteps: Array<{ label: stri
   }
 }
 
+interface Step {
+  id: string; label: string; about: string; status: string;
+  /** A command: its exit code once it ended (null: it was stopped), how long it ran, and the end of what it printed. */
+  command: boolean; exit?: number | null; ms?: number; output?: string;
+}
+
 /** Steps of a run, one line per tool call, at its latest status. */
-function steps(activity: CoreEvent[]): Array<{ id: string; label: string; about: string; status: string }> {
-  const byStep = new Map<string, { id: string; label: string; about: string; status: string }>();
+function steps(activity: CoreEvent[]): Step[] {
+  const byStep = new Map<string, Step>();
   for (const event of activity) {
     if (event.kind !== "run.step") continue;
     const id = String(event.payload.step);
-    byStep.set(id, { id, label: String(event.payload.label ?? event.payload.tool), about: String(event.payload.about ?? ""), status: String(event.payload.status) });
+    const exit = event.payload.exit;
+    byStep.set(id, {
+      id, label: String(event.payload.label ?? event.payload.tool), about: String(event.payload.about ?? ""), status: String(event.payload.status),
+      command: event.payload.tool === "bash",
+      ...(typeof exit === "number" || exit === null ? { exit } : {}),
+      ...(typeof event.payload.ms === "number" ? { ms: event.payload.ms } : {}),
+      ...(typeof event.payload.output === "string" ? { output: event.payload.output } : {}),
+    });
   }
   return [...byStep.values()].filter((step) => step.label !== "Ask");
+}
+
+/** A command as a step: the command itself, how it ended, and what it printed, folded away. */
+function CommandStep({ step }: { step: Step }) {
+  const ended = step.status === "done" || step.status === "failed";
+  const how = !ended ? null : step.exit === null || step.exit === undefined ? t("cmd.stopped") : step.exit === 0 ? null : t("cmd.exit", { code: step.exit });
+  const line = (
+    <>
+      <span aria-hidden="true">{STEP_MARK[step.status] ?? "·"}</span> <code className="step-command">{step.about}</code>
+      {(how || step.ms !== undefined) && <span className="step-end">{[how, step.ms !== undefined ? took(step.ms) : null].filter(Boolean).join(" · ")}</span>}
+    </>
+  );
+  if (!step.output) return <li data-status={step.status}>{line}</li>;
+  return (
+    <li data-status={step.status}>
+      <details className="step-output">
+        <summary>{line}</summary>
+        <pre>{step.output}</pre>
+      </details>
+    </li>
+  );
 }
 
 const STEP_MARK: Record<string, string> = { started: "…", done: "✓", failed: "✗", declined: "—" };
@@ -86,17 +120,18 @@ export function Request({ run, request }: { run: Run; request: RunRequest }) {
     api.respond(run.id, request.id, value.trim()).catch((reason: Error) => { setError(reason.message); setBusy(false); });
   };
   const permission = request.kind === "permission";
+  const command = request.detailKind === "command";
   return (
     <div className="request" data-kind={request.kind} role="group" aria-label={t(permission ? "req.permission" : "req.input")}>
       <p className="request-question"><Linked text={request.question} /></p>
-      {request.detail && <Diff patch={request.detail} />}
+      {request.detail && (command ? <pre className="request-command">{request.detail}</pre> : <Diff patch={request.detail} />)}
       <div className="request-options">
         {permission ? (
           <>
             <button type="button" disabled={busy} onClick={() => answer("allow")}>{t("common.allow")}</button>
             <button type="button" className="ghost" disabled={busy} onClick={() => answer("deny")}>{t("common.deny")}</button>
             {request.options.includes("always") && (
-              <button type="button" className="ghost" disabled={busy} onClick={() => answer("always")} title={t("req.alwaysTitle")}>{t("req.always")}</button>
+              <button type="button" className="ghost" disabled={busy} onClick={() => answer("always")} title={command ? t("req.alwaysCommandTitle", { command: request.grant ?? "" }) : t("req.alwaysTitle")}>{t(command ? "req.alwaysCommand" : "req.always")}</button>
             )}
           </>
         ) : request.options.map((option) => (
@@ -157,7 +192,7 @@ function Turn({ run, receipts, activity, live, highlighted, askedOn, startedBy, 
           <div className="reply" data-state={run.state}>
             {runSteps.length > 0 && (
               <ol className="steps" aria-label={t("run.steps")}>
-                {runSteps.map((step) => (
+                {runSteps.map((step) => step.command ? <CommandStep key={step.id} step={step} /> : (
                   <li key={step.id} data-status={step.status}><span aria-hidden="true">{STEP_MARK[step.status] ?? "·"}</span> {step.label}{step.about ? `：${step.about}` : ""}</li>
                 ))}
               </ol>
@@ -322,7 +357,8 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
     setDetail(null);
     if (!id) return;
     let alive = true;
-    const load = () => api.conversation(id).then((next) => { if (alive) setDetail(next); }).catch((reason: Error) => { if (alive) setError(reason.message); });
+    const load = () => api.conversation(id).then((next) => { if (alive) setDetail(next); })
+      .catch((reason: Error) => { if (alive) setError(reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope") : reason.message); });
     void load();
     const off = onEvent((event) => {
       // Anything about this conversation or any run may concern it; reloading is cheap and local.

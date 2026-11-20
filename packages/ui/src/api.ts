@@ -3,7 +3,7 @@
  */
 import type {
   Automation, Schedule,
-  Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
+  Conversation, ConversationDetail, CoreEvent, DeviceInfo, DeviceKind, DeviceScope, LiveUpdate, ModelsResponse, Notice, OpResponse, PairingCode, ProposalResponse,
   Project, SessionChanges, SessionMode, PushInfo, PushResult, RemoteResponse, Run, StateResponse, SubmitRunResponse, ThinkingLevel, UserSettings, ViewContext,
 } from "@alfred/protocol";
 import "./desktop.ts";
@@ -71,7 +71,7 @@ export const api = {
   submit: (goal: string, conversationId?: string, context?: ViewContext) =>
     post<SubmitRunResponse>("/api/runs", { requestId: newRequestId(), goal, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}) }),
   conversation: (id: string) => call<ConversationDetail>(`/api/conversations/${id}`),
-  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }) =>
+  updateConversation: (id: string, change: { title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode; forgetCommand?: string }) =>
     post<Conversation>(`/api/conversations/${id}`, { requestId: newRequestId(), ...change }),
   /** Words into the run now working; rejects with 409 when it is not. */
   steer: (runId: string, text: string) => post<{ delivered: boolean }>(`/api/runs/${runId}/steer`, { text }),
@@ -118,6 +118,8 @@ export const api = {
   setRemote: (enabled: boolean) => post<RemoteResponse>("/api/remote", { enabled }),
   pairingCode: () => post<PairingCode>("/api/remote/pairing", {}),
   revokeDevice: (id: string) => post<RemoteResponse>(`/api/devices/${id}/revoke`, {}),
+  /** Lets a device into development sessions, or takes that away (this machine only). */
+  deviceScope: (id: string, scope: DeviceScope, enabled: boolean) => post<RemoteResponse>(`/api/devices/${id}/scope`, { scope, enabled }),
   /** On a device that is not paired yet: the home node answers with the device token in a cookie. */
   pair: (code: string, name: string, kind: DeviceKind) => post<{ device: DeviceInfo }>("/api/pair", { code, name, kind }),
   forgetDevice: () => post<Record<string, never>>("/api/device/forget", {}),

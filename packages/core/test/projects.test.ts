@@ -52,7 +52,7 @@ test("a session's runs get the project's folder; a wrong profile or a removed pr
   const ok = submitRun(w, { requestId: "r1", goal: "Where is checkout?", profile: "developer", conversationId: session.id }).run;
   await drain.kick();
   assert.equal(getRun(w, ok.id).run.state, "completed");
-  assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask" });
+  assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask", commands: [] });
   assert.equal(seen[0].instructions, "Work in the project.\n\nAsk before each change.", "the run is told what its mode allows");
   updateConversation(w, session.id, { mode: "plan" });
   submitRun(w, { requestId: "r1b", goal: "And the cart?", profile: "developer", conversationId: session.id });

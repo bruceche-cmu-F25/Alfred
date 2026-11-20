@@ -18,7 +18,7 @@ import {
   AREAS, getSettings, listOpenProposals, userLocale, withCoreContext, listAutomations, type World,
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
-  deviceForToken, DEVICE_KINDS, type Device, type DeviceKind, type LiveUpdate,
+  deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
   getProject, listProjects,
 } from "@alfred/core";
 import { invokeOp, runQuery } from "@alfred/module-kit";
@@ -143,21 +143,37 @@ function statusOf(error: unknown): { status: number; body: ErrorResponse } {
 /** An automation as devices see it (with its next time and last run). */
 const automationView = (world: World, id: string) => listAutomations(world).find((candidate) => candidate.id === id);
 
-function state(home: Home): StateResponse {
+/** Whether whoever asks may go into development sessions: this machine, or a device the user gave `dev`. */
+const mayDev = (peer: Peer) => peer.local || !!peer.device?.scopes.includes("dev");
+const NEEDS_DEV = "This device may not go into development sessions. Turn that on for it on the Mac: Settings → Devices.";
+
+/** The conversations that are development sessions (they belong to a project). */
+function sessionIds(world: World): Set<string> {
+  return new Set(world.db.prepare("SELECT id FROM core_conversations WHERE project_id IS NOT NULL").all().map((row) => row.id as string));
+}
+const inSession = (world: World, conversationId: string | undefined | null) =>
+  !!conversationId && !!world.db.prepare("SELECT 1 FROM core_conversations WHERE id = ? AND project_id IS NOT NULL").get(conversationId);
+const runInSession = (world: World, runId: string) =>
+  !!world.db.prepare("SELECT 1 FROM core_runs r JOIN core_conversations c ON c.id = r.conversation_id WHERE r.id = ? AND c.project_id IS NOT NULL").get(runId);
+
+function state(home: Home, peer: Peer): StateResponse {
   // One synchronous read: no commit can land between these statements.
   const modules: Record<string, unknown> = {};
   for (const module of home.modules) if (module.snapshot) modules[module.id] = module.snapshot(home.world);
-  const runs = listRuns(home.world, { limit: 50 });
+  // A device without `dev` gets a development session's title and whether it is busy, and nothing it said or did.
+  const hidden = mayDev(peer) ? null : sessionIds(home.world);
+  const runs = listRuns(home.world, { limit: 50 }).filter((run) => !hidden?.has(run.conversationId));
   const views: StateResponse["views"] = {};
   for (const module of home.modules) if (module.views?.length) views[module.id] = module.views.map((view) => ({ id: view.id, title: view.title }));
   return {
     protocol: PROTOCOL_VERSION,
     cursor: latestEventSeq(home.world),
-    conversations: listConversations(home.world),
+    conversations: listConversations(home.world).map((conversation) => (hidden?.has(conversation.id) ? { ...conversation, lastGoal: null, commands: [] } : conversation)),
     runs,
     receipts: listRunReceipts(home.world, runs.map((run) => run.id)),
     // Presented ones too: the device that showed one keeps showing it until acknowledged.
-    notices: listNotices(home.world, { states: ["pending", "claimed", "presented"] }),
+    notices: listNotices(home.world, { states: ["pending", "claimed", "presented"] })
+      .filter((notice) => !hidden?.has(String(notice.payload.conversationId ?? ""))),
     modules,
     views,
     areas: [...AREAS],
@@ -187,7 +203,11 @@ function conversationDetail(home: Home, id: string): ConversationDetail {
 /** Server-Sent Events: replay after the cursor, then follow commits. Live
  * updates (a reply being written) go out as they happen and are never replayed.
  */
-function events(home: Home, req: IncomingMessage, res: ServerResponse, url: URL): void {
+function events(home: Home, peer: Peer, req: IncomingMessage, res: ServerResponse, url: URL): void {
+  // A device without `dev` still hears that something happened in a development session (so its lists stay right),
+  // but not what: such an event goes out with an empty payload, and what a session is writing does not go out.
+  const open = mayDev(peer);
+  const sessionEvent = (event: CoreEvent) => (event.runId ? runInSession(home.world, event.runId) : !!event.subject?.startsWith("conversation:") && inSession(home.world, event.subject.slice(13)));
   const fromHeader = Number(req.headers["last-event-id"]);
   const fromQuery = Number(url.searchParams.get("after"));
   let cursor = Number.isInteger(fromHeader) && fromHeader >= 0 ? fromHeader : Number.isInteger(fromQuery) && fromQuery >= 0 ? fromQuery : latestEventSeq(home.world);
@@ -196,14 +216,20 @@ function events(home: Home, req: IncomingMessage, res: ServerResponse, url: URL)
   const flush = () => {
     for (;;) {
       const page = listEvents(home.world, { after: cursor, limit: 500 });
-      for (const event of page.events as CoreEvent[]) res.write(`id: ${event.seq}\nevent: core\ndata: ${JSON.stringify(event)}\n\n`);
+      for (const event of page.events as CoreEvent[]) {
+        const sent = open || !sessionEvent(event) ? event : { ...event, payload: {} };
+        res.write(`id: ${event.seq}\nevent: core\ndata: ${JSON.stringify(sent)}\n\n`);
+      }
       cursor = page.cursor;
       if (page.events.length < 500) return;
     }
   };
   flush();
   const unsubscribe = home.world.onCommit(() => setImmediate(() => { if (!res.writableEnded) flush(); }));
-  const onLive = (update: LiveUpdate) => { if (!res.writableEnded) res.write(`event: live\ndata: ${JSON.stringify(update)}\n\n`); };
+  const onLive = (update: LiveUpdate) => {
+    if (res.writableEnded || (!open && inSession(home.world, update.conversationId))) return;
+    res.write(`event: live\ndata: ${JSON.stringify(update)}\n\n`);
+  };
   home.live.on("update", onLive);
   const keepAlive = setInterval(() => res.write(`: keep-alive\n\n`), 25_000);
   req.on("close", () => { unsubscribe(); home.live.off("update", onLive); clearInterval(keepAlive); });
@@ -303,6 +329,13 @@ async function remoteRoute(home: Home, options: ServeOptions, peer: Peer, req: I
     await remote.describe();
     return send(res, 200, remote.newPairing()), true;
   }
+  const scope = /^\/api\/devices\/([A-Za-z0-9_-]{1,64})\/scope$/.exec(path);
+  if (scope && method === "POST") {
+    const body = await readJson<{ scope?: unknown; enabled?: unknown }>(req);
+    if (!(DEVICE_SCOPES as readonly unknown[]).includes(body.scope) || typeof body.enabled !== "boolean") throw new HttpError(400, "scope and enabled are required");
+    remote.setScope(scope[1], body.scope as DeviceScope, body.enabled);
+    return send(res, 200, withPush(await remote.describe(), options.push) satisfies RemoteResponse), true;
+  }
   const revoke = /^\/api\/devices\/([A-Za-z0-9_-]{1,64})\/revoke$/.exec(path);
   if (revoke && method === "POST") {
     await readJson(req);
@@ -312,11 +345,14 @@ async function remoteRoute(home: Home, options: ServeOptions, peer: Peer, req: I
   throw new HttpError(404, "Not found");
 }
 
-async function route(home: Home, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const method = req.method ?? "GET";
   const path = url.pathname;
-  if (method === "GET" && path === "/api/state") return send(res, 200, state(home));
-  if (method === "GET" && path === "/api/events") return events(home, req, res, url);
+  if (method === "GET" && path === "/api/state") return send(res, 200, state(home, peer));
+  if (method === "GET" && path === "/api/events") return events(home, peer, req, res, url);
+  /** Development sessions are for this machine and the devices the user let in (4.7). */
+  const dev = mayDev(peer);
+  const needDev = (session: boolean) => { if (session && !dev) throw new HttpError(403, NEEDS_DEV, "needs_dev"); };
   /** One of the harness's commands (commands.ts): the body's fields are its input, with what the address names. */
   const ask = async (name: string, where?: Record<string, unknown>) => command(home, name, await readJson<Record<string, unknown>>(req), where);
 
@@ -324,6 +360,7 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   if (method === "POST" && path === "/api/runs") {
     const body = await readJson<SubmitRunRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.goal !== "string") throw new HttpError(400, "requestId and goal are required");
+    needDev(inSession(home.world, body.conversationId));
     const profile = profileFor(home.world, body.conversationId);
     // A session is its own page: what page the user had open is not its context.
     const context = profile === DEVELOPER_PROFILE ? undefined : body.context;
@@ -331,17 +368,19 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
     home.kick();
     return send(res, result.replayed ? 200 : 202, result);
   }
-  if (method === "POST" && path === "/api/conversations") return send(res, 201, (await ask("conversation.start")).result);
+  if (method === "POST" && path === "/api/conversations") { needDev(true); return send(res, 201, (await ask("conversation.start")).result); }
   // Projects: only from the home node's own machine (dispatch refuses other devices).
   if (method === "POST" && path === "/api/projects") return send(res, 200, (await ask("project.add")).result);
   const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
   if (project && method === "POST") return send(res, 200, (await ask(`project.${project[2]}`, { id: project[1] })).result);
   const conversation = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})$/.exec(path);
+  if (conversation) needDev(inSession(home.world, conversation[1]));
   if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
   if (conversation && method === "POST") return send(res, 200, (await ask("conversation.update", { id: conversation[1] })).result);
   // A development session's changes since its snapshot, and one file's diff.
   const session = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})\/(changes|diff)$/.exec(path);
   if (session && method === "GET") {
+    needDev(true);
     const found = getConversation(home.world, session[1]);
     if (!found.projectId) throw new HttpError(404, "Not a development session");
     const root = getProject(home.world, found.projectId).path;
@@ -354,6 +393,7 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   }
 
   const run = /^\/api\/runs\/([A-Za-z0-9_-]+)(?:\/(cancel|resume|respond|steer))?$/.exec(path);
+  if (run) needDev(runInSession(home.world, run[1]));
   if (run && method === "GET" && !run[2]) return send(res, 200, getRun(home.world, run[1]));
   if (run && method === "POST" && run[2] === "steer") {
     const body = await readJson<SteerRequest>(req);
@@ -364,7 +404,8 @@ async function route(home: Home, req: IncomingMessage, res: ServerResponse, url:
   if (run && method === "POST" && run[2] === "respond") {
     const body = await readJson<RespondRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.answer !== "string") throw new HttpError(400, "requestId and answer are required");
-    return send(res, 200, answerRequest(home.world, run[1], { requestId: body.requestId, answer: body.answer }));
+    // Who answered: an `always` (this command, for the rest of the session) ends with the device that gave it.
+    return send(res, 200, answerRequest(home.world, run[1], { requestId: body.requestId, answer: body.answer, by: peer.local ? "home" : peer.device?.id }));
   }
   if (run && method === "POST" && run[2]) return send(res, 200, (await ask(`run.${run[2]}`, { id: run[1] })).result);
 
@@ -534,7 +575,7 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
     if (path.startsWith("/api/connections") && (options.google || options.models)
       && await handleConnections({ google: options.google, models: options.models }, req, res, url, options.log)) return;
     if (path === "/api/outlets") return outletRoute(home, peer, req, res);
-    await route(home, req, res, url);
+    await route(home, peer, req, res, url);
   };
   answer().catch((error: unknown) => {
     const { status, body } = statusOf(error);

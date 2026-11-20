@@ -13,7 +13,7 @@
 import { randomBytes } from "node:crypto";
 import {
   acceptProposal, addProject, commandReplay, coreContext, createAutomation, declineProposal, deleteAutomation, getConversation, getProject,
-  ProjectError, removeProject, requestCancel, resumeRun, runAutomationNow, startSession, submitRun, supersedeProposal, trustProject,
+  ProjectError, removeProject, requestCancel, resumeRun, revokeCommand, runAutomationNow, startSession, submitRun, supersedeProposal, trustProject,
   updateAutomation, updateConversation, updateSettings, userLocale, withCoreContext, type SessionMode, type ThinkingLevel, type World,
 } from "@alfred/core";
 import { applyStep, OpInputError, opInput, runOp, Type, UnknownOpError, type Static, type TSchema } from "@alfred/module-kit";
@@ -127,12 +127,17 @@ const OPS: readonly HarnessOp[] = [
     input: Type.Object({
       id: Id, title: Type.Optional(Type.String()), archived: Type.Optional(Type.Boolean()),
       model: Type.Optional(Type.Union([Type.String(), Type.Null()])), thinking: Type.Optional(Type.Union([Type.String(), Type.Null()])), mode: Type.Optional(Type.String()),
+      /** A command allowed for the rest of the session, taken back: it asks again. */
+      forgetCommand: Type.Optional(Type.String({ maxLength: 300 })),
     }),
     // Which models, levels and modes there are is the core's to say.
-    run: (home, input) => updateConversation(home.world, input.id, {
-      title: input.title, archived: input.archived, model: input.model,
-      thinking: input.thinking as ThinkingLevel | null | undefined, mode: input.mode as SessionMode | undefined,
-    }),
+    run: (home, input) => {
+      if (input.forgetCommand !== undefined) revokeCommand(home.world, input.id, input.forgetCommand);
+      return updateConversation(home.world, input.id, {
+        title: input.title, archived: input.archived, model: input.model,
+        thinking: input.thinking as ThinkingLevel | null | undefined, mode: input.mode as SessionMode | undefined,
+      });
+    },
   }),
 
   // Projects. http.ts lets only the home node's own machine send these: a folder path means something only there.

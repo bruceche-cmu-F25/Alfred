@@ -45,7 +45,8 @@ export {
   type Automation, type AutomationView, type AutomationTemplate, type AutomationPatch, type NewAutomation, type Schedule,
 } from "./automations.ts";
 export { listProjects, getProject, addProject, trustProject, removeProject, ProjectError, PROJECT_ID, SESSION_MODES, type Project, type SessionMode } from "./projects.ts";
-export { listDevices, pairDevice, deviceForToken, revokeDevice, hashToken, DeviceError, DEVICE_KINDS, type Device, type DeviceKind } from "./devices.ts";
+export { listDevices, pairDevice, deviceForToken, revokeDevice, setDeviceScope, hashToken, DeviceError, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope } from "./devices.ts";
+export { simpleCommand, commandAllowed, normalizeCommand, listCommandGrants, grantCommand, revokeCommand, type CommandGrant } from "./shell.ts";
 export { defaultSecretStore, fileStore, keychainStore, type SecretStore } from "./secrets.ts";
 export {
   enqueueOutbound, claimOutbound, finishOutbound, retryOutbound, interruptOutbound, getOutbound, listOutbound, OUTBOUND_STATES, OUTBOUND_MAX_ATTEMPTS,

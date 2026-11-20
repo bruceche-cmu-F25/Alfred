@@ -13,18 +13,20 @@
  *   Claude Desktop's), reached directly, through `tool_search` or `codemode`.
  * - Skills from `<config>/skills/`, and the `read` tool to load them.
  * - In a development session (a job with a workspace): the session works in the
- *   project's folder, with `read`, `grep`, `find` and `ls`, `edit` and `write`
- *   unless the session is in `plan` mode, and the project's AGENTS.md /
- *   CLAUDE.md as context. Its `.pi/` settings, extensions and MCP servers are
- *   not loaded.
- * Nothing else: no shell, no writing or editing files outside a session, none
- * of the user's own Pi extensions or packages.
+ *   project's folder, with `read`, `grep`, `find` and `ls`, and, unless the
+ *   session is in `plan` mode, `edit`, `write` and `bash`, and the project's
+ *   AGENTS.md / CLAUDE.md as context. Its `.pi/` settings, extensions and MCP
+ *   servers are not loaded.
+ * Nothing else: no shell and no writing or editing files outside a session,
+ * none of the user's own Pi extensions or packages.
  *
  * A gate checks every call to a tool Alfred did not define. MCP tools their
  * server marks read-only, reading Alfred's skills, and reading, searching or
  * listing inside a session's project folder run freely, and so do changes
  * inside it in `edits` mode; anything else asks the user first, through the
- * home node, once per call (a change shows its diff). A permitted call that may
+ * home node, once per call (a change shows its diff). A shell command always
+ * asks, shown whole, unless the user allowed that command for the rest of the
+ * session; it is not sandboxed and runs as the user. A permitted call that may
  * have changed something outside Alfred is kept as a receipt.
  * Credentials and the default model come from the user's Pi setup.
  *
@@ -43,7 +45,7 @@ import { change, CHANGERS, countPatch, type Change } from "./changing.ts";
 import { LOOKERS, look, real } from "./looking.ts";
 import { loadAlfredMcpConfig } from "./mcp-config.ts";
 import type { ExternalStep, ModelInfo, RunJob, ToParent, ToWorker } from "./protocol.ts";
-import { defaultSecretStore } from "@alfred/core";
+import { commandAllowed, defaultSecretStore, normalizeCommand, simpleCommand } from "@alfred/core";
 import { createCredentialStore } from "./credentials.ts";
 
 const { values } = parseArgs({ options: { cwd: { type: "string" }, sessions: { type: "string" }, config: { type: "string" }, "agent-dir": { type: "string" } } });
@@ -82,6 +84,8 @@ interface Warm {
   /** The session's mode for this turn; `always` once the user said "don't ask again" during it. */
   mode: string | null;
   always: boolean;
+  /** The commands the user allowed for the rest of the session: as the turn started, plus those allowed during it. */
+  commands: Set<string>;
 }
 const warm = new Map<string, Warm>();
 let busy = false;
@@ -106,11 +110,32 @@ function describeTool(name: string): { label: string; server?: string; tool: str
 
 /** A diff is shown with the question up to this size; past it, its first part and a note. */
 const MAX_DIFF = 11_000;
+/** How much of what a command printed is kept with its step: its last lines. */
+const OUTPUT_LINES = 200;
+const OUTPUT_CHARS = 8000;
+
+/** The end of what a command printed, as Pi's shell tool reported it. */
+function tail(content: unknown): string | undefined {
+  const text = Array.isArray(content) ? content.filter((part) => part?.type === "text").map((part) => String(part.text ?? "")).join("\n") : "";
+  const lines = text.replace(/\s+$/, "").split("\n");
+  const kept = lines.slice(-OUTPUT_LINES).join("\n").slice(-OUTPUT_CHARS);
+  return kept || undefined;
+}
+
+/** A command's exit code from what the shell tool reports: structured when it is, else from its closing line. */
+function exitOf(event: { isError?: boolean; details?: unknown; content?: unknown }): number | null {
+  const details = event.details as { exitCode?: unknown; exit_code?: unknown } | undefined;
+  for (const value of [details?.exitCode, details?.exit_code]) if (typeof value === "number") return value;
+  const text = Array.isArray(event.content) ? event.content.map((part) => String((part as { text?: unknown })?.text ?? "")).join("\n") : "";
+  const said = /(?:exited with code|exit code:?)\s+(-?\d+)/i.exec(text);
+  if (said) return Number(said[1]);
+  return event.isError ? null : 0;
+}
 
 /** The gate: every call to a tool Alfred did not define passes here first. `root` is a development session's project folder. */
-function gate(state: { run: string | null; mode: string | null; always: boolean }, ours: ReadonlySet<string>, root: string | null): ExtensionFactory {
+function gate(state: { run: string | null; mode: string | null; always: boolean; commands: Set<string> }, ours: ReadonlySet<string>, root: string | null): ExtensionFactory {
   return (pi) => {
-    const open = new Map<string, { step: ExternalStep; changes: boolean; run: string; file?: Change }>();
+    const open = new Map<string, { step: ExternalStep; changes: boolean; run: string; file?: Change; command?: { started: number } }>();
     pi.on("tool_call", async (event) => {
       const name = event.toolName;
       if (ours.has(name) || REACHERS.has(name)) return undefined;
@@ -123,7 +148,18 @@ function gate(state: { run: string | null; mode: string | null; always: boolean 
       let file: Change | undefined;
       let detail: string | undefined;
       let always = false;
-      if (Object.hasOwn(CHANGERS, name)) {
+      let command: string | undefined;
+      if (name === "bash") {
+        // A shell command: only in a session that may change things, and it asks every time, shown whole, unless
+        // the user allowed this command (or one it starts with) for the rest of the session.
+        if (!root || state.mode === "plan") return { block: true, reason: "This session cannot run commands." };
+        command = String(input.command ?? "");
+        step.label = "Run command";
+        step.about = normalizeCommand(command).slice(0, 200);
+        question = commandAllowed(state.commands, command) ? null : "允许 Alfred 运行这条命令吗？";
+        always = simpleCommand(command);
+        changes = false;
+      } else if (Object.hasOwn(CHANGERS, name)) {
         // Changing a file: inside the project, as the session's mode says (`edits`, or "don't ask again" this turn,
         // goes ahead); anything else asks, with the diff. Outside the project it always asks.
         file = change(name, input, { root, cwd });
@@ -152,22 +188,30 @@ function gate(state: { run: string | null; mode: string | null; always: boolean 
       }
       if (question !== null) {
         const call = next();
-        const answer = await waitFor<boolean | "always">(call, { type: "allow", run, call, question, ...(detail ? { detail } : {}), ...(always ? { always } : {}) });
+        const answer = await waitFor<boolean | "always">(call, { type: "allow", run, call, question, ...(detail ? { detail } : {}), ...(always ? { always } : {}), ...(command !== undefined ? { command } : {}) });
         if (!answer) {
           send({ type: "step", run, step: { ...step, status: "declined" } });
           return { block: true, reason: DENIED };
         }
+        // "Allow for this session": this command goes ahead from now on (the home node keeps it for later turns).
+        if (answer === "always" && command !== undefined) state.commands.add(normalizeCommand(command));
         // "Don't ask again": the rest of this turn's changes in the project go ahead (the session is now `edits`).
-        if (answer === "always") state.always = true;
+        else if (answer === "always") state.always = true;
       }
       send({ type: "step", run, step });
-      open.set(event.toolCallId, { step, changes, run, file });
+      open.set(event.toolCallId, { step, changes, run, file, ...(command !== undefined ? { command: { started: Date.now() } } : {}) });
       return undefined;
     });
     pi.on("tool_result", (event) => {
       const call = open.get(event.toolCallId);
       if (!call) return undefined;
       open.delete(event.toolCallId);
+      if (call.command) {
+        // A command's step ends with how it went: its exit code, how long it took, the end of what it printed.
+        const exit = exitOf(event);
+        send({ type: "step", run: call.run, step: { ...call.step, status: event.isError || exit !== 0 ? "failed" : "done", exit, ms: Date.now() - call.command.started, output: tail(event.content) } });
+        return undefined;
+      }
       send({ type: "step", run: call.run, step: { ...call.step, status: event.isError ? "failed" : "done" } });
       if (call.changes && !event.isError) send({ type: "receipt", run: call.run, tool: call.step.tool, label: call.step.label, about: call.step.about });
       if (call.file && !event.isError) {
@@ -215,14 +259,17 @@ async function close(thread: string): Promise<void> {
 }
 
 async function open(job: RunJob): Promise<Warm> {
-  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: job.workspace ?? null })).digest("hex");
+  // What the session is opened with. The commands allowed for the session are not part of it: they are read by the
+  // gate each turn, so allowing one does not reopen the session.
+  const place = job.workspace ? { root: job.workspace.root, name: job.workspace.name, mode: job.workspace.mode } : null;
+  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: place })).digest("hex");
   const existing = warm.get(job.thread);
   if (existing && existing.shape === shape) return existing;
   if (existing) await close(job.thread);
 
   const dir = join(sessions, job.thread);
   mkdirSync(dir, { recursive: true });
-  const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null, mode: job.workspace?.mode ?? null, always: false };
+  const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null, mode: job.workspace?.mode ?? null, always: false, commands: new Set() };
   const definitions = alfredTools(state, job);
   const root = job.workspace ? real(job.workspace.root) : null;
   const loader = new DefaultResourceLoader({
@@ -260,9 +307,10 @@ async function open(job: RunJob): Promise<Warm> {
     modelRuntime: await ModelRuntime.create(modelOptions),
     customTools: definitions,
     // Of Pi's built-in tools: `read` (skills; other files ask first), and in a development session also grep,
-    // find and ls, and, unless it is in `plan` mode, edit and write (the gate asks as the mode says). No shell.
+    // find and ls, and, unless it is in `plan` mode, edit, write and bash (the gate asks as the mode says, and for
+    // every command). Outside a session there is no shell and no changing files.
     ...(root ? { tools: ["+grep", "+find", "+ls"] } : {}),
-    excludeTools: root && job.workspace?.mode !== "plan" ? ["bash", "powershell"] : ["bash", "edit", "write", "powershell"],
+    excludeTools: root && job.workspace?.mode !== "plan" ? ["powershell"] : ["bash", "edit", "write", "powershell"],
   });
   state.session = session;
   // Connects MCP servers in the background; they stay connected while the session is warm.
@@ -312,6 +360,7 @@ async function runTurn(run: string, job: RunJob): Promise<string> {
   await choose(session, job);
   entry.run = run;
   entry.always = false;
+  entry.commands = new Set(job.workspace?.commands ?? []);
   let aborted = false;
   currentAbort = () => { aborted = true; void session.abort(); };
   // The reply as it is written, whole each time, at most every 80 ms.

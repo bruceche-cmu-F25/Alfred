@@ -457,7 +457,7 @@ test("a development session: add and trust a folder, start a session, and its ru
     await home.idle();
     const detail = await (await fetch(`${base}/api/conversations/${session.id}`)).json() as ConversationDetail;
     assert.equal(detail.runs[0].state, "completed");
-    assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask" });
+    assert.deepEqual(seen[0].workspace, { root: project.path, name: "Shop", mode: "ask", commands: [] });
     assert.equal(seen[0].context, undefined, "a session is not asked from a page");
     assert.ok(!seen[0].tools.includes("show_view"));
     assert.match(seen[0].instructions, /ask mode: you can change files/, "the run is told what its mode lets it do");

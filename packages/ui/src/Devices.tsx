@@ -30,8 +30,9 @@ function Qr({ text }: { text: string }) {
 
 const when = (iso: string) => new Date(iso).toLocaleString(getLocale() === "zh" ? "zh-CN" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-function DeviceRow({ device, onRevoke }: { device: DeviceInfo; onRevoke?: () => void }) {
+function DeviceRow({ device, onRevoke, onDev }: { device: DeviceInfo; onRevoke?: () => void; onDev?: (enabled: boolean) => void }) {
   const [confirming, setConfirming] = useState(false);
+  const dev = !!device.scopes?.includes("dev");
   return (
     <>
       <div className="set-row">
@@ -47,6 +48,15 @@ function DeviceRow({ device, onRevoke }: { device: DeviceInfo; onRevoke?: () => 
           </span>
         )}
       </div>
+      {onDev && (
+        <div className="set-row sub">
+          <span className="set-name">{t("devices.dev")}</span>
+          <span className="set-note">{t("devices.dev.note")}</span>
+          <span className="set-end">
+            <button type="button" className="set-switch" role="switch" aria-checked={dev} aria-label={t("devices.dev.label", { name: device.name })} onClick={() => onDev(!dev)} />
+          </span>
+        </div>
+      )}
       {confirming && onRevoke && (
         <div className="set-flow">
           {t("devices.revoke.confirm")}
@@ -170,7 +180,10 @@ function Manage({ initial, onError }: { initial: Local; onError: (message: strin
           <span className="set-name">{t("devices.thisMac")}</span>
           <span className="set-note">{t("devices.thisMac.note")}</span>
         </div>
-        {remote.devices.map((device) => <DeviceRow key={device.id} device={device} onRevoke={() => void revoke(device.id)} />)}
+        {remote.devices.map((device) => (
+          <DeviceRow key={device.id} device={device} onRevoke={() => void revoke(device.id)}
+            onDev={(enabled) => void api.deviceScope(device.id, "dev", enabled).then(apply, fail)} />
+        ))}
         {!remote.devices.length && <p className="quiet small dev-none">{t("devices.none")}</p>}
       </div>
       {remote.devices.length > 0 && <p className="quiet small">{t("devices.scope")}</p>}

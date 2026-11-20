@@ -31,6 +31,8 @@ export interface Conversation {
   mode: SessionMode | null;
   /** The commit a development session's changes are measured against; null when its folder is not a git repository. */
   base: string | null;
+  /** The commands the user allowed for the rest of a development session (shell.ts). */
+  commands: string[];
 }
 
 export class ConversationError extends Error {
@@ -68,6 +70,7 @@ function toConversation(row: Record<string, unknown>): Conversation {
     projectId: (row.project_id as string | null) ?? null,
     mode: (row.mode as SessionMode | null) ?? null,
     base: (row.base as string | null) ?? null,
+    commands: (JSON.parse((row.commands as string | undefined) ?? "[]") as Array<{ command: string }>).map((grant) => grant.command),
   };
 }
 

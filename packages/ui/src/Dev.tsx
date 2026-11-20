@@ -79,6 +79,7 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
   const files = changes?.files ?? [];
   const added = files.reduce((sum, file) => sum + file.added, 0), removed = files.reduce((sum, file) => sum + file.removed, 0);
   const mode = conversation?.mode ?? "plan";
+  const allowed = conversation?.commands ?? [];
   return (
     <div className="dev-layout" data-panel={panel || undefined}>
       <section className="dev-session">
@@ -116,6 +117,23 @@ function Session({ id, conversation, state, onSession, live, highlighted, onEven
             <p className="small quiet">{t("mode.outside")}</p>
           </section>
           <section>
+            <h3>{t("dev.commands")}</h3>
+            {allowed.length === 0 ? <p className="small quiet">{t(mode === "plan" ? "dev.commandsPlan" : "dev.commandsAsk")}</p> : (
+              <>
+                <ul className="dev-commands">
+                  {allowed.map((command) => (
+                    <li key={command}>
+                      <code title={command}>{command}</code>
+                      <button type="button" className="icon-btn" onClick={() => { api.updateConversation(id, { forgetCommand: command }).catch(() => {}); }}
+                        aria-label={t("dev.commandForget", { command })} title={t("dev.commandForget", { command })}>×</button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="small quiet">{t("dev.commandsAllowed")}</p>
+              </>
+            )}
+          </section>
+          <section>
             <h3>{t("dev.changes")}{files.length > 0 && <span className="mono"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>}</h3>
             {files.length === 0 ? <p className="small quiet">{t("dev.noChanges")}</p> : (
               <ul className="dev-files">
@@ -148,7 +166,8 @@ function NewSession({ state, onSession }: { state: StateResponse; onSession(id: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const project = projects.find((candidate) => candidate.id === chosen);
-  const fail = (reason: unknown) => setError(reason instanceof ApiError && reason.code === "local_only" ? t("dev.addLocal") : reason instanceof Error ? reason.message : String(reason));
+  const fail = (reason: unknown) => setError(reason instanceof ApiError && reason.code === "local_only" ? t("dev.addLocal")
+    : reason instanceof ApiError && reason.code === "needs_dev" ? t("dev.needsScope") : reason instanceof Error ? reason.message : String(reason));
 
   const add = async (folder: string | null) => {
     if (!folder?.trim()) return;

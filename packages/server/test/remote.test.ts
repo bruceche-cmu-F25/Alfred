@@ -5,9 +5,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CORE_MIGRATIONS, deviceForToken, listDevices, listEvents, openWorld, pairDevice, revokeDevice, type EnginePort } from "@alfred/core";
+import { addProject, CORE_MIGRATIONS, deviceForToken, listDevices, listEvents, openWorld, pairDevice, revokeDevice, startSession, submitRun, trustProject, type EnginePort } from "@alfred/core";
 import { todoModule } from "@alfred/module-todo";
-import type { OutletsResponse, PairingCode, RemoteResponse } from "@alfred/protocol";
+import type { OutletsResponse, PairingCode, RemoteResponse, StateResponse } from "@alfred/protocol";
 import { createHttpServer, createIngressServer, openHome, PushService, RemoteAccess, Tailscale, type Home, type Runner } from "../src/index.ts";
 
 const DNS = "mini.tail1234.ts.net";
@@ -280,5 +280,49 @@ test("a paired device turns notifications on, gets a test one, and loses them wh
     const after = (await ask(local, "/api/remote")).body as Extract<RemoteResponse, { local: true }>;
     assert.equal(after.devices.length, 0);
     assert.equal((await ask(ingress, "/api/push/test", { headers: as, body: {} })).status, 401);
+  } finally { close(); }
+});
+
+test("a paired device stays out of development sessions until the user lets it in on this machine", async () => {
+  const { home, local, ingress, close } = await setUp();
+  try {
+    await ask(local, "/api/remote", { body: { enabled: true } });
+    const pairing = (await ask(local, "/api/remote/pairing", { body: {} })).body as unknown as PairingCode;
+    const paired = await ask(ingress, "/api/pair", { headers: viaServe(), body: { code: pairing.code, name: "Phone", kind: "phone" } });
+    const as = viaServe({ Cookie: String(paired.headers["set-cookie"]?.[0]).split(";")[0] });
+    const device = (paired.body.device as { id: string; scopes: string[] });
+    assert.deepEqual(device.scopes, []);
+
+    const project = trustProject(home.world, addProject(home.world, { path: mkdtempSync(join(tmpdir(), "alfred-dev-")), name: "Shop" }).id);
+    const session = startSession(home.world, { projectId: project.id, title: "Run the secret tests" });
+    const run = submitRun(home.world, { requestId: "s-1", goal: "run the secret tests", profile: "developer", conversationId: session.id }).run;
+
+    // It sees that the session is there and busy, and nothing it said or did.
+    const seen = (await ask(ingress, "/api/state", { headers: as })).body as unknown as StateResponse;
+    const listed = seen.conversations.find((conversation) => conversation.id === session.id)!;
+    assert.equal(listed.title, "Run the secret tests");
+    assert.equal(listed.lastGoal, null);
+    assert.equal(seen.runs.some((candidate) => candidate.id === run.id), false);
+    for (const [path, body] of [
+      [`/api/conversations/${session.id}`, undefined], [`/api/conversations/${session.id}/changes`, undefined], [`/api/runs/${run.id}`, undefined],
+      [`/api/runs/${run.id}/respond`, { requestId: "x", answer: "allow" }], [`/api/runs/${run.id}/cancel`, {}],
+      ["/api/runs", { requestId: "p-9", goal: "rm -rf", conversationId: session.id }],
+      ["/api/conversations", { projectId: project.id, title: "Another" }], [`/api/conversations/${session.id}`, { mode: "edits" }],
+    ] as const) {
+      const reply = await ask(ingress, path, { headers: as, body });
+      assert.equal(reply.status, 403, path);
+      assert.equal(reply.body.code, "needs_dev", path);
+    }
+    // Everyday conversations are as before.
+    assert.equal((await ask(ingress, "/api/runs", { headers: as, body: { requestId: "p-10", goal: "hello" } })).status, 202);
+    // A device cannot give itself the scope.
+    assert.equal((await ask(ingress, `/api/devices/${device.id}/scope`, { headers: as, body: { scope: "dev", enabled: true } })).body.code, "local_only");
+
+    const granted = (await ask(local, `/api/devices/${device.id}/scope`, { body: { scope: "dev", enabled: true } })).body as Extract<RemoteResponse, { local: true }>;
+    assert.deepEqual(granted.devices[0].scopes, ["dev"]);
+    assert.equal((await ask(ingress, `/api/conversations/${session.id}`, { headers: as })).status, 200);
+    const now = (await ask(ingress, "/api/state", { headers: as })).body as unknown as StateResponse;
+    assert.ok(now.runs.some((candidate) => candidate.id === run.id));
+    assert.equal((await ask(local, `/api/devices/${device.id}/scope`, { body: { scope: "root", enabled: true } })).status, 400);
   } finally { close(); }
 });

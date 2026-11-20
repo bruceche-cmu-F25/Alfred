@@ -209,7 +209,7 @@ export function createWorkerEngine(options: WorkerEngineOptions): WorkerEngine {
           else if (message.type === "changed") request.external.changed?.(message.file);
           else if (message.type === "allow") {
             // Anything but an explicit yes, including a failure to ask, is a no.
-            request.external.allow(message.question, { detail: message.detail, always: message.always })
+            request.external.allow(message.question, { detail: message.detail, always: message.always, ...(message.command !== undefined ? { command: message.command } : {}) })
               .catch(() => "deny" as const)
               .then((answer) => to({ type: "allow_result", run, call: message.call, allowed: answer !== "deny", always: answer === "always" }));
           } else if (message.type === "tool") {

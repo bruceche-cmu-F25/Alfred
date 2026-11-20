@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { listDevices, pairDevice, revokeDevice, type Device, type DeviceKind, type World } from "@alfred/core";
+import { listDevices, pairDevice, revokeDevice, setDeviceScope, type Device, type DeviceKind, type DeviceScope, type World } from "@alfred/core";
 import type { PairingCode, RemoteResponse, TailscaleStatus } from "@alfred/protocol";
 import type { Tailscale } from "./tailscale.ts";
 
@@ -143,6 +143,13 @@ export class RemoteAccess {
     const device = pairDevice(this.#options.world, { token, name: input.name, kind: input.kind, via: input.via }, now);
     this.#options.log?.(`paired ${device.name} (${device.kind}${input.via ? `, ${input.via}` : ""})`);
     return { device, token };
+  }
+
+  /** Lets a device into development sessions, or takes that away (docs/design/dev-mode.md 4.7). */
+  setScope(id: string, scope: DeviceScope, enabled: boolean): Device {
+    const device = setDeviceScope(this.#options.world, id, scope, enabled);
+    this.#options.log?.(`${device.name}: ${scope} ${enabled ? "on" : "off"}`);
+    return device;
   }
 
   revoke(id: string): Device {

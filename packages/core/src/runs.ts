@@ -40,6 +40,10 @@ export interface RunRequest {
   options: string[];
   /** For `permission`: exactly what would happen (a diff, a command), shown with the question. */
   detail?: string;
+  /** What `detail` is, when it is not a diff: a shell command. */
+  detailKind?: "command";
+  /** For a command: what `always` would allow for the rest of the session. */
+  grant?: string;
   createdAt: string;
 }
 export interface Run {
@@ -343,7 +347,7 @@ export function resumeRun(world: World, id: string, options: { now?: number } = 
 // ---- asking the user -----------------------------------------------------
 
 /** Answers reach the waiting executor through this, after they commit. */
-export const runAnswers = new EventEmitter<{ answer: [runId: string, requestId: string, answer: string] }>();
+export const runAnswers = new EventEmitter<{ answer: [runId: string, requestId: string, answer: string, by: string | undefined] }>();
 // One listener per waiting run and per drain; there is no leak to warn about.
 runAnswers.setMaxListeners(0);
 
@@ -355,7 +359,7 @@ export const PERMISSION_ANSWERS = ["allow", "deny", "always"] as const;
 const MAX_DETAIL = 12_000;
 
 /** The executor stops the run to ask. Only the lease holder of a running run may. */
-export function openRequest(world: World, id: string, owner: string, input: { kind: RunRequest["kind"]; question: string; options?: string[]; detail?: string; always?: boolean; now?: number }): RunRequest {
+export function openRequest(world: World, id: string, owner: string, input: { kind: RunRequest["kind"]; question: string; options?: string[]; detail?: string; detailKind?: "command"; grant?: string; always?: boolean; now?: number }): RunRequest {
   const now = input.now ?? Date.now();
   const question = input.question.trim().slice(0, MAX_QUESTION);
   if (!question) throw new Error("A request needs a question");
@@ -366,10 +370,14 @@ export function openRequest(world: World, id: string, owner: string, input: { ki
     const run = owned(db, id, owner, now);
     if (run.state !== "running") throw new RunError("state");
     const detail = input.kind === "permission" && input.detail ? input.detail.slice(0, MAX_DETAIL) : undefined;
-    const request: RunRequest = { id: newId(), kind: input.kind, question, options, ...(detail ? { detail } : {}), createdAt: iso(now) };
+    const request: RunRequest = {
+      id: newId(), kind: input.kind, question, options, ...(detail ? { detail } : {}),
+      ...(detail && input.detailKind ? { detailKind: input.detailKind } : {}), ...(input.always && input.grant ? { grant: input.grant.slice(0, 300) } : {}),
+      createdAt: iso(now),
+    };
     setState(db, run, input.kind === "permission" ? "waiting_permission" : "waiting_input", now, { request: JSON.stringify(request) });
-    // The detail (a diff) stays on the run, not in the event log.
-    const event = runEvent(db, run, "waiting", now, { request: { ...request, detail: undefined } });
+    // The detail (a diff, a command) stays on the run, not in the event log.
+    const event = runEvent(db, run, "waiting", now, { request: { ...request, detail: undefined, grant: undefined } });
     createNotice(db, {
       eventSeq: event.seq, kind: "run_request", now,
       payload: { runId: id, conversationId: run.conversationId, goal: run.goal.slice(0, 200), requestId: request.id, kind: request.kind, question, options },
@@ -378,8 +386,9 @@ export function openRequest(world: World, id: string, owner: string, input: { ki
   });
 }
 
-/** The user answered. Accepted only for the question currently asked. */
-export function answerRequest(world: World, id: string, input: { requestId: string; answer: string; now?: number }): Run {
+/** The user answered. Accepted only for the question currently asked. `by`: who answered, for an answer that
+ * outlives the question (`always`): `home`, or a paired device's id. */
+export function answerRequest(world: World, id: string, input: { requestId: string; answer: string; by?: string; now?: number }): Run {
   const now = input.now ?? Date.now();
   const answer = String(input.answer ?? "").trim().slice(0, MAX_ANSWER);
   const run = world.tx((db) => {
@@ -399,7 +408,7 @@ export function answerRequest(world: World, id: string, input: { requestId: stri
     });
     return load(db, id);
   });
-  runAnswers.emit("answer", id, input.requestId, answer);
+  runAnswers.emit("answer", id, input.requestId, answer, input.by);
   return run;
 }
 

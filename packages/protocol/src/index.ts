@@ -74,6 +74,10 @@ export interface RunRequest {
   options: string[];
   /** For `permission`: exactly what would happen, such as a file's diff. */
   detail?: string;
+  /** What `detail` is, when it is not a diff: a shell command, shown whole. */
+  detailKind?: "command";
+  /** For a command: what answering `always` allows for the rest of the session (that command, also with more arguments). */
+  grant?: string;
   createdAt: string;
 }
 
@@ -121,6 +125,9 @@ export interface Conversation {
   mode: SessionMode | null;
   /** The snapshot (a git commit) a development session's changes are measured against; null outside git. */
   base: string | null;
+  /** The commands the user allowed for the rest of a development session; each runs without asking, also with more
+   * arguments after it. Absent from a home node older than this field. */
+  commands?: string[];
 }
 
 /** What a development session may do in its folder without asking: `plan` reads only; `ask` changes files, asking
@@ -157,7 +164,11 @@ export interface ConversationDetail {
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export interface UpdateConversationRequest { requestId?: string; title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode }
+export interface UpdateConversationRequest {
+  requestId?: string; title?: string; archived?: boolean; model?: string | null; thinking?: ThinkingLevel | null; mode?: SessionMode;
+  /** Takes back a command allowed for the rest of the session: it asks again. */
+  forgetCommand?: string;
+}
 
 export interface SteerRequest { text: string }
 
@@ -360,6 +371,7 @@ export type ConnectFlow =
  *   POST /api/remote                    { enabled } -> RemoteResponse            (local only)
  *   POST /api/remote/pairing            -> PairingCode (one code at a time)      (local only)
  *   POST /api/devices/:id/revoke        -> RemoteResponse                         (local only)
+ *   POST /api/devices/:id/scope         DeviceScopeRequest -> RemoteResponse      (local only)
  *   POST /api/pair                      PairRequest -> { device } and the cookie (a device that is not paired yet)
  *   POST /api/device/forget             -> {} (a device revokes itself)
  *   GET  /api/push                      PushInfo                                   (a paired device)
@@ -368,12 +380,21 @@ export type ConnectFlow =
  *   POST /api/push/test                 -> PushResult (a test notification to this device)
  *
  * A device that is not paired gets 401 with code `unpaired` from every other /api/ route.
+ *
+ * Development sessions run commands on the home node's machine, so a paired device reaches them only with the `dev`
+ * scope, which the user turns on per device on that machine. Without it a device sees a session's title and whether
+ * it is busy or waiting, and nothing else: its runs, steps, questions and changes are left out of what it is sent,
+ * and talking in one, answering one or starting one is refused with 403 and code `needs_dev`.
  */
+export type DeviceScope = "dev";
+export interface DeviceScopeRequest { scope: DeviceScope; enabled: boolean }
 export type DeviceKind = "desktop" | "phone" | "browser";
 export interface DeviceInfo {
   id: string; name: string; kind: DeviceKind; via: string | null; pairedAt: string; lastSeenAt: string | null;
   /** It receives push notifications (a notice nobody took within seconds goes to it). */
   push?: boolean;
+  /** What it may do beyond the everyday. Absent from a home node older than this field. */
+  scopes?: DeviceScope[];
 }
 /** VAPID public key to subscribe with, and whether this device already is. */
 export interface PushInfo { publicKey: string; subscribed: boolean }

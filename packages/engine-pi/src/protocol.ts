@@ -37,12 +37,16 @@ export interface UsageInfo {
   input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: number; durationMs?: number;
 }
 
-export type ExternalStep = { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined" };
+export type ExternalStep = {
+  id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined";
+  /** A command's ending: its exit code (null when it was killed), how long it ran, the end of what it printed. */
+  exit?: number | null; ms?: number; output?: string;
+};
 
 export type ToParent =
   | { type: "tool"; run: string; call: string; name: string; params: Record<string, unknown> }
   /** The engine's own tools (MCP, read): ask the user, show a step, keep a receipt. */
-  | { type: "allow"; run: string; call: string; question: string; detail?: string; always?: boolean }
+  | { type: "allow"; run: string; call: string; question: string; detail?: string; always?: boolean; command?: string }
   /** A file in the session's project was changed (edit, write): a receipt. */
   | { type: "changed"; run: string; file: FileChange }
   | { type: "step"; run: string; step: ExternalStep }

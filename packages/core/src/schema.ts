@@ -233,4 +233,12 @@ INSERT INTO core_presence (id, active_at, active_seq, away_at, away_seq)
     LEFT JOIN (SELECT at, seq FROM core_events WHERE subject = 'presence' AND kind = 'presence.active' ORDER BY seq DESC LIMIT 1) a ON 1
     LEFT JOIN (SELECT at, seq FROM core_events WHERE subject = 'presence' AND kind = 'presence.away' ORDER BY seq DESC LIMIT 1) w ON w.seq > COALESCE(a.seq, 0);
 `,
+}, {
+  // Commands in development sessions (shell.ts): the commands the user allowed for the rest of a session. And what a
+  // paired device may do beyond the everyday (devices.ts): `dev` lets it into development sessions.
+  id: "core:13",
+  sql: `
+ALTER TABLE core_conversations ADD COLUMN commands TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(commands) AND json_type(commands) = 'array');
+ALTER TABLE core_devices ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scopes) AND json_type(scopes) = 'array');
+`,
 }];

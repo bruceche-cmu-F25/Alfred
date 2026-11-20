@@ -9,6 +9,7 @@
 import { withCoreContext } from "./context.ts";
 import { getConversation, updateConversation, type ThinkingLevel } from "./conversations.ts";
 import { getProject, type SessionMode } from "./projects.ts";
+import { grantCommand, listCommandGrants, simpleCommand, normalizeCommand } from "./shell.ts";
 import { appendEvent, recordDomainEvent } from "./events.ts";
 import { newId } from "./ids.ts";
 import { getSettings } from "./settings.ts";
@@ -59,6 +60,8 @@ export interface Workspace {
   name: string;
   /** What it may do there without asking (projects.ts SESSION_MODES). */
   mode: SessionMode;
+  /** The commands the user allowed for the rest of the session (shell.ts): they run without asking. */
+  commands: string[];
 }
 /** A file a development session changed, as a receipt. */
 export interface FileChange { path: string; added: number; removed: number; created: boolean }
@@ -106,12 +109,15 @@ export interface EngineModel { id: string; provider: string; name: string; reaso
 /** How an engine reports calls to its own tools, which Alfred did not define. */
 export interface ExternalHooks {
   /** Asks the user to allow this one call, showing `detail` (a diff) with the question. Resolves `deny` unless the user
-   * said yes; `always` (offered only with `always: true`) means yes to this and to the rest of its kind in the session. */
-  allow(question: string, extra?: { detail?: string; always?: boolean }): Promise<"allow" | "deny" | "always">;
+   * said yes; `always` (offered only with `always: true`) means yes to this and to the rest of its kind in the session.
+   * With `command` it is a shell command that is asked about: it is what the user is shown, and `always` (offered
+   * only for a plain command) allows that command for the rest of the session. */
+  allow(question: string, extra?: { detail?: string; always?: boolean; command?: string }): Promise<"allow" | "deny" | "always">;
   /** A file in the session's project changed: kept as a receipt. */
   changed?(file: FileChange): void;
-  /** A step, shown like Alfred's own tool calls. */
-  step(step: { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined" }): void;
+  /** A step, shown like Alfred's own tool calls. A command's step ends with its exit code, how long it took and
+   * the end of what it printed. */
+  step(step: { id: string; tool: string; label: string; about?: string; status: "started" | "done" | "failed" | "declined"; exit?: number | null; ms?: number; output?: string }): void;
   /** A call that may have changed something outside Alfred's world succeeded: kept as a receipt. */
   receipt(call: { tool: string; label: string; about?: string }): void;
 }
@@ -160,7 +166,7 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   if (conversation.projectId) {
     const project = (() => { try { return getProject(world, conversation.projectId!); } catch { return null; } })();
     if (!project?.trustedAt) return finishRun(world, run.id, options.owner, { status: "failed", error: "project_unavailable" });
-    workspace = { root: project.path, name: project.name, mode: conversation.mode ?? "plan" };
+    workspace = { root: project.path, name: project.name, mode: conversation.mode ?? "plan", commands: listCommandGrants(world, conversation.id).map((grant) => grant.command) };
   }
 
   const context = { actor: "alfred" as const, run: { id: run.id, owner: options.owner } };
@@ -180,14 +186,20 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
       world.tx((db) => appendEvent(db, { kind: `run.${kind}`, subject: `run:${run.id}`, runId: run.id, actor: "alfred", payload }));
     } catch { /* a note is not worth failing the run */ }
   };
-  const ask = (request: Parameters<RunToolContext["ask"]>[0] & { detail?: string; always?: boolean }): Promise<string> => {
+  /** Who gave the latest answer (`home`, or a paired device): an `always` is that device's to have given. */
+  let answeredBy = "home";
+  const ask = (request: Parameters<RunToolContext["ask"]>[0] & { detail?: string; detailKind?: "command"; grant?: string; always?: boolean }): Promise<string> => {
     // Unattended: a question would wait for no one. The profile offers no tool that asks; this is the backstop.
     if (profile.unattended) return Promise.reject(new Error("This run is unattended: nobody can answer. Propose the change instead."));
-    const opened = openRequest(world, run.id, options.owner, { kind: request.kind ?? "input", question: request.question, options: request.options, detail: request.detail, always: request.always });
+    const opened = openRequest(world, run.id, options.owner, {
+      kind: request.kind ?? "input", question: request.question, options: request.options,
+      detail: request.detail, detailKind: request.detailKind, grant: request.grant, always: request.always,
+    });
     return new Promise<string>((resolve, reject) => {
-      const onAnswer = (runId: string, requestId: string, answer: string) => {
+      const onAnswer = (runId: string, requestId: string, answer: string, by: string | undefined) => {
         if (runId !== run.id || requestId !== opened.id) return;
         cleanup();
+        answeredBy = by ?? "home";
         resolve(answer);
       };
       const onAbort = () => { cleanup(); reject(controller.signal.reason); };
@@ -200,6 +212,16 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
   const external: ExternalHooks = {
     allow: async (question, extra) => {
       if (profile.unattended) return "deny";
+      if (extra?.command !== undefined) {
+        // A shell command: only in a session, shown whole; a plain one can be allowed for the rest of the session.
+        if (!workspace) return "deny";
+        const plain = simpleCommand(extra.command);
+        const answer = await ask({ kind: "permission", question, detail: extra.command, detailKind: "command", always: plain, ...(plain ? { grant: normalizeCommand(extra.command) } : {}) });
+        if (answer === "always" && plain) {
+          try { withCoreContext({ actor: "user" }, () => grantCommand(world, conversation.id, extra.command!, answeredBy)); } catch { /* the run goes on */ }
+        }
+        return answer === "allow" || answer === "always" ? answer : "deny";
+      }
       const answer = await ask({ kind: "permission", question, detail: extra?.detail, always: extra?.always && !!workspace });
       // "Don't ask again" in a session: its mode becomes `edits`, from now on.
       if (answer === "always" && workspace) {
@@ -213,7 +235,11 @@ async function drive(world: World, run: Run, engine: EnginePort, options: Execut
         payload: { path: file.path.slice(0, 500), added: file.added, removed: file.removed, created: file.created },
       })));
     },
-    step: (step) => note("step", { step: step.id, tool: step.tool, label: step.label, about: step.about?.slice(0, 200), status: step.status }),
+    step: (step) => note("step", {
+      step: step.id, tool: step.tool, label: step.label, about: step.about?.slice(0, 200), status: step.status,
+      ...(step.exit !== undefined ? { exit: step.exit } : {}), ...(step.ms !== undefined ? { ms: step.ms } : {}),
+      ...(step.output ? { output: step.output.slice(-8000) } : {}),
+    }),
     receipt: (call) => {
       // Under the run's lease, like any change: a lapsed executor records nothing.
       withCoreContext(context, () => world.tx(() => recordDomainEvent(world, {

@@ -1,6 +1,6 @@
 # 日常与开发：两种对话（草案）
 
-> 状态：v0.2（2026-11-18），**已批准**：第 8 节五个决定都按建议定下。D1、D2 已做完，下一刀是 D3（改文件）。
+> 状态：v0.2（2026-11-18），**已批准**：第 8 节五个决定都按建议定下。D1–D4 已做完，下一刀是 D5（worktree 和收尾）。
 > 依据：Alfred 的 `packages/engine-pi/src/worker.ts`、`packages/engine-pi/src/pool.ts`、`packages/core/src/conversations.ts`、`packages/core/src/devices.ts`、`packages/server/src/home.ts`、`packages/ui/src/Conversation.tsx`；Pi（`pi-coding-agent` 1.5.2）的 `sdk.d.ts`、`docs/security.md`、`docs/extensions.md`；Claude Code 桌面版和 pi web 的截图（Bruce 2026-11-18 给的）。
 > 原型：`prototype/dev.html`。
 > 标记：**【事实】** 读代码或文档核实过；**【建议】** 本方案的提案，已随批准生效；**【已定】** 第 8 节。
@@ -196,8 +196,13 @@
    - 界面：侧栏「开发」组（项目 → 最近 4 个会话），日常「对话」列表不再列开发会话；「开发」页是新会话页（选项目、添加文件夹、信任卡片、最近会话）或整页会话（返回、项目、"只读"标记）；通知和 ⌘K 打开会话时自动到「开发」页。Mac App 用系统选文件夹窗口（`pick-folder`），本机浏览器里输入路径。
    - 2026-11-18 用真实的 Pi 跑过（模型是 Pi 的默认）：在本仓库里 grep 和 read 不问、回答带 path:line；在一个带 AGENTS.md 的临时项目里，模型不用工具就说出了 AGENTS.md 里的内容；项目里指向外面文件的符号链接被拦下来问，拒绝后不读；ls、find 不问。步骤里项目内的路径从项目根写起（`src/app.ts`），项目外写全路径。
    - 设备范围 `dev` 照第 6 节放到 D4；D2 期间配对的手机能看、能在会话里问，但不能添加或信任项目。
-3. **D3 改文件**：`edit` / `write`、三个权限模式、带 diff 的批准卡片、`files.changed` 回执、右栏的改动面板。
-4. **D4 命令**：`bash`、命令卡片、本会话命令授权、退出码步骤。设备范围 `dev` 必须和这一刀一起上。
+3. **D3 改文件**【已实现，2026-11-18】：`edit` / `write`、三个权限模式、带 diff 的批准卡片、`file.changed` 回执、右栏的改动面板。改动相对开会话时的快照算（`packages/server/src/workspace.ts`：一个不动工作区的 git 提交）。
+4. **D4 命令**【已实现，2026-11-19】：`bash`、命令卡片、本会话命令授权、退出码步骤；设备范围 `dev`。
+   - 规则在 `packages/core/src/shell.ts`：只有"一条普通命令"能被「这个会话里都允许」，授权按前缀算（`npm test` 也放行 `npm test -- foo`）；带 `;`、`&`、`|`、`<`、`>`、反引号、`$(`、`${`、换行的每次都问，也不给这个选项。授权存在对话上（`core_conversations.commands`，`core:13`），记着是哪台设备给的。
+   - 引擎：`plan` 模式没有 `bash`；`ask` 和 `edits` 有，闸门对每条命令都问（`edits` 只免问项目内的改文件，不管 shell）。问的时候命令全文作为 `detail`（`detailKind: "command"`），不进事件日志。步骤结束时带退出码、耗时和输出的最后 200 行（上限 8000 字符）。日常对话里没有 shell，核心也会把这种请求直接拒掉。
+   - 设备范围：`core_devices.scopes`，`POST /api/devices/:id/scope`（只许本机）。没有 `dev` 的配对设备：`/api/state` 里看得到会话标题和忙不忙，看不到它的任务、步骤、问题；事件流里这些会话的事件只剩空的 payload，流式文字不发；开会话、发话、回答、取消、看改动一律 403 `needs_dev`。吊销设备或关掉它的 `dev`，它给过的「本会话都允许」同时作废。
+   - 界面：命令卡片（等宽显示全文，三个按钮）、步骤里每条命令一行（退出码、耗时，点开看输出）、会话右栏「命令」一节列出本会话默许的命令并可撤回、设置 → 设备里每台设备一个「开发会话」开关。
+   - 没做的：推送通知的正文对没有 `dev` 的手机没有过滤（问题文字本身不含命令，改文件的问题带文件路径）；还没用真实的 Pi 回合跑过 `bash`（单元测试覆盖了核心和 HTTP，子进程里的闸门没有）。
 5. **D5 worktree 和收尾**：建 worktree、归档时清理、提交和开 PR 的按钮、后台进程面板。
 6. 以后：ACP 引擎、沙箱和"全部自动"。
 

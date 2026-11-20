@@ -544,6 +544,18 @@ html.desktop .dev-drag { display: block; position: absolute; inset: 0 0 auto; he
 .diff [data-line="del"] { background: color-mix(in oklch, var(--now) 14%, transparent); color: var(--ink); }
 .diff [data-line="hunk"], .diff [data-line="note"] { color: var(--muted); }
 .request .diff { align-self: stretch; }
+/* Commands (D4): the command a session asks to run, and how each one it ran ended. */
+.request-command { align-self: stretch; margin: 0; max-height: 220px; overflow: auto; padding: 10px 12px; border-radius: 10px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line-soft); font: .75rem/1.55 var(--mono); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-command { font: .75rem var(--mono); color: inherit; overflow-wrap: anywhere; }
+.step-end { margin-left: 8px; font-size: .75rem; color: var(--muted); white-space: nowrap; }
+.steps li[data-status="failed"] .step-end { color: var(--warm); }
+.step-output summary { cursor: pointer; list-style: none; }
+.step-output summary::-webkit-details-marker { display: none; }
+.step-output pre { margin: 4px 0 6px 16px; max-height: 240px; overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line-soft); font: .6875rem/1.5 var(--mono); color: var(--copy); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dev-commands { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.dev-commands li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dev-commands code { flex: 1; min-width: 0; font: .75rem var(--mono); color: var(--copy); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dev-commands .icon-btn { flex: none; width: 22px; height: 22px; font-size: .875rem; color: var(--muted); }
 .pick.mode[data-mode="ask"] svg { color: var(--warm); }
 .pick.mode[data-mode="edits"] svg { color: var(--ok); }
 .dev-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
