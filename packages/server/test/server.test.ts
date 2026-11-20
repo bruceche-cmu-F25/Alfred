@@ -740,3 +740,23 @@ test("the harness's own commands: done once per request id, checked, and recorde
     home.close();
   }
 });
+
+test("a module's kept image is served as an image and nothing else", async () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const pictures = defineModule({
+    id: "pic", title: "Pictures", migrations: [], ops: [], tools: [],
+    file: (_world, name) => (name === "a.example" ? { type: "image/png", bytes: PNG } : name === "page" ? { type: "text/html", bytes: new TextEncoder().encode("<script>1</script>") } : null),
+  });
+  const home = openHome({ dataDir: mkdtempSync(join(tmpdir(), "alfred-")), engine, modules: [pictures] });
+  const { server, base } = await start(home);
+  try {
+    const image = await fetch(`${base}/api/modules/pic/files/a.example`);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get("content-type"), "image/png");
+    assert.equal(image.headers.get("x-content-type-options"), "nosniff");
+    assert.match(image.headers.get("content-security-policy") ?? "", /default-src 'none'.*sandbox/);
+    assert.deepEqual(new Uint8Array(await image.arrayBuffer()), PNG);
+    // Only images, by the type the module gives; anything else, a missing name, or a module without files is not there.
+    for (const path of ["pic/files/page", "pic/files/none", "todo/files/x", "pic/files/..%2Fworld.sqlite"]) assert.equal((await fetch(`${base}/api/modules/${path}`)).status, 404, path);
+  } finally { server.close(); server.closeAllConnections(); home.close(); }
+});

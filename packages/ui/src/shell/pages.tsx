@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import type { Area, StateResponse, ViewContext } from "@alfred/protocol";
 import type { CalendarSnapshot } from "@alfred/module-calendar/types";
 import type { MailSnapshot } from "@alfred/module-mail/types";
+import type { LinksSnapshot } from "@alfred/module-links/types";
 import type { TodoSnapshot } from "@alfred/module-todo/types";
 import { Automations } from "../Automations.tsx";
 import { Calendar } from "../Calendar.tsx";
@@ -13,6 +14,7 @@ import { Mail } from "../Mail.tsx";
 import { automationTitle, whenText } from "../automationText.ts";
 import { Dev, sessionsOf, type DevProps } from "../Dev.tsx";
 import { Inbox } from "../Inbox.tsx";
+import { Links } from "../Links.tsx";
 import { Settings } from "../Settings.tsx";
 import { Todos } from "../Todos.tsx";
 import { t, type Key } from "../i18n/index.ts";
@@ -157,6 +159,19 @@ const PAGES: PageDef[] = [
       return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
     render: ({ snapshot, fresh, areas, state }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} automations={state.automations} />,
+  },
+  {
+    key: "link.list", get title() { return t("page.links"); }, icon: "link", k: "violet", group: "modules",
+    summary: (snapshot) => {
+      const clips = (snapshot as LinksSnapshot | undefined)?.clips ?? [];
+      return clips.length ? t("links.sum", { n: clips.length, unread: clips.filter((clip) => clip.state === "unread").length }) : t("links.sum.none");
+    },
+    headline: (snapshot) => {
+      const clips = (snapshot as LinksSnapshot | undefined)?.clips ?? [];
+      const unread = clips.filter((clip) => clip.state === "unread").length;
+      return unread ? t("head.links.unread", { n: unread }) : t("head.links.clear");
+    },
+    render: ({ snapshot, fresh, areas }) => <Links snapshot={snapshot as LinksSnapshot | undefined} fresh={fresh} areas={areas} />,
   },
   {
     key: "mail.inbox", get title() { return t("page.mail"); }, icon: "mail", k: "teal", group: "modules",

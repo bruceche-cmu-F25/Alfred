@@ -425,6 +425,20 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     return send(res, 200, { result: runQuery(home.modules, home.world, query[1], body.input) });
   }
 
+  // A small image a module keeps (a site's icon). It came from the web, so it is served as an image and nothing
+  // else: its type is one of a few, never sniffed by the browser, and it may load and run nothing.
+  const file = /^\/api\/modules\/([a-z][a-z0-9]*)\/files\/([A-Za-z0-9._-]{1,255})$/.exec(path);
+  if (file && method === "GET") {
+    const found = home.modules.find((module) => module.id === file[1])?.file?.(home.world, file[2]);
+    if (!found || !/^image\/(png|jpeg|gif|webp|x-icon|svg\+xml)$/.test(found.type)) throw new HttpError(404, "Not found");
+    res.writeHead(200, {
+      "Content-Type": found.type, "Content-Length": found.bytes.byteLength, "Cache-Control": "private, max-age=86400",
+      "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+    res.end(Buffer.from(found.bytes));
+    return;
+  }
+
   // Refresh a module's mirror of an outside service now (the calendar, the inbox); answers when it is done.
   const sync = /^\/api\/modules\/([a-z][a-z0-9]*)\/sync$/.exec(path);
   if (sync && method === "POST") {

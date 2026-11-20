@@ -1,0 +1,17 @@
+{
+  "name": "@alfred/module-links",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Links module: the places you keep going to, and what you saved from the internet (docs/design/links.md).",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./url": "./src/url.ts"
+  },
+  "dependencies": {
+    "@alfred/core": "*",
+    "@alfred/module-kit": "*"
+  }
+}

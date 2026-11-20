@@ -1,0 +1,527 @@
+<!doctype html>
+<!--
+  Alfred: Links. A prototype for docs/design/links.md: no build step, sample data, and a scripted "reader" instead of
+  a model and the network.
+  The question it asks: what should a saved link be, and how should many of them be laid out?
+    Places   the addresses you keep going to: a row of tiles on top. Not read, not summarised.
+    Clips    what you saved: each is a card that says what it is about (one line, then points), where it is
+             (platform, author, length), why you saved it (your own words), and what it was filed under.
+             The last line of a card says what the summary was written from: captions, the text, a screenshot,
+             or nothing yet ("title only"), which is never dressed up as a summary.
+    Sections one block per topic, topics of the same area next to each other; a topic with a single clip joins
+             "loose ends". (A second layout, a two-dimensional map with a dot per clip, was tried here and dropped
+             on 2026-11-19: sections only.)
+  The line at the bottom is the way in. Paste an address (and a few words on why): it says what it will save, and
+  return saves it; the card then goes through fetching, reading and filing, on a timer here. Type anything else and
+  it searches what the clips say, not their titles.
+-->
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alfred：链接</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { height: 100dvh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; text-align: inherit; }
+h1, h2, h3, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+a { color: inherit; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+.grow { flex: 1; min-width: 0; }
+
+/* ── The prototype's own strip ── */
+.proto { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--ink); color: var(--bg); font-size: 12px; overflow-x: auto; white-space: nowrap; }
+.proto b { flex: none; padding: 0 6px; }
+.proto .lab { flex: none; padding: 0 4px 0 10px; opacity: .6; }
+.proto button, .proto a { flex: none; height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 8px; opacity: .72; text-decoration: none; }
+.proto button:hover, .proto a:hover { opacity: 1; }
+.proto button[aria-pressed="true"] { background: var(--bg); color: var(--ink); opacity: 1; }
+.proto .what { flex: 1; min-width: 0; padding: 0 10px; opacity: .7; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 900px) { .proto .what { visibility: hidden; } }
+@media (max-width: 620px) { .proto .lab, .proto b { display: none; } }
+
+/* ── The page ── */
+.page { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; container: page / inline-size; }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0 170px; }
+.col { max-width: 1040px; margin: 0 auto; padding: 0 28px; }
+.page-head { padding: 22px 0 6px; }
+.page-head h1 { display: flex; align-items: center; gap: 10px; font-size: 1.625rem; line-height: 1.25; font-weight: 650; letter-spacing: -.01em; }
+.page-head h1 svg { width: 24px; height: 24px; color: var(--k-solid); }
+.page-head p { margin-top: 4px; color: var(--muted); font-size: .875rem; }
+.band { padding-top: 22px; }
+.band > h2 { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+.band > h2 .n { font-size: .75rem; opacity: .75; }
+
+/* Places: where you keep going. */
+.places { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: none; }
+.places::-webkit-scrollbar { display: none; }
+.place { flex: none; width: 76px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px; border-radius: 12px; text-decoration: none; }
+.place:hover { background: var(--wash); }
+.place .tile { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: var(--k-fill, var(--raise)); color: var(--k-text, var(--copy)); box-shadow: inset 0 0 0 1px var(--k-line, var(--line)); font: 600 .9375rem/1 var(--sans); }
+.place span { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--copy); font-size: .75rem; }
+.place.add .tile { background: none; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); font-weight: 400; font-size: 1.25rem; }
+
+/* Filters */
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .8125rem; white-space: nowrap; }
+.chip:hover { color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); box-shadow: none; }
+.chip .n { font-size: .75rem; opacity: .7; }
+.filters .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+
+/* A clip: a card that says what it is about, where it is, why it was saved, what it is filed under. */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.card { min-width: 0; display: flex; flex-direction: column; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); transition: box-shadow 200ms var(--ease); }
+.card:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.card[data-open] { grid-column: 1 / -1; box-shadow: inset 0 0 0 1px var(--line), var(--shadow); }
+.card[data-fresh] { background: var(--alf-soft); }
+.card-main { display: flex; gap: 12px; padding: 12px; width: 100%; border-radius: 14px; }
+.cover { position: relative; flex: none; width: 52px; height: 52px; display: grid; place-items: center; border-radius: 10px; background: var(--k-fill, var(--wash)); color: var(--k-text, var(--copy)); }
+.cover svg { width: 20px; height: 20px; }
+.cover .len { position: absolute; right: 3px; bottom: 3px; padding: 0 4px; border-radius: 4px; background: var(--raise); color: var(--copy); font: .625rem/1.5 var(--mono); }
+.card-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.tldr { color: var(--ink); font-size: .9375rem; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.card[data-open] .tldr { -webkit-line-clamp: unset; }
+.tldr.none { color: var(--muted); }
+.where { color: var(--muted); font-size: .75rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.note { color: var(--alf); font-size: .8125rem; overflow-wrap: anywhere; }
+.note::before { content: "“"; } .note::after { content: "”"; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; color: var(--muted); font-size: .75rem; }
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 6px; background: var(--k-fill, var(--wash)); color: var(--k-text, var(--copy)); font-size: .75rem; font-weight: 500; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tag .new { font-weight: 400; opacity: .8; }
+.state { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.state i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.state[data-s="unread"] i { background: var(--alf); }
+.state[data-s="todo"] i { background: var(--warm); }
+.basis { white-space: nowrap; }
+.basis[data-b="title"] { color: var(--warm); }
+/* While it is being fetched and read. */
+.reading { display: inline-flex; align-items: center; gap: 8px; color: var(--copy); font-size: .8125rem; }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--alf); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+
+/* Opened: the points, and what you can do with it. */
+.more { padding: 0 12px 12px 76px; display: flex; flex-direction: column; gap: 12px; }
+.points { display: flex; flex-direction: column; gap: 5px; color: var(--copy); font-size: .875rem; }
+.points li { display: flex; gap: 10px; }
+.points .at { flex: none; min-width: 42px; color: var(--alf); font: .75rem/1.9 var(--mono); text-decoration: underline; text-decoration-color: color-mix(in oklch, var(--alf) 35%, transparent); text-underline-offset: 3px; }
+.points .dot { flex: none; width: 4px; height: 4px; margin: .65em 4px 0; border-radius: 50%; background: var(--line); }
+.hint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--k-fill); color: var(--k-text); font-size: .8125rem; }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.btn { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .8125rem; white-space: nowrap; text-decoration: none; }
+.btn:hover { color: var(--ink); }
+.btn.solid { background: var(--alf-solid); color: var(--on-alf); box-shadow: none; }
+.btn[aria-pressed="true"] { background: var(--wash); color: var(--ink); }
+.move { height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .8125rem; max-width: 190px; }
+@container page (max-width: 560px) {
+  .col { padding: 0 16px; }
+  .more { padding-left: 12px; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A: sections, one per topic. */
+.topic { padding-top: 18px; }
+.topic > h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: .9375rem; font-weight: 600; }
+.topic > h3 .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--k-solid); }
+.topic > h3 .area { color: var(--muted); font-size: .75rem; font-weight: 400; }
+.topic > h3 .n { color: var(--muted); font-size: .75rem; font-weight: 400; }
+.empty { padding: 28px 0; color: var(--muted); font-size: .875rem; }
+
+
+/* ── The line at the bottom: paste an address to save it, or type to find one ── */
+.line-wrap { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 16px 16px; pointer-events: none; background: linear-gradient(to top, var(--bg) 62%, transparent); }
+.line-col { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+.above { border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); overflow: hidden; }
+.will { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: .875rem; min-width: 0; }
+.will b { font-weight: 600; white-space: nowrap; }
+.will .u { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-family: var(--mono); font-size: .75rem; }
+.will kbd { flex: none; padding: 1px 6px; border-radius: 5px; background: var(--wash); color: var(--muted); font: .6875rem var(--mono); }
+.hit { display: flex; gap: 10px; width: 100%; padding: 9px 14px; border-top: 1px solid var(--line-soft); min-width: 0; }
+.hit:first-child { border-top: 0; }
+.hit:hover { background: var(--wash); }
+.hit .mark { flex: none; width: 8px; height: 8px; margin-top: .55em; border-radius: 50%; background: var(--k-solid); }
+.hit .t { min-width: 0; flex: 1; font-size: .875rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hit small { display: block; color: var(--muted); font-size: .75rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tries { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.tries::-webkit-scrollbar { display: none; }
+.tries button { flex: none; height: 28px; padding: 0 11px; border-radius: 999px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .8125rem; white-space: nowrap; }
+.line { display: flex; align-items: center; gap: 10px; height: 50px; padding: 0 8px 0 16px; border-radius: 16px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); }
+.line:focus-within { box-shadow: inset 0 0 0 1.5px var(--alf), var(--shadow); }
+.line input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; outline: none; }
+.line input::placeholder { color: var(--muted); }
+.line .go { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--alf-solid); color: var(--on-alf); }
+.line .go:disabled { background: var(--wash); color: var(--muted); cursor: default; }
+</style>
+</head>
+<body>
+<div class="proto" id="proto"></div>
+<main class="page" data-k="teal">
+  <div class="scroll" id="scroll"><div class="col" id="page"></div></div>
+  <div class="line-wrap"><div class="line-col" id="linecol"></div></div>
+</main>
+
+<script type="module">
+/* ── State ── */
+const params = new URLSearchParams(location.search);
+const S = {
+  lang: params.get("lang") === "en" ? "en" : "zh",
+  type: "all",          // all | video | article | post | repo
+  only: "all",          // all | unread | todo
+  open: null,           // the opened clip's id
+  draft: "",
+  fresh: new Set(),
+  clips: [],
+  topics: [],
+};
+const t = (zh, en) => (S.lang === "en" ? en : zh);
+const pick = (pair) => (Array.isArray(pair) ? pair[S.lang === "en" ? 1 : 0] : pair);
+const esc = (text) => String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/* ── Sample world ── */
+const AREAS = [
+  { id: "work", name: ["工作", "Work"], k: "blue" }, { id: "life", name: ["生活", "Life"], k: "green" },
+  { id: "learn", name: ["学习", "Learning"], k: "violet" }, { id: "travel", name: ["出行", "Travel"], k: "orange" },
+  { id: "health", name: ["健康", "Health"], k: "teal" }, { id: "money", name: ["财务", "Money"], k: "yellow" },
+  { id: "people", name: ["家人朋友", "People"], k: "pink" },
+];
+const PLACES = [
+  { name: "Gmail", mark: "M", k: "now" }, { name: ["日历", "Calendar"], mark: "31", k: "blue" }, { name: "GitHub", mark: "GH", k: "gray" },
+  { name: "Notion", mark: "N", k: "gray" }, { name: "YouTube", mark: "▶", k: "now" }, { name: ["小红书", "RED"], mark: "小", k: "pink" },
+  { name: "Bilibili", mark: "B", k: "teal" }, { name: "arXiv", mark: "χ", k: "orange" }, { name: "Canvas", mark: "C", k: "violet" },
+];
+const PLATFORM = {
+  youtube: { name: "YouTube", type: "video" }, bilibili: { name: "Bilibili", type: "video" }, xhs: { name: ["小红书", "RED"], type: "post" },
+  github: { name: "GitHub", type: "repo" }, arxiv: { name: "arXiv", type: "article" }, web: { name: ["网页", "Web"], type: "article" },
+  wechat: { name: ["公众号", "WeChat"], type: "article" },
+};
+const BASIS = {
+  captions: ["根据字幕", "From captions"], text: ["根据正文", "From the text"], readme: ["根据 README", "From the README"],
+  shot: ["根据截图", "From a screenshot"], title: ["只读到标题", "Title only"],
+};
+const TYPES = [["all", ["全部", "All"]], ["video", ["视频", "Videos"]], ["article", ["文章", "Articles"]], ["post", ["帖子", "Posts"]], ["repo", ["仓库", "Repos"]]];
+
+function seed() {
+  S.topics = [
+    { id: "rag", name: "RAG", area: "learn" }, { id: "agents", name: ["Agent 架构", "Agent design"], area: "learn" },
+    { id: "design", name: ["设计系统", "Design systems"], area: "work" }, { id: "jobs", name: ["求职", "Job hunt"], area: "work" },
+    { id: "coffee", name: ["咖啡", "Coffee"], area: "life" }, { id: "cook", name: ["做饭", "Cooking"], area: "life" },
+    { id: "kyoto", name: ["京都", "Kyoto"], area: "travel" }, { id: "run", name: ["跑步", "Running"], area: "health" },
+    { id: "tax", name: ["报税", "Taxes"], area: "money" },
+  ];
+  const c = (id, platform, topic, days, state, basis, tldr, author, len, note, points, title) =>
+    ({ id, platform, topic, days, state, basis, tldr, author, len, note, points: points ?? [], title: title ?? tldr, read: "read" });
+  S.clips = [
+    c("c1", "youtube", "rag", 1, "unread", "captions",
+      ["从零搭一个 RAG：分块、嵌入、检索、重排，每一步为什么这么做。", "Building RAG from scratch: chunking, embedding, retrieval, reranking, and why each step is there."],
+      "Lance Martin", "42:10", ["想对照着改 Alfred 的搜索", "To compare with Alfred's search"],
+      [["02:15", ["分块大小先看问题长什么样，不是越小越好", "Pick chunk size from the questions asked, not the smallest"]],
+       ["11:40", ["混合检索：关键词和向量各取前 20 再合并", "Hybrid retrieval: top 20 from keywords and vectors, then merge"]],
+       ["27:05", ["重排是最便宜的提升，放在最后做", "Reranking is the cheapest gain; do it last"]]]),
+    c("c2", "web", "rag", 4, "seen", "text",
+      ["比较五种分块策略：按标题分块在技术文档上最好，固定长度在聊天记录上最好。", "Five chunking strategies compared: by heading wins on docs, fixed length wins on chat logs."],
+      "pinecone.io", ["12 分钟", "12 min"], null,
+      [[null, ["给了每种策略的召回率表", "Has a recall table per strategy"]], [null, ["重叠 10–15% 就够，多了只是费钱", "10–15% overlap is enough; more only costs"]]]),
+    c("c3", "arxiv", "rag", 9, "unread", "text",
+      ["论文：检索到的段落放在提示的开头和结尾，比放中间答得准。", "Paper: retrieved passages placed at the start and end of the prompt beat the middle."],
+      "Liu et al.", ["18 页", "18 pages"], null, [[null, ["只读了前 6 页", "Read the first 6 pages only"]]]),
+    c("c4", "web", "agents", 2, "todo", "text",
+      ["怎么搭可靠的 agent：先用工作流，能不用自主循环就不用；工具的说明比提示词重要。", "Building reliable agents: prefer workflows, avoid autonomous loops when you can; tool descriptions matter more than prompts."],
+      "anthropic.com", ["15 分钟", "15 min"], ["Alfred 的执行器可以对照一下", "Check Alfred's executor against this"],
+      [[null, ["五种工作流模式，各有适用的场景", "Five workflow patterns and when each fits"]], [null, ["让模型自己写工具说明，再人工改", "Let the model draft tool docs, then edit by hand"]]]),
+    c("c5", "github", "agents", 6, "seen", "readme",
+      ["一个最小的编码 agent：四个工具、一个循环，可以整个读完。", "A minimal coding agent: four tools, one loop, small enough to read whole."],
+      "earendil-works/pi", ["2.1k ★ · TypeScript", "2.1k ★ · TypeScript"], null, [[null, ["会话存成 JSONL，可以分叉", "Sessions are JSONL and can branch"]]]),
+    c("c6", "web", "design", 3, "seen", "text",
+      ["Linear 的主题是三个输入生成的：底色、强调色、对比度，其余全用 LCH 推出来。", "Linear's themes come from three inputs (base, accent, contrast); everything else is derived in LCH."],
+      "linear.app", ["8 分钟", "8 min"], null, []),
+    c("c7", "youtube", "design", 12, "seen", "captions",
+      ["OKLCH 为什么比 HSL 好用：同样的亮度数字看起来真的一样亮。", "Why OKLCH beats HSL: equal lightness numbers actually look equally light."],
+      "Kevin Powell", "16:32", null, [["04:20", ["HSL 的黄和蓝，同亮度看着差很多", "HSL yellow and blue at one lightness look far apart"]]]),
+    c("c8", "web", "jobs", 5, "unread", "text",
+      ["2027 暑期实习的申请时间表：大厂 8 月开，量化 6 月就开了。", "Summer 2027 internship timeline: big tech opens in August, quant firms already in June."],
+      "newgrad.dev", ["6 分钟", "6 min"], null, []),
+    c("c9", "bilibili", "jobs", 14, "seen", "title",
+      null, ["面试官老王", "Interviewer Wang"], "23:48", ["系统设计面试怎么答", "How to answer system design"], [],
+      ["系统设计面试的万能框架，听完直接用", "A framework for any system design interview"]),
+    c("c10", "xhs", "coffee", 0, "unread", "title",
+      null, ["豆子日记", "Bean Diary"], null, ["想试这个参数", "Want to try these numbers"], [],
+      ["手冲新手参数，一次就成功", "Pour-over numbers for beginners that work first time"]),
+    c("c11", "bilibili", "coffee", 8, "seen", "captions",
+      ["V60 冲煮：15 克粉、250 克水、水温 92 度，分三段注水，总时间两分半。", "V60: 15 g coffee, 250 g water at 92°C, three pours, two and a half minutes in total."],
+      ["咖啡小课堂", "Coffee Class"], "09:14", null, [["01:30", ["闷蒸 30 秒，水量是粉的两倍", "Bloom 30 s with twice the coffee's weight in water"]], ["05:02", ["水流细了会过萃，发苦", "Too thin a stream over-extracts and turns bitter"]]]),
+    c("c12", "xhs", "cook", 2, "todo", "shot",
+      ["番茄牛腩：牛腩先焯水再煎，番茄分两次下，最后 20 分钟开盖收汁。", "Tomato beef brisket: blanch then sear the beef, add tomatoes in two rounds, reduce uncovered for the last 20 minutes."],
+      ["阿May的厨房", "May's Kitchen"], null, ["周末做", "For the weekend"], [[null, ["材料：牛腩 600 克、番茄 4 个、洋葱半个", "Needs 600 g brisket, 4 tomatoes, half an onion"]]]),
+    c("c13", "youtube", "cook", 20, "seen", "captions",
+      ["一锅出的鸡肉饭：米不用提前泡，汤和米 1.2 比 1。", "One-pot chicken rice: no soaking, stock to rice 1.2 to 1."],
+      "Kenji", "11:05", null, []),
+    c("c14", "web", "kyoto", 7, "unread", "text",
+      ["京都三天：第一天东山，第二天岚山要早上七点前到，第三天留给伏见。", "Kyoto in three days: Higashiyama first, Arashiyama before 7 am on day two, Fushimi on day three."],
+      "insidekyoto.com", ["10 分钟", "10 min"], null, []),
+    c("c15", "xhs", "kyoto", 7, "unread", "title", null, ["旅行的阿树", "Shu Travels"], null, null, [], ["京都小众咖啡馆 12 家", "12 quiet cafés in Kyoto"]),
+    c("c16", "youtube", "run", 10, "seen", "captions",
+      ["跑步入门八周计划：每周三次，先跑走交替，第五周开始连续跑 20 分钟。", "An eight-week running start: three runs a week, run-walk first, 20 minutes non-stop from week five."],
+      "Running Channel", "14:20", null, []),
+    c("c17", "wechat", "tax", 16, "unread", "text",
+      ["留学生报税：F-1 前五年用 1040-NR，奖学金里只有学费部分免税。", "Taxes for international students: 1040-NR in the first five F-1 years; only the tuition part of a scholarship is tax-free."],
+      ["留学生日报", "Student Daily"], ["7 分钟", "7 min"], null, []),
+  ];
+  S.fresh = new Set(); S.open = null; S.draft = ""; S.type = "all"; S.only = "all";
+}
+
+/* ── Reading a new address: a scripted stand-in for fetching the page and one model call ── */
+const hostOf = (text) => { try { return new URL(text).hostname.replace(/^www\./, ""); } catch { return ""; } };
+function parseDraft(text) {
+  const match = /(https?:\/\/\S+)/.exec(text);
+  if (!match) return null;
+  const host = hostOf(match[1]);
+  const platform = /youtu\.?be/.test(host) ? "youtube" : /bilibili|b23\.tv/.test(host) ? "bilibili" : /xiaohongshu|xhslink/.test(host) ? "xhs"
+    : /github\.com/.test(host) ? "github" : /arxiv\.org/.test(host) ? "arxiv" : /weixin\.qq/.test(host) ? "wechat" : "web";
+  return { url: match[1], host, platform, note: text.replace(match[1], "").trim() };
+}
+const SCRIPTS = {
+  youtube: {
+    basis: "captions", author: "Fireship", len: "08:45", topic: { id: "search", name: ["本地搜索", "Local search"], area: "learn", fresh: true },
+    tldr: ["用 SQLite 的 FTS5 做本地全文搜索：建虚拟表、分词、用 bm25 排序，中文要换分词器。", "Full-text search with SQLite FTS5: a virtual table, a tokenizer, bm25 ranking; Chinese needs another tokenizer."],
+    points: [["01:10", ["FTS5 的表和原表用触发器保持同步", "Triggers keep the FTS5 table in step with the source table"]], ["05:30", ["trigram 分词器能搜中文，索引大三倍", "The trigram tokenizer handles Chinese at three times the index size"]]],
+    stages: [["取页面信息", "Page details"], ["取字幕", "Captions"], ["在读", "Reading"]],
+  },
+  xhs: {
+    basis: "title", author: ["一只鹿", "Deer"], len: null, topic: { id: "coffee" }, tldr: null, points: [],
+    title: ["家用磨豆机怎么选，三个价位", "Choosing a home grinder at three prices"],
+    stages: [["取页面信息", "Page details"], ["正文要登录", "The text needs a sign-in"]],
+  },
+  github: {
+    basis: "readme", author: "sqlite/sqlite", len: ["7.4k ★ · C", "7.4k ★ · C"], topic: { id: "search", name: ["本地搜索", "Local search"], area: "learn", fresh: true },
+    tldr: ["SQLite 的官方镜像；FTS5 在 ext/fts5 下，文档说明了怎么自定义分词器。", "The official SQLite mirror; FTS5 lives in ext/fts5, with docs on writing a tokenizer."], points: [],
+    stages: [["取页面信息", "Page details"], ["取 README", "README"], ["在读", "Reading"]],
+  },
+  web: {
+    basis: "text", author: null, len: ["9 分钟", "9 min"], topic: { id: "design" },
+    tldr: ["一篇讲信息密度的文章：密度不是把东西挤在一起，是每一块都在回答一个问题。", "An essay on information density: not packing things in, but every block answering one question."], points: [],
+    stages: [["取页面信息", "Page details"], ["取正文", "The text"], ["在读", "Reading"]],
+  },
+};
+async function save(text) {
+  const parsed = parseDraft(text);
+  if (!parsed) return;
+  const script = SCRIPTS[parsed.platform] ?? SCRIPTS.web;
+  const id = `n${Date.now()}`;
+  const clip = { id, platform: parsed.platform, topic: null, days: 0, state: "unread", basis: null, tldr: null, author: script.author ?? parsed.host, len: null,
+    note: parsed.note || null, points: [], title: parsed.host, read: "reading", stage: script.stages[0], url: parsed.url };
+  S.clips.unshift(clip);
+  S.fresh.add(id);
+  S.draft = "";
+  render();
+  document.getElementById("scroll").scrollTo({ top: 0, behavior: "smooth" });
+  for (const stage of script.stages) { clip.stage = stage; render(); await sleep(1100); }
+  if (script.topic.fresh && !S.topics.some((topic) => topic.id === script.topic.id)) S.topics.push({ ...script.topic, isNew: true });
+  Object.assign(clip, { read: "read", basis: script.basis, tldr: script.tldr, points: script.points, len: script.len, topic: script.topic.id, title: script.title ?? script.tldr ?? parsed.host });
+  render();
+  setTimeout(() => { S.fresh.delete(id); render(); }, 2600);
+}
+
+/* ── Finding: by what a clip says, not its title ── */
+function search(query) {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const STOP = new Set(["the", "one", "about", "that", "this", "with", "for", "and", "from", "what", "how"]);
+  const words = (q.match(/[a-z0-9]+/g) ?? []).filter((word) => word.length > 1 && !STOP.has(word));
+  const han = q.replace(/[^一-鿿]/g, "");
+  const grams = [...new Set(han.length > 1 ? Array.from({ length: han.length - 1 }, (_, i) => han.slice(i, i + 2)) : [])];
+  return S.clips.map((clip) => {
+    const topic = topicOf(clip);
+    const hay = [pick(clip.tldr) ?? "", pick(clip.title) ?? "", pick(clip.note) ?? "", topic ? pick(topic.name) : "", pick(clip.author) ?? "",
+      pick(PLATFORM[clip.platform].name), ...clip.points.map((point) => pick(point[1]))].join(" ").toLowerCase();
+    const score = words.filter((word) => hay.includes(word)).length * 2 + grams.filter((gram) => hay.includes(gram)).length;
+    return { clip, score };
+  }).filter((hit) => hit.score > 1).sort((a, b) => b.score - a.score).slice(0, 4).map((hit) => hit.clip);
+}
+
+/* ── Drawing ── */
+const topicOf = (clip) => S.topics.find((topic) => topic.id === clip.topic);
+const areaOf = (topic) => AREAS.find((area) => area.id === topic?.area);
+const typeOf = (clip) => PLATFORM[clip.platform].type;
+const shown = (clip) => (S.type === "all" || typeOf(clip) === S.type) && (S.only === "all" || clip.state === S.only);
+const ICON = {
+  video: `<svg class="i" viewBox="0 0 20 20"><path d="M7 5.5v9l7.5-4.5z" fill="currentColor" stroke="none"/></svg>`,
+  article: `<svg class="i" viewBox="0 0 20 20"><path d="M5 6h10M5 10h10M5 14h6"/></svg>`,
+  post: `<svg class="i" viewBox="0 0 20 20"><rect x="4.5" y="4.5" width="11" height="11" rx="2.5"/><path d="M7.5 12.5l2-2 1.5 1.5 1.5-2"/></svg>`,
+  repo: `<svg class="i" viewBox="0 0 20 20"><path d="M7.5 6L4 10l3.5 4M12.5 6L16 10l-3.5 4"/></svg>`,
+  link: `<svg class="i" viewBox="0 0 20 20"><path d="M8.5 11.5a3 3 0 004.2 0l2-2a3 3 0 00-4.2-4.2l-.7.7M11.5 8.5a3 3 0 00-4.2 0l-2 2a3 3 0 004.2 4.2l.7-.7"/></svg>`,
+  out: `<svg class="i" viewBox="0 0 20 20" style="width:13px;height:13px"><path d="M8 5h7v7M15 5l-9 9"/></svg>`,
+};
+const STATE = { unread: ["没看", "Unread"], seen: ["看过", "Seen"], todo: ["想做", "To do"] };
+const ago = (days) => (days === 0 ? t("今天", "today") : days === 1 ? t("昨天", "yesterday") : t(`${days} 天前`, `${days} days ago`));
+
+function card(clip) {
+  const topic = topicOf(clip), area = areaOf(topic);
+  const open = S.open === clip.id;
+  const reading = clip.read === "reading";
+  const where = [pick(PLATFORM[clip.platform].name), pick(clip.author), pick(clip.len)].filter(Boolean).join(" · ");
+  const body = reading
+    ? `<span class="tldr none">${esc(clip.url ?? "")}</span><span class="reading"><span class="pulse"></span>${esc(pick(clip.stage))}…</span>`
+    : `<span class="${clip.tldr ? "tldr" : "tldr none"}">${esc(pick(clip.tldr) ?? pick(clip.title))}</span>
+       <span class="where">${esc(where)} · ${ago(clip.days)}</span>
+       ${clip.note ? `<span class="note">${esc(pick(clip.note))}</span>` : ""}
+       <span class="foot">
+         ${topic ? `<span class="tag" data-k="${area.k}">${esc(pick(topic.name))}${topic.isNew ? `<span class="new">· ${t("新主题", "new")}</span>` : ""}</span>` : ""}
+         <span class="state" data-s="${clip.state}"><i></i>${pick(STATE[clip.state])}</span>
+         <span class="basis" data-b="${clip.basis}">${pick(BASIS[clip.basis])}</span>
+       </span>`;
+  const more = open && !reading ? `
+    <div class="more">
+      ${clip.points.length ? `<ol class="points">${clip.points.map(([at, text]) => `<li>${at ? `<a class="at" href="#" data-noop>${at}</a>` : `<span class="dot"></span>`}<span>${esc(pick(text))}</span></li>`).join("")}</ol>` : ""}
+      ${clip.basis === "title" ? `<div class="hint" data-k="warm"><span>${t("还没读到内容：正文要登录才看得到。", "Not read yet: the text is behind a sign-in.")}</span>
+        <span class="acts"><button type="button" class="btn" data-shot="${clip.id}">${t("丢一张截图", "Add a screenshot")}</button><button type="button" class="btn" data-noop>${t("用浏览器读", "Read in the browser")}</button></span></div>` : ""}
+      <div class="acts">
+        <a class="btn solid" href="#" data-noop>${t("打开", "Open")} ${ICON.out}</a>
+        ${["unread", "seen", "todo"].map((state) => `<button type="button" class="btn" aria-pressed="${clip.state === state}" data-state="${state}" data-id="${clip.id}">${pick(STATE[state])}</button>`).join("")}
+        <select class="move" data-move="${clip.id}" aria-label="${t("主题", "Topic")}">
+          ${S.topics.map((candidate) => `<option value="${candidate.id}" ${candidate.id === clip.topic ? "selected" : ""}>${esc(pick(candidate.name))} · ${pick(areaOf(candidate).name)}</option>`).join("")}
+        </select>
+        ${clip.state === "todo" ? `<span class="where">${t("待办页上有一条建议", "Suggested on the Todos page")}</span>` : ""}
+      </div>
+    </div>` : "";
+  return `<li class="card" ${open ? "data-open" : ""} ${S.fresh.has(clip.id) ? "data-fresh" : ""} id="clip-${clip.id}">
+    <button type="button" class="card-main" data-open="${clip.id}" aria-expanded="${open}">
+      <span class="cover" data-k="${area?.k ?? "gray"}">${ICON[typeOf(clip)]}${clip.len && typeOf(clip) === "video" ? `<span class="len">${esc(pick(clip.len))}</span>` : ""}</span>
+      <span class="card-text">${body}</span>
+    </button>${more}</li>`;
+}
+
+function sections(clips) {
+  // Topics of one area sit together; a topic with a single clip joins "the rest", so no section holds one card.
+  const byTopic = new Map();
+  for (const clip of clips) { const key = clip.topic ?? "-"; byTopic.set(key, [...(byTopic.get(key) ?? []), clip]); }
+  const blocks = [], rest = [];
+  for (const area of AREAS) for (const topic of S.topics.filter((candidate) => candidate.area === area.id)) {
+    const items = byTopic.get(topic.id) ?? [];
+    if (items.length >= 2) blocks.push({ topic, area, items }); else rest.push(...items);
+  }
+  rest.push(...(byTopic.get("-") ?? []).filter((clip) => clip.read !== "reading"));
+  if (!blocks.length && !rest.length) return `<p class="empty">${t("这里没有。", "Nothing here.")}</p>`;
+  return blocks.map(({ topic, area, items }) => `
+    <section class="topic" data-k="${area.k}">
+      <h3><span class="mark"></span>${esc(pick(topic.name))}<span class="area">${pick(area.name)}</span><span class="n">${items.length}</span></h3>
+      <ul class="cards">${items.map(card).join("")}</ul>
+    </section>`).join("") + (rest.length ? `
+    <section class="topic" data-k="gray">
+      <h3><span class="mark"></span>${t("零散", "Loose ends")}<span class="n">${rest.length}</span></h3>
+      <ul class="cards">${rest.map(card).join("")}</ul>
+    </section>` : "");
+}
+
+function render() {
+  document.documentElement.lang = S.lang === "en" ? "en" : "zh-CN";
+  document.title = t("Alfred：链接", "Alfred: Links");
+  document.getElementById("proto").innerHTML = `<b>Links</b>`
+    + `<span class="what">${t("常去在上；收下的每个主题一块，同一领域的挨着。底下那一行：贴网址收下，或者找一条。", "Places on top; what you saved in one block per topic, areas kept together. The line below: paste an address to save it, or find one.")}</span>`
+    + `<a href="less-talk.html">${t("少说话", "Less talk")}</a><button type="button" data-reset>${t("重来", "Reset")}</button><button type="button" data-lang>${S.lang === "en" ? "中文" : "EN"}</button><button type="button" data-scheme aria-label="${t("深浅", "Light or dark")}">◐</button>`;
+
+  const clips = S.clips, unread = clips.filter((clip) => clip.state === "unread" && clip.read === "read").length;
+  const recent = clips.filter((clip) => clip.read === "reading" || (clip.state === "unread" && clip.days <= 2)).slice(0, 5);
+  const filed = clips.filter((clip) => !recent.includes(clip));
+  const count = (type) => clips.filter((clip) => type === "all" || typeOf(clip) === type).length;
+  document.getElementById("page").innerHTML = `
+    <header class="page-head"><h1>${ICON.link}${t("链接", "Links")}</h1><p>${t(`${clips.length} 条 · ${unread} 条没看`, `${clips.length} saved · ${unread} unread`)}</p></header>
+    <section class="band"><h2>${t("常去", "Places")}</h2>
+      <div class="places">${PLACES.map((place) => `<a class="place" href="#" data-noop><span class="tile" data-k="${place.k}">${place.mark}</span><span>${esc(pick(place.name))}</span></a>`).join("")}
+        <a class="place add" href="#" data-noop><span class="tile">+</span><span>${t("添加", "Add")}</span></a></div>
+    </section>
+    ${recent.length ? `<section class="band"><h2>${t("刚收的", "Just saved")}<span class="n">${recent.length}</span></h2><ul class="cards">${recent.map(card).join("")}</ul></section>` : ""}
+    <section class="band">
+      <div class="filters" role="group" aria-label="${t("筛选", "Filter")}">
+        ${TYPES.map(([id, name]) => `<button type="button" class="chip" data-type="${id}" aria-pressed="${S.type === id}">${pick(name)}<span class="n">${count(id)}</span></button>`).join("")}
+        <span class="sep"></span>
+        ${[["unread", STATE.unread], ["todo", STATE.todo]].map(([id, name]) => `<button type="button" class="chip" data-only="${id}" aria-pressed="${S.only === id}">${pick(name)}</button>`).join("")}
+      </div>
+      ${sections(filed.filter(shown))}
+    </section>`;
+
+  // The line: what a pasted address will become, or what the words find.
+  const parsed = parseDraft(S.draft);
+  const hits = parsed ? [] : search(S.draft);
+  const above = parsed
+    ? `<div class="above"><div class="will"><b>${t("收进链接", "Save to Links")}</b><span class="tag" data-k="gray">${pick(PLATFORM[parsed.platform].name)}</span>
+        <span class="u">${esc(parsed.note ? `“${parsed.note}”` : parsed.host)}</span><span class="grow"></span><kbd>↵</kbd></div></div>`
+    : hits.length ? `<div class="above">${hits.map((clip) => { const topic = topicOf(clip), area = areaOf(topic); return `
+        <button type="button" class="hit" data-hit="${clip.id}"><span class="mark" data-k="${area?.k ?? "gray"}"></span>
+          <span class="t">${esc(pick(clip.tldr) ?? pick(clip.title))}<small>${esc([pick(PLATFORM[clip.platform].name), topic ? pick(topic.name) : "", ago(clip.days)].filter(Boolean).join(" · "))}</small></span></button>`; }).join("")}</div>`
+    : S.draft.trim().length > 1 ? `<div class="above"><div class="will"><span class="u" style="font-family:inherit;font-size:.8125rem">${t("收下的里面没有找到；回车问 Alfred。", "Nothing saved matches; return asks Alfred.")}</span></div></div>` : "";
+  const tries = S.draft ? "" : `<div class="tries">
+      <button type="button" data-fill="https://www.youtube.com/watch?v=fts5demo01 ${t("想给 Alfred 的链接加搜索", "for search in Alfred's links")}">${t("贴一个 YouTube 视频", "Paste a YouTube video")}</button>
+      <button type="button" data-fill="https://www.xiaohongshu.com/explore/65a1grinder">${t("贴一篇小红书", "Paste a RED post")}</button>
+      <button type="button" data-fill="${t("那个讲分块的", "the one about chunking")}">${t("找：那个讲分块的", "Find: the one about chunking")}</button>
+      <button type="button" data-fill="${t("咖啡 水温", "coffee water temperature")}">${t("找：咖啡 水温", "Find: coffee water temperature")}</button>
+    </div>`;
+  const linecol = document.getElementById("linecol");
+  const had = document.activeElement?.id === "draft";
+  linecol.innerHTML = `${above}${tries}
+    <form class="line" id="lineform"><input id="draft" value="${esc(S.draft)}" autocomplete="off" spellcheck="false"
+      placeholder="${t("贴一个网址收下它，或者找一条", "Paste an address to save it, or find one")}" aria-label="${t("收下或者找", "Save or find")}">
+      <button type="submit" class="go" ${S.draft.trim() ? "" : "disabled"} aria-label="${t("好", "Go")}"><svg class="i" viewBox="0 0 20 20"><path d="M4 10h11M11 5l5 5-5 5"/></svg></button></form>`;
+  if (had) { const field = document.getElementById("draft"); field.focus(); field.setSelectionRange(field.value.length, field.value.length); }
+}
+
+/* ── Acting ── */
+function openClip(id) {
+  S.open = S.open === id ? null : id;
+  render();
+  if (S.open) document.getElementById(`clip-${id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+document.addEventListener("click", (event) => {
+  const el = event.target.closest("[data-lang],[data-scheme],[data-reset],[data-type],[data-only],[data-open],[data-state],[data-shot],[data-hit],[data-fill],[data-noop]");
+  if (!el) return;
+  const d = el.dataset;
+  if ("noop" in d) { event.preventDefault(); return; }
+  if ("lang" in d) S.lang = S.lang === "en" ? "zh" : "en";
+  else if ("scheme" in d) { const root = document.documentElement; root.dataset.scheme = root.dataset.scheme === "dark" ? "light" : "dark"; return; }
+  else if ("reset" in d) seed();
+  else if (d.type) S.type = d.type;
+  else if (d.only) S.only = S.only === d.only ? "all" : d.only;
+  else if (d.open) return openClip(d.open);
+  else if (d.state) { const clip = S.clips.find((candidate) => candidate.id === d.id); clip.state = d.state; }
+  else if (d.shot) {
+    // A screenshot stands in for the page: here it is read at once.
+    const clip = S.clips.find((candidate) => candidate.id === d.shot);
+    Object.assign(clip, { basis: "shot", tldr: [`${pick(clip.title)}：${"粉水比 1:16，水温 90–93 度，中细研磨，总时间 2 分 15 秒。"}`, `${clip.title[1]}: ratio 1:16, water at 90–93°C, medium-fine grind, 2 min 15 s in total.`],
+      points: [[null, ["截图里有三张图，读了文字，没有分析照片", "Three images in the screenshot; the text was read, the photos were not analysed"]]] });
+  }
+  else if (d.hit) { S.draft = ""; S.type = "all"; S.only = "all"; S.open = null; render(); return openClip(d.hit); }
+  else if (d.fill) { S.draft = d.fill; render(); document.getElementById("draft").focus(); return; }
+  render();
+});
+document.addEventListener("change", (event) => {
+  const move = event.target.closest("[data-move]");
+  if (!move) return;
+  S.clips.find((clip) => clip.id === move.dataset.move).topic = move.value;
+  render();
+});
+document.addEventListener("input", (event) => { if (event.target.id === "draft") { S.draft = event.target.value; render(); } });
+document.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (parseDraft(S.draft)) void save(S.draft);
+  else { const [first] = search(S.draft); if (first) { S.draft = ""; S.type = "all"; S.only = "all"; S.open = null; render(); openClip(first.id); } }
+});
+
+if (matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.scheme = "dark";
+seed();
+render();
+</script>
+</body>
+</html>

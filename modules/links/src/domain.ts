@@ -1,0 +1,410 @@
+/** Link rules, shared by device commands, Alfred's tools and the page lookup (docs/design/links.md).
+ *
+ * Two kinds of thing live here. A place is an address the user keeps going to: a name and an address, in an order
+ * the user chose. A clip is something they saved: it is told what it is from its address (url.ts), looked up on the
+ * web for its title (fetch.ts, later), filed under at most one topic, and marked unread, seen or to do.
+ * One address is one place and one clip at most.
+ */
+import { changedFields, isArea, AREA_IDS, newId, recordDomainEvent, type World } from "@alfred/core";
+import { CLIP_STATES, type Clip, type ClipState, type Place, type Topic } from "./types.ts";
+import { classify, isShortener, nameFromUrl, normalizeUrl } from "./url.ts";
+
+export type LinkResult<T> = T | { error: string };
+const failed = (result: object): result is { error: string } => "error" in result;
+
+/** The places every world starts with. They are the user's from then on: renamed, moved or removed like any other. */
+const DEFAULT_PLACES = [["Google", "https://www.google.com"], ["Gmail", "https://mail.google.com"], ["Google Calendar", "https://calendar.google.com"], ["YouTube", "https://www.youtube.com"]];
+
+export const MIGRATIONS = [{
+  id: "link:1",
+  sql: `
+CREATE TABLE link_topics (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
+  area TEXT,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX link_topics_name ON link_topics(lower(name));
+CREATE TABLE link_items (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  kind TEXT NOT NULL CHECK (kind IN ('place', 'clip')),
+  url TEXT NOT NULL CHECK (length(url) BETWEEN 8 AND 2100),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 300),
+  title_source TEXT NOT NULL DEFAULT 'url' CHECK (title_source IN ('given', 'page', 'url')),
+  platform TEXT NOT NULL DEFAULT 'web',
+  type TEXT NOT NULL DEFAULT 'article' CHECK (type IN ('video', 'article', 'post', 'repo', 'doc')),
+  site TEXT NOT NULL DEFAULT '',
+  author TEXT,
+  description TEXT,
+  note TEXT,
+  topic_id TEXT REFERENCES link_topics(id) ON DELETE SET NULL,
+  state TEXT NOT NULL DEFAULT 'unread' CHECK (state IN ('unread', 'seen', 'todo')),
+  position INTEGER NOT NULL DEFAULT 0,
+  saved_at TEXT NOT NULL,
+  fetch TEXT NOT NULL DEFAULT 'done' CHECK (fetch IN ('pending', 'done', 'failed')),
+  fetch_error TEXT,
+  fetch_tries INTEGER NOT NULL DEFAULT 0
+) STRICT;
+CREATE UNIQUE INDEX link_items_url ON link_items(kind, url);
+CREATE INDEX link_items_saved ON link_items(kind, saved_at);
+
+${DEFAULT_PLACES.map(([title, url], index) => `INSERT INTO link_items (id, kind, url, title, title_source, position, saved_at) VALUES ('place-${index + 1}', 'place', '${url}', '${title}', 'given', ${index}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`).join("\n")}
+`,
+}, {
+  // A site's own icon, kept once per host and shown from here (a device never asks the site for it). A row without
+  // bytes says the site was asked and had none, so it is not asked again for a while.
+  id: "link:2",
+  sql: `
+CREATE TABLE link_icons (
+  host TEXT PRIMARY KEY NOT NULL CHECK (length(host) BETWEEN 1 AND 255),
+  type TEXT,
+  bytes BLOB,
+  checked_at TEXT NOT NULL
+) STRICT;
+`,
+}];
+
+const text = (value: unknown, max: number) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "");
+
+/** The host an item's icon is kept under. */
+export const hostOf = (url: string) => { try { return new URL(url).hostname.toLowerCase(); } catch { return ""; } };
+
+function toPlace(row: Record<string, unknown>): Place {
+  return { id: row.id as string, title: row.title as string, url: row.url as string, ...(row.has_icon ? { icon: hostOf(row.url as string) } : {}) };
+}
+function toClip(row: Record<string, unknown>): Clip {
+  return {
+    id: row.id as string, url: row.url as string, title: row.title as string, titleSource: row.title_source as Clip["titleSource"],
+    platform: row.platform as string, type: row.type as Clip["type"], site: row.site as string,
+    ...(row.author ? { author: row.author as string } : {}), ...(row.description ? { description: row.description as string } : {}),
+    ...(row.note ? { note: row.note as string } : {}), ...(row.topic_id ? { topicId: row.topic_id as string } : {}),
+    state: row.state as ClipState, savedAt: row.saved_at as string, fetch: row.fetch as Clip["fetch"],
+    ...(row.fetch_error ? { fetchError: row.fetch_error as string } : {}),
+    ...(row.has_icon ? { icon: hostOf(row.url as string) } : {}),
+  };
+}
+
+/** Every item with whether its site's icon is kept. SQLite has no function for a URL's host, so hosts are matched
+ * here: there are few of them. */
+function withIcons(world: World, rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const kept = new Set(world.db.prepare("SELECT host FROM link_icons WHERE bytes IS NOT NULL").all().map((row) => row.host as string));
+  return rows.map((row) => ({ ...row, has_icon: kept.has(hostOf(row.url as string)) }));
+}
+
+export function listPlaces(world: World): Place[] {
+  return withIcons(world, world.db.prepare("SELECT * FROM link_items WHERE kind = 'place' ORDER BY position, rowid").all()).map(toPlace);
+}
+/** Newest first. */
+export function listClips(world: World, options: { limit?: number } = {}): Clip[] {
+  return withIcons(world, world.db.prepare("SELECT * FROM link_items WHERE kind = 'clip' ORDER BY saved_at DESC, rowid DESC LIMIT ?").all(Math.min(options.limit ?? 500, 2000))).map(toClip);
+}
+export function listTopics(world: World): Topic[] {
+  return world.db.prepare("SELECT * FROM link_topics ORDER BY created_at, rowid").all()
+    .map((row) => ({ id: row.id as string, name: row.name as string, ...(row.area ? { area: row.area as string } : {}) }));
+}
+
+function row(world: World, id: string, kind: "place" | "clip"): Record<string, unknown> | undefined {
+  return world.db.prepare("SELECT * FROM link_items WHERE id = ? AND kind = ?").get(id, kind);
+}
+const said = (kind: string, id: string, payload: Record<string, unknown>) => ({ kind: `link.${kind}`, subject: `link:${id}`, payload });
+
+// ---- topics ------------------------------------------------------------------------------------------------
+
+/** The topic of that name (however it is cased), made if there is none. An area is only set on a new topic. */
+export function ensureTopic(world: World, input: { name: string; area?: string }): LinkResult<Topic> {
+  const name = text(input.name, 60);
+  if (!name) return { error: "A topic needs a name." };
+  if (input.area && !isArea(input.area)) return { error: `area must be one of: ${AREA_IDS.join(", ")}` };
+  return world.tx((db) => {
+    const found = db.prepare("SELECT * FROM link_topics WHERE lower(name) = lower(?)").get(name);
+    if (found) return { id: found.id as string, name: found.name as string, ...(found.area ? { area: found.area as string } : {}) };
+    const id = newId();
+    db.prepare("INSERT INTO link_topics (id, name, area, created_at) VALUES (?, ?, ?, ?)").run(id, name, input.area ?? null, new Date().toISOString());
+    recordDomainEvent(world, { kind: "link.topic_added", subject: `link-topic:${id}`, payload: { name, ...(input.area ? { area: input.area } : {}) } });
+    return { id, name, ...(input.area ? { area: input.area } : {}) };
+  });
+}
+
+export function updateTopic(world: World, id: string, patch: { name?: string; area?: string }): LinkResult<Topic> {
+  return world.tx((db) => {
+    const found = db.prepare("SELECT * FROM link_topics WHERE id = ?").get(id);
+    if (!found) return { error: "No such topic." };
+    const name = patch.name === undefined ? found.name as string : text(patch.name, 60);
+    if (!name) return { error: "A topic needs a name." };
+    const area = patch.area === undefined ? (found.area as string | null) : patch.area.trim() || null;
+    if (area && !isArea(area)) return { error: `area must be one of: ${AREA_IDS.join(", ")}` };
+    const taken = db.prepare("SELECT id FROM link_topics WHERE lower(name) = lower(?) AND id != ?").get(name, id);
+    if (taken) return { error: `There is already a topic named "${name}".` };
+    if (name !== found.name || area !== found.area) {
+      db.prepare("UPDATE link_topics SET name = ?, area = ? WHERE id = ?").run(name, area, id);
+      recordDomainEvent(world, { kind: "link.topic_changed", subject: `link-topic:${id}`, payload: { name, area, was: found.name as string } });
+    }
+    return { id, name, ...(area ? { area } : {}) };
+  });
+}
+
+/** Removes a topic; what was filed under it is simply unfiled. */
+export function removeTopic(world: World, id: string): LinkResult<{ name: string }> {
+  return world.tx((db) => {
+    const found = db.prepare("SELECT name FROM link_topics WHERE id = ?").get(id);
+    if (!found) return { error: "No such topic." };
+    db.prepare("UPDATE link_items SET topic_id = NULL WHERE topic_id = ?").run(id);
+    db.prepare("DELETE FROM link_topics WHERE id = ?").run(id);
+    recordDomainEvent(world, { kind: "link.topic_removed", subject: `link-topic:${id}`, payload: { name: found.name as string } });
+    return { name: found.name as string };
+  });
+}
+
+// ---- places ------------------------------------------------------------------------------------------------
+
+/** Pins an address to the places (or answers the one already there). */
+export function pinPlace(world: World, input: { url: string; title?: string }): LinkResult<{ place: Place; existing: boolean }> {
+  let url: string;
+  try { url = normalizeUrl(input.url); } catch (error) { return { error: (error as Error).message }; }
+  return world.tx((db) => {
+    const found = db.prepare("SELECT * FROM link_items WHERE kind = 'place' AND url = ?").get(url);
+    if (found) return { place: toPlace(found), existing: true };
+    const id = newId();
+    const title = text(input.title, 60) || siteName(url);
+    const position = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS next FROM link_items WHERE kind = 'place'").get()!.next as number;
+    db.prepare("INSERT INTO link_items (id, kind, url, title, title_source, position, saved_at) VALUES (?, 'place', ?, ?, 'given', ?, ?)").run(id, url, title, position, new Date().toISOString());
+    recordDomainEvent(world, said("pinned", id, { title, url }));
+    return { place: toPlace(row(world, id, "place")!), existing: false };
+  });
+}
+
+/** A short name for a site from its address: "mail.google.com" → "Mail.google", "github.com" → "Github". */
+function siteName(url: string): string {
+  const host = new URL(url).hostname.replace(/^www\./, "").split(".").slice(0, -1).join(".") || new URL(url).hostname;
+  return (host.charAt(0).toUpperCase() + host.slice(1)).slice(0, 60);
+}
+
+export function renamePlace(world: World, id: string, title: string): LinkResult<Place> {
+  const name = text(title, 60);
+  if (!name) return { error: "A place needs a name." };
+  return world.tx((db) => {
+    const found = row(world, id, "place");
+    if (!found) return { error: "No such place." };
+    if (found.title !== name) {
+      db.prepare("UPDATE link_items SET title = ? WHERE id = ?").run(name, id);
+      recordDomainEvent(world, said("renamed", id, { title: name, was: found.title as string }));
+    }
+    return toPlace({ ...found, title: name });
+  });
+}
+
+/** The places in the order given; any left out keep their order after those. */
+export function orderPlaces(world: World, ids: readonly string[]): Place[] {
+  return world.tx((db) => {
+    const current = listPlaces(world).map((place) => place.id);
+    const next = [...new Set(ids.filter((id) => current.includes(id))), ...current.filter((id) => !ids.includes(id))];
+    if (next.join() !== current.join()) {
+      const set = db.prepare("UPDATE link_items SET position = ? WHERE id = ?");
+      next.forEach((id, index) => set.run(index, id));
+      recordDomainEvent(world, { kind: "link.places_ordered", subject: "link:places", payload: { count: next.length } });
+    }
+    return listPlaces(world);
+  });
+}
+
+// ---- clips -------------------------------------------------------------------------------------------------
+
+export interface SaveInput {
+  url: string;
+  /** A title the user or Alfred already knows; the page's own is looked up otherwise. */
+  title?: string;
+  note?: string;
+  /** An existing topic's id, or a topic's name (made if new). */
+  topicId?: string;
+  topic?: string;
+  /** For a new topic: the area it sits in. */
+  area?: string;
+}
+
+/** Saves an address as a clip. The same address again is the same clip: nothing is added, but a note or a topic
+ * given this time is put on it if it had none. The page is looked up afterwards (`fetch: pending`). */
+export function saveClip(world: World, input: SaveInput): LinkResult<{ clip: Clip; existing: boolean }> {
+  let url: string;
+  try { url = normalizeUrl(input.url); } catch (error) { return { error: (error as Error).message }; }
+  return world.tx((db) => {
+    let topicId: string | null = null;
+    if (input.topicId) {
+      if (!db.prepare("SELECT 1 FROM link_topics WHERE id = ?").get(input.topicId)) return { error: "No such topic." };
+      topicId = input.topicId;
+    } else if (input.topic?.trim()) {
+      const topic = ensureTopic(world, { name: input.topic, area: input.area });
+      if (failed(topic)) return topic;
+      topicId = topic.id;
+    }
+    const note = text(input.note, 500) || null;
+    const found = db.prepare("SELECT * FROM link_items WHERE kind = 'clip' AND url = ?").get(url);
+    if (found) {
+      const before = toClip(found);
+      db.prepare("UPDATE link_items SET note = COALESCE(note, ?), topic_id = COALESCE(topic_id, ?) WHERE id = ?").run(note, topicId, found.id as string);
+      const after = toClip(row(world, found.id as string, "clip")!);
+      const changes = changedFields(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>);
+      if (changes) recordDomainEvent(world, said("changed", after.id, { title: after.title, changes }));
+      return { clip: after, existing: true };
+    }
+    const id = newId();
+    const given = text(input.title, 300);
+    const { platform, type, host } = classify(url);
+    db.prepare(`INSERT INTO link_items (id, kind, url, title, title_source, platform, type, site, note, topic_id, state, saved_at, fetch)
+      VALUES (?, 'clip', ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, 'pending')`)
+      .run(id, url, given || nameFromUrl(url), given ? "given" : "url", platform, type, host, note, topicId, new Date().toISOString());
+    const clip = toClip(row(world, id, "clip")!);
+    recordDomainEvent(world, said("saved", id, { title: clip.title, url, type, platform }));
+    return { clip, existing: false };
+  });
+}
+
+export interface ClipPatch {
+  title?: string;
+  /** Empty clears it. */
+  note?: string;
+  /** A topic's id; empty unfiles it. */
+  topicId?: string;
+  /** A topic's name, made if new (with `area`). */
+  topic?: string;
+  area?: string;
+  state?: ClipState;
+}
+
+export function updateClip(world: World, id: string, patch: ClipPatch): LinkResult<Clip> {
+  return world.tx((db) => {
+    const found = row(world, id, "clip");
+    if (!found) return { error: `No saved link with id "${id}".` };
+    const before = toClip(found);
+    if (patch.state !== undefined && !CLIP_STATES.includes(patch.state)) return { error: `state must be one of: ${CLIP_STATES.join(", ")}` };
+    let topicId = found.topic_id as string | null;
+    if (patch.topicId !== undefined) {
+      if (patch.topicId && !db.prepare("SELECT 1 FROM link_topics WHERE id = ?").get(patch.topicId)) return { error: "No such topic." };
+      topicId = patch.topicId || null;
+    } else if (patch.topic !== undefined) {
+      if (!patch.topic.trim()) topicId = null;
+      else {
+        const topic = ensureTopic(world, { name: patch.topic, area: patch.area });
+        if (failed(topic)) return topic;
+        topicId = topic.id;
+      }
+    }
+    const title = patch.title === undefined ? null : text(patch.title, 300);
+    if (patch.title !== undefined && !title) return { error: "A title cannot be empty." };
+    db.prepare(`UPDATE link_items SET title = COALESCE(?, title), title_source = CASE WHEN ? IS NULL THEN title_source ELSE 'given' END,
+      note = CASE WHEN ? = 1 THEN ? ELSE note END, topic_id = ?, state = COALESCE(?, state) WHERE id = ?`)
+      .run(title, title, patch.note === undefined ? 0 : 1, patch.note === undefined ? null : text(patch.note, 500) || null, topicId, patch.state ?? null, id);
+    const after = toClip(row(world, id, "clip")!);
+    const changes = changedFields(before as unknown as Record<string, unknown>, after as unknown as Record<string, unknown>);
+    if (changes) recordDomainEvent(world, said("changed", id, { title: after.title, changes }));
+    return after;
+  });
+}
+
+/** Removes a place or a clip for good. */
+export function removeLink(world: World, id: string): LinkResult<{ title: string; kind: "place" | "clip" }> {
+  return world.tx((db) => {
+    const found = db.prepare("SELECT kind, title, url FROM link_items WHERE id = ?").get(id);
+    if (!found) return { error: `No link with id "${id}".` };
+    db.prepare("DELETE FROM link_items WHERE id = ?").run(id);
+    recordDomainEvent(world, said("removed", id, { title: found.title as string, url: found.url as string, kind: found.kind as string }));
+    return { title: found.title as string, kind: found.kind as "place" | "clip" };
+  });
+}
+
+/** Asks for a clip's page to be looked up again. */
+export function refetchClip(world: World, id: string): LinkResult<Clip> {
+  return world.tx((db) => {
+    if (!row(world, id, "clip")) return { error: `No saved link with id "${id}".` };
+    db.prepare("UPDATE link_items SET fetch = 'pending', fetch_error = NULL, fetch_tries = 0 WHERE id = ?").run(id);
+    recordDomainEvent(world, said("refetch", id, {}));
+    return toClip(row(world, id, "clip")!);
+  });
+}
+
+// ---- looking pages up ---------------------------------------------------------------------------------------
+
+/** Clips whose page has not been looked up yet, oldest first. */
+export function pendingClips(world: World, limit = 10): Clip[] {
+  return world.db.prepare("SELECT * FROM link_items WHERE kind = 'clip' AND fetch = 'pending' ORDER BY saved_at, rowid LIMIT ?").all(limit).map(toClip);
+}
+
+/** What the page said about itself. A title the user or Alfred gave stays; an address that only stood for another
+ * (a share link) becomes the page it led to, unless that page is already saved. */
+export function recordPage(world: World, id: string, page: { url?: string; title?: string; site?: string; author?: string; description?: string }): void {
+  world.tx((db) => {
+    const found = row(world, id, "clip");
+    if (!found) return;
+    let url = found.url as string, platform = found.platform as string, type = found.type as string, site = found.site as string;
+    if (page.url && isShortener(url)) {
+      try {
+        const landed = normalizeUrl(page.url);
+        if (!db.prepare("SELECT 1 FROM link_items WHERE kind = 'clip' AND url = ? AND id != ?").get(landed, id)) {
+          url = landed;
+          ({ platform, type, host: site } = classify(landed));
+        }
+      } catch { /* keep the address as saved */ }
+    }
+    const takeTitle = found.title_source !== "given" && !!page.title;
+    const title = takeTitle ? page.title! : found.title_source === "url" ? nameFromUrl(url) : found.title as string;
+    db.prepare(`UPDATE link_items SET url = ?, platform = ?, type = ?, site = ?, title = ?, title_source = ?, author = ?, description = ?,
+      fetch = 'done', fetch_error = NULL WHERE id = ?`)
+      .run(url, platform, type, text(page.site, 80) || site, title.slice(0, 300), takeTitle ? "page" : found.title_source as string,
+        text(page.author, 120) || null, text(page.description, 600) || null, id);
+    recordDomainEvent(world, said("fetched", id, { title: title.slice(0, 200), found: !!page.title }));
+  });
+}
+
+/** The page could not be looked up. `again`: worth another try later (the network, a timeout), up to three tries. */
+export function recordPageFailure(world: World, id: string, error: string, again: boolean): void {
+  world.tx((db) => {
+    const found = row(world, id, "clip");
+    if (!found) return;
+    const tries = (found.fetch_tries as number) + 1;
+    const giveUp = !again || tries >= 3;
+    db.prepare("UPDATE link_items SET fetch = ?, fetch_error = ?, fetch_tries = ? WHERE id = ?").run(giveUp ? "failed" : "pending", error.slice(0, 200), tries, id);
+    if (giveUp) recordDomainEvent(world, said("fetch_failed", id, { title: found.title as string, error: error.slice(0, 200) }));
+  });
+}
+
+// ---- icons -------------------------------------------------------------------------------------------------
+
+const ICON_RETRY_MS = 7 * 86_400_000;
+
+/** Sites whose icon has not been asked for (or was not there a week ago), each with one of its addresses to ask at. */
+export function iconsToFetch(world: World, limit = 8, now: number = Date.now()): Array<{ host: string; url: string }> {
+  const known = new Map(world.db.prepare("SELECT host, bytes IS NOT NULL AS found, checked_at FROM link_icons").all().map((row) => [row.host as string, row]));
+  const wanted = new Map<string, string>();
+  for (const row of world.db.prepare("SELECT url FROM link_items ORDER BY kind DESC, rowid").all()) {
+    const host = hostOf(row.url as string), seen = known.get(host);
+    if (!host || wanted.has(host) || seen?.found || (seen && now - Date.parse(seen.checked_at as string) < ICON_RETRY_MS)) continue;
+    wanted.set(host, row.url as string);
+    if (wanted.size >= limit) break;
+  }
+  return [...wanted].map(([host, url]) => ({ host, url }));
+}
+
+/** The site's icon, or that it has none. Not an event by itself: `noteIcons` says once that some arrived. */
+export function recordIcon(world: World, host: string, icon: { type: string; bytes: Uint8Array } | null): void {
+  world.tx((db) => db.prepare(`INSERT INTO link_icons (host, type, bytes, checked_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(host) DO UPDATE SET type = excluded.type, bytes = excluded.bytes, checked_at = excluded.checked_at`)
+    .run(host, icon?.type ?? null, icon ? Buffer.from(icon.bytes) : null, new Date().toISOString()));
+}
+
+/** Tells devices that icons arrived, so they draw them. */
+export function noteIcons(world: World, count: number): void {
+  world.tx(() => recordDomainEvent(world, { kind: "link.icons", subject: "link:icons", payload: { count } }));
+}
+
+export function getIcon(world: World, host: string): { type: string; bytes: Uint8Array } | null {
+  const row = world.db.prepare("SELECT type, bytes FROM link_icons WHERE host = ? AND bytes IS NOT NULL").get(host.toLowerCase());
+  return row ? { type: row.type as string, bytes: row.bytes as Uint8Array } : null;
+}
+
+/** One line per clip, as a model reads it. */
+export function formatClip(clip: Clip, topics: readonly Topic[]): string {
+  const topic = topics.find((candidate) => candidate.id === clip.topicId);
+  return [
+    `${clip.id}  ${clip.title}`, `${clip.type} on ${clip.platform === "web" ? clip.site : clip.platform}`,
+    ...(topic ? [`topic: ${topic.name}`] : ["no topic"]), clip.state, ...(clip.note ? [`note: ${clip.note}`] : []), clip.url,
+  ].join(" | ");
+}

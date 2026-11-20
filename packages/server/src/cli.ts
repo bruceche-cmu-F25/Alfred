@@ -10,6 +10,7 @@ import { createPiEngine } from "@alfred/engine-pi";
 import { compareTodos, importTodos, readRobinTodos, robinDataDir, todoModule } from "@alfred/module-todo";
 import { calendarModule } from "@alfred/module-calendar";
 import { mailModule } from "@alfred/module-mail";
+import { linksModule } from "@alfred/module-links";
 import type { ModuleServices } from "@alfred/module-kit";
 import { googleService } from "./google-service.ts";
 import { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
@@ -25,7 +26,7 @@ import { recordDomainEvent } from "@alfred/core";
 import { defaultSecretStore } from "./secrets.ts";
 import { watchTodoSources } from "./todo-sources.ts";
 
-const MODULES = [todoModule, calendarModule, mailModule];
+const MODULES = [todoModule, calendarModule, mailModule, linksModule];
 const log = (message: string) => console.log(`[alfred] ${message}`);
 
 const { values, positionals } = parseArgs({

@@ -78,7 +78,16 @@ export interface AlfredModule {
   /** For a module that mirrors an outside service (a calendar, a mailbox): the home node calls `run` now and then,
    * and when a device asks for fresh data. It reads through `services` and writes its own tables; a failure is the
    * module's to record (say, per account) so its page can say what went wrong. Never called concurrently. */
-  sync?: { everyMs: number; run(world: World, services: ModuleServices, signal: AbortSignal): Promise<void> };
+  sync?: {
+    everyMs: number;
+    /** Event kinds after which a pass should run soon, not at the next scheduled one (a link was saved: look its
+     * page up now). The module's own events, usually. */
+    onEvents?: readonly string[];
+    run(world: World, services: ModuleServices, signal: AbortSignal): Promise<void>;
+  };
+  /** A small file the module keeps and a device shows (a site's icon): GET /api/modules/<id>/files/<name>. Only
+   * images are served, as the bytes say they are; null when there is none by that name. */
+  file?(world: World, name: string): { type: string; bytes: Uint8Array } | null;
   /** For a module that changes an outside service (adds an event, sends an email): how ONE accepted change is
    * delivered. The module only says how it went; the queue is not its business. The home node takes each change
    * waiting for the module (core outbound.ts), calls this, and records the ending (`deliverQueued`). It may throw a

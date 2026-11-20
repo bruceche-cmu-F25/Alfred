@@ -16,6 +16,7 @@
     "@alfred/engine-pi": "*",
     "@alfred/module-kit": "*",
     "@alfred/module-calendar": "*",
+    "@alfred/module-links": "*",
     "@alfred/module-mail": "*",
     "@alfred/module-todo": "*",
     "@alfred/protocol": "*",

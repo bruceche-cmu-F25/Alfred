@@ -237,6 +237,21 @@ export function openHome(options: HomeOptions): Home {
     every.unref();
     return [first, every];
   });
+  // A module may name events after which its pass should run soon (module-kit `sync.onEvents`): looked for after
+  // each commit, among the events since the last look.
+  const eager = options.modules.filter((module) => module.sync?.onEvents?.length);
+  let seen = Number(world.db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM core_events").get()!.seq);
+  const offEager = eager.length ? world.onCommit(() => {
+    if (stopping.signal.aborted || !world.db.isOpen) return;
+    const kinds = new Set(world.db.prepare("SELECT DISTINCT kind FROM core_events WHERE seq > ?").all(seen).map((row) => row.kind as string));
+    seen = Number(world.db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM core_events").get()!.seq);
+    for (const module of eager) {
+      if (!module.sync!.onEvents!.some((kind) => kinds.has(kind))) continue;
+      // One already under way may have started before this event: it gets one more pass right after.
+      if (passes.has(module.id)) void passes.get(module.id)!.then(() => { if (!stopping.signal.aborted) void pass(module); });
+      else setImmediate(() => { if (!stopping.signal.aborted) void pass(module); });
+    }
+  }) : () => {};
   // Who tells the user about a notice, where and when: decided here, once, for every device.
   const outlets = new Outlets();
   const reaches: Array<() => Reach[]> = [];
@@ -269,6 +284,7 @@ export function openHome(options: HomeOptions): Home {
     close() {
       clearInterval(clock);
       for (const timer of passTimers) clearTimeout(timer);
+      offEager();
       stopping.abort();
       attention.close();
       world.close();
