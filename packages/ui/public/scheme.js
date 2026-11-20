@@ -10,6 +10,8 @@
   };
   var apply = function () { document.documentElement.dataset.scheme = chosen() || (dark.matches ? "dark" : "light"); };
   apply();
+  // The text size this device chose (src/prefs.ts), so the page does not jump after it loads.
+  try { var size = localStorage.getItem("alfred.textSize"); if (size === "small" || size === "large") document.documentElement.dataset.text = size; } catch (error) { /* the usual size */ }
   dark.addEventListener("change", apply);
   addEventListener("storage", function (event) { if (event.key === KEY || event.key === null) apply(); });
 })();

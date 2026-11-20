@@ -634,3 +634,44 @@ export type McpSignIn =
   | { id: string; server: string; status: "done" }
   | { id: string; server: string; status: "failed"; error: string }
   | { id: string; server: string; status: "cancelled" };
+
+/** Skills: folders of instructions Alfred reads when a task calls for one (the Agent Skills format: a `SKILL.md` with
+ * a name and a description). They live in `<data>/skills/`, and only the home node's machine reaches these routes.
+ *
+ *   GET  /api/skills                       SkillsResponse (Alfred's skills, and the ones found elsewhere on this Mac)
+ *   GET  /api/skills/content?id=           SkillContent (its instructions, without the frontmatter)
+ *   POST /api/skills/(enable|disable)      { id } -> SkillInfo
+ *   POST /api/skills/remove                { id } -> {}
+ *   POST /api/skills/add                   { path } (one of `found`) | { package } (from a search) -> SkillInfo
+ *   POST /api/skills/search                { query } -> SkillSearchResponse (asks skills.sh)
+ *   POST /api/skills/updates               {} -> SkillUpdatesResponse (asks skills.sh about each skill that came from it)
+ *   POST /api/skills/update                { id } -> SkillInfo
+ *
+ * A skill that is switched off stays on disk; Alfred is not told about it.
+ */
+export interface SkillInfo {
+  /** Its folder (or file) under `<data>/skills/`. */
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  /** Where it was installed from, when it came from skills.sh. */
+  source?: { package: string; url: string };
+}
+/** A skill in another agent's folder on this Mac (`place`, written from the home folder), not among Alfred's yet. */
+export interface FoundSkill { name: string; description: string; path: string; place: string }
+export interface SkillsResponse { skills: SkillInfo[]; found: FoundSkill[]; /** Files that look like skills and could not be read as one. */ problems: string[] }
+export interface SkillContent { content: string }
+export interface SkillSearchResult {
+  /** `owner/repo/skill`: what `add` takes. */
+  package: string;
+  name: string;
+  /** `owner/repo`. */
+  source: string;
+  installs: number;
+  url: string;
+  /** Already among Alfred's skills. */
+  added: boolean;
+}
+export interface SkillSearchResponse { results: SkillSearchResult[] }
+export interface SkillUpdatesResponse { /** Ids of the skills with a newer version. */ updates: string[]; /** Ids that could not be asked about. */ failed: string[] }

@@ -1,5 +1,19 @@
 /* Settings (Settings.tsx). Colours from tokens.css; layout after prototype/workspace.html?page=settings. */
-.settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 40px 80px; }
+.settings { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* One tab per kind of setting (Settings.tsx). The row stays; the pane under it scrolls. In a narrow column the row
+   scrolls sideways instead of wrapping or squeezing a name. */
+.set-tabs { flex: none; display: flex; gap: 2px; margin: 0 40px; border-bottom: 1px solid var(--line-soft); overflow-x: auto; scrollbar-width: none; }
+.set-tabs::-webkit-scrollbar { display: none; }
+.set-tab { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 40px; margin-bottom: -1px; padding: 0 12px 0 10px; border-bottom: 2px solid transparent; color: var(--muted); font-size: .875rem; white-space: nowrap; }
+.set-tab:first-child { margin-left: -10px; }
+.set-tab svg { width: 16px; height: 16px; }
+.set-tab:hover { color: var(--ink); }
+.set-tab[aria-selected="true"] { border-bottom-color: var(--ink); color: var(--ink); font-weight: 500; }
+.set-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+.set-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 40px 80px; }
+.set-pane[hidden] { display: none; }
+/* The tab already says what the pane is. */
+.set-pane > .set-section:first-child > h2:first-child { display: none; }
 .set-section { max-width: 680px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 36px; }
 .set-section h2 { font-size: 1.125rem; font-weight: 600; color: var(--ink); }
 .set-message { padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--ink); font-size: .875rem; }
@@ -62,7 +76,8 @@
   font-family: var(--mono, ui-monospace, monospace); font-size: 1.0625rem; letter-spacing: .08em; text-align: center; text-transform: uppercase; }
 .pair .set-button { min-height: 40px; }
 @container page (max-width: 600px) {
-  .settings { padding: 0 16px 32px; }
+  .set-tabs { margin: 0; padding: 0 16px; }
+  .set-pane { padding: 18px 16px 32px; }
   .dev-pair { flex-direction: column; align-items: center; }
   .set-row.sub:not(.has-logo) { padding-left: 0; }
 }
@@ -109,3 +124,35 @@
   .usage-bar { grid-column: 1 / 3; grid-row: 2; }
   .usage-reset { grid-column: 1 / 3; grid-row: 3; }
 }
+
+/* Settings → Skills (Skills.tsx). A flat list: one line per skill, its name, then what it is for in what room is
+   left, then the one thing to do with it. The whole of a description is in the skill's card. */
+.skill-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line-soft); }
+.skill-item { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 2px; border-bottom: 1px solid var(--line-soft); }
+.skill-words { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 8px 0; color: inherit; text-align: left; text-decoration: none; }
+.skill-words b { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 500; }
+.skill-words span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .8125rem; }
+button.skill-words:hover b, a.skill-words:hover b { text-decoration: underline; text-underline-offset: 3px; }
+.skill-item .set-switch { transform: scale(.85); transform-origin: right center; }
+.skill-add { flex: none; padding: 4px 0; color: var(--accent); font-size: .8125rem; white-space: nowrap; }
+.skill-add:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.skill-done { flex: none; color: var(--muted); font-size: .8125rem; white-space: nowrap; }
+.skill-more { align-self: flex-start; }
+.skill-none { margin: 0; }
+.skill-group { margin: 6px 0 -6px; color: var(--muted); font-size: .75rem; font-weight: 500; }
+.skill-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0; }
+/* A search box brings its own border and look; this is the same box as the other settings fields. */
+.skill-search .model-input { flex: 1; min-width: 0; border: 0; appearance: none; -webkit-appearance: none; }
+.skill-search .model-input::-webkit-search-cancel-button { display: none; }
+/* In a narrow column a skill is two short lines: its name over what it is for. */
+@container page (max-width: 560px) {
+  .skill-words { flex-direction: column; align-items: stretch; gap: 0; padding: 7px 0; }
+  .skill-words b { max-width: 100%; }
+  .skill-words span { flex: none; }
+}
+.ev-edit.skill-card { width: min(680px, 100%); gap: 8px; font-size: .875rem; }
+.skill-card .ev-card-head b { color: var(--ink); font-size: 1.0625rem; overflow-wrap: anywhere; }
+.skill-card > p { margin: 0; }
+.skill-text { margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft); min-width: 0; overflow-wrap: anywhere; }
+.skill-card .ev-foot { margin-top: 8px; }
+.skill-card .ev-foot .set-button { min-height: 28px; padding: 0 12px; }

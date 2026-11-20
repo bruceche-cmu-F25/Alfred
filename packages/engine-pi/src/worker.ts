@@ -72,6 +72,8 @@ const textOf = (path: string) => { try { return readFileSync(path, "utf8"); } ca
 /** What the user's connectors are right now: the file, and the stamp the home node moves when a secret or a sign-in
  * changes. A session opened with another answer is opened anew. */
 const mcpRevision = () => createHash("sha256").update(textOf(mcpPath(config))).update("\0").update(textOf(join(config, "mcp.rev"))).digest("hex");
+/** The stamp the home node moves when a skill is added, removed or switched (skills.ts). */
+const skillsRevision = () => textOf(join(config, "skills.rev"));
 // Pi discovers extensions, skills and context files in an agent directory; Alfred's is empty on purpose.
 const resourcesDir = join(cwd, "resources");
 for (const dir of [cwd, resourcesDir, skillsDir]) mkdirSync(dir, { recursive: true });
@@ -101,10 +103,10 @@ interface Warm {
   always: boolean;
   /** The commands the user allowed for the rest of the session: as the turn started, plus those allowed during it. */
   commands: Set<string>;
-}
-const warm = new Map<string, Warm>();
   /** The long files the user sent with this turn, by resolved path: the model may read these without asking. */
   files: Set<string>;
+}
+const warm = new Map<string, Warm>();
 let busy = false;
 
 function waitFor<T extends string | boolean>(call: string, message: ToParent): Promise<T> {
@@ -280,7 +282,7 @@ async function open(job: RunJob): Promise<Warm> {
   // What the session is opened with. The commands allowed for the session are not part of it: they are read by the
   // gate each turn, so allowing one does not reopen the session.
   const place = job.workspace ? { root: job.workspace.root, name: job.workspace.name, mode: job.workspace.mode } : null;
-  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: place, mcp: mcpRevision() })).digest("hex");
+  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: place, mcp: mcpRevision(), skills: skillsRevision() })).digest("hex");
   const existing = warm.get(job.thread);
   if (existing && existing.shape === shape) return existing;
   if (existing) await close(job.thread);
@@ -375,8 +377,6 @@ function spent(messages: readonly unknown[]): { input: number; output: number; c
   return total;
 }
 
-async function runTurn(run: string, job: RunJob): Promise<string> {
-  if (!THREAD.test(job.thread)) throw new Error("Invalid thread");
 /** A text file up to this size is put into the turn; a longer one is read by the model when it wants it. */
 const INLINE_BYTES = 60 * 1024;
 
@@ -411,6 +411,8 @@ async function attached(files: readonly Attachment[], sees: boolean): Promise<{ 
   return out;
 }
 
+async function runTurn(run: string, job: RunJob): Promise<string> {
+  if (!THREAD.test(job.thread)) throw new Error("Invalid thread");
   const entry = await open(job);
   if (entry.idle) clearTimeout(entry.idle);
   entry.idle = null;
@@ -419,10 +421,10 @@ async function attached(files: readonly Attachment[], sees: boolean): Promise<{ 
   entry.run = run;
   entry.always = false;
   entry.commands = new Set(job.workspace?.commands ?? []);
-  let aborted = false;
-  currentAbort = () => { aborted = true; void session.abort(); };
   const sent = await attached(job.attachments ?? [], Array.isArray(session.model?.input) && session.model.input.includes("image"));
   entry.files = sent.files;
+  let aborted = false;
+  currentAbort = () => { aborted = true; void session.abort(); };
   // The reply as it is written, whole each time, at most every 80 ms.
   let latest: string | null = null;
   let timer: NodeJS.Timeout | null = null;

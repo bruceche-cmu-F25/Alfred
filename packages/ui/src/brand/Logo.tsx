@@ -1,4 +1,4 @@
-/** Other companies' marks, shown where Alfred connects to them: model providers, Google, Tailscale.
+/** Other companies' marks, shown where Alfred connects to them: model providers, Google, Tailscale, connectors.
  *
  * The drawings are the files in ./svg (where each came from: ./README.md). To add one, put a cleaned SVG there;
  * its file name is its name here. A mark in one colour has no fill of its own, so it is drawn in the text colour
@@ -20,6 +20,14 @@ export function providerMark(id: string, kind?: "subscription" | "key"): string 
     if (MARKS.has(name)) return name;
   }
   return undefined;
+}
+
+/** A connector's mark: the catalog entry it came from, else its own name, else a part of its address
+ * ("mcp.notion.com" finds "notion"). Undefined when there is none, and the row shows its first letter. */
+export function connectorMark(server: { catalog?: string; name?: string; where?: string }): string | undefined {
+  const names = [server.catalog, server.name?.toLowerCase()];
+  try { if (server.where?.startsWith("http")) names.push(...new URL(server.where).hostname.split(".").slice(0, -1).reverse()); } catch { /* a command line */ }
+  return names.find((name): name is string => !!name && MARKS.has(name));
 }
 
 /** The mark of the provider in a "provider/model" id. */

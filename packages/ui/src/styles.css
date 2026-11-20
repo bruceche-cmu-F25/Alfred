@@ -11,6 +11,9 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+/* The size of the text this device chose (prefs.ts, Settings → General): every size in these sheets is in rem. */
+html[data-text="small"] { font-size: 93.75%; }
+html[data-text="large"] { font-size: 112.5%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: .9375rem/1.6 var(--sans); }
 button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; border: 0; background: none; padding: 0; }

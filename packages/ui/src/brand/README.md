@@ -9,7 +9,7 @@ Alfred is not affiliated with or endorsed by any of them.
 | Files | Source | Licence of the drawing |
 | --- | --- | --- |
 | `gmail`, `google-calendar` | [gilbarbara/logos](https://github.com/gilbarbara/logos) through `@iconify-json/logos` 1.2.20 | CC0-1.0 |
-| `tailscale`, `xiaomi` | [Simple Icons](https://simpleicons.org) 16.38.0 | CC0-1.0 |
+| `tailscale`, `xiaomi`, `notion`, `linear`, `sentry`, `atlassian`, `github` | [Simple Icons](https://simpleicons.org) 16.38.0 | CC0-1.0 |
 | all the others | [LobeHub Icons](https://github.com/lobehub/lobe-icons) through `@lobehub/icons-static-svg` 1.104.0 | MIT, © LobeHub |
 
 ## Adding one

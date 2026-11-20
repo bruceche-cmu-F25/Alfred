@@ -12,6 +12,7 @@ export { loadAlfredMcpConfig, readMcpFile, type LoadedMcpConfig } from "./mcp-co
 export { McpConnectors, McpConnectorError, type McpConnectorsOptions } from "./connectors.ts";
 export { MCP_CATALOG, type McpCatalogEntry } from "./mcp-catalog.ts";
 export { createMcpVault, type McpVault } from "./mcp-store.ts";
+export { Skills, SkillError, setSkillDisabled, type SkillsOptions } from "./skills.ts";
 
 export interface PiEngineOptions {
   /** Working directory for sessions. Nothing is read from it. */

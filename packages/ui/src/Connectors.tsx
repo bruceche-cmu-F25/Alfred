@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { McpCatalogItem, McpConnector, McpConnectorsResponse, McpSignIn } from "@alfred/protocol";
+import { connectorMark, Logo } from "./brand/Logo.tsx";
 import { getLocale, t } from "./i18n/index.ts";
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -17,6 +18,9 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 }
 const at = (name: string, action: string) => `/api/connections/mcp/${encodeURIComponent(name)}/${action}`;
 const open = (url: string) => { const page = window.open(url, "_blank"); if (page) page.opener = null; };
+
+/** The service's own mark, where Alfred has one; its first letter stands in otherwise. */
+const mark = (server: { catalog?: string; name?: string; where?: string }) => { const name = connectorMark(server); return name ? <Logo name={name} /> : null; };
 
 type Own = { kind: "url" | "command"; name: string; where: string; secretName: string; secret: string };
 const EMPTY: Own = { kind: "url", name: "", where: "", secretName: "", secret: "" };
@@ -119,7 +123,7 @@ export function Connectors() {
           {servers.map((server) => (
             <div className="set-rows-item" key={server.name}>
               <div className="set-row has-logo mcp-row">
-                <span className="set-logo" data-k="gray">{server.title.slice(0, 1).toUpperCase()}</span>
+                <span className="set-logo" data-k="gray">{mark(server) ?? server.title.slice(0, 1).toUpperCase()}</span>
                 <span className="set-name">{server.title}</span>
                 <span className="set-note" title={server.where}>{note(server)}</span>
                 <span className="set-end">
@@ -164,7 +168,7 @@ export function Connectors() {
             {offered.map((entry) => (
               <div className="set-rows-item" key={entry.id}>
                 <div className="set-row has-logo">
-                  <span className="set-logo" data-k="gray">{entry.title.slice(0, 1)}</span>
+                  <span className="set-logo" data-k="gray">{mark({ catalog: entry.id, where: entry.url }) ?? entry.title.slice(0, 1)}</span>
                   <span className="set-name">{entry.title}</span>
                   <span className="set-note">{entry.about[locale]}</span>
                   <span className="set-end">

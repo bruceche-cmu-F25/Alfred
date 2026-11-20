@@ -159,6 +159,13 @@ POST /api/connections/:id/disconnect        { requestId }：撤销加删除
 | 系统 | 设备 | 新（架构草案 5.7 节） |
 | | 隐私与数据 | Robin「隐私」：哪些数据出本机、数据目录、导出 |
 
+**现在的样子【已实现，2026-11-19】**：设置页顶上一排标签，一类一个：通用、模型、账户、技能、连接器、设备（`packages/ui/src/Settings.tsx`，做法参考 pi-web 的设置面板）。打开过的标签在页面开着时一直留着，所以等浏览器回来的登录不会因为看了别的标签而丢；上次看的标签记在这台设备上。别的设备上只有「通用」和「设备」，其余都是主节点那台 Mac 的。
+
+- **通用**：语言（主节点的，各设备跟着）；外观、文字大小、发送键（Enter 或 ⌘Enter）只管这台设备，存在 localStorage（`prefs.ts`、`scheme.ts`）。
+- **技能**（参考 pi-web 的 Settings › Skills）：`<数据目录>/skills/` 里的技能，一行一个的平列表：名字、一句用途、开关；点名字在卡片里看全文，移除也在卡片里。下面一个输入框管添加：打字筛这台 Mac 上已有的，按搜索去问 skills.sh。关掉是技能格式自己的 `disable-model-invocation: true`，文件还在，Alfred 看不到。加技能两条路：从 skills.sh 搜了下载（走它的 `/api/download`，不跑 `npx skills`，来源和版本记在 `skill-sources.json`，可以检查更新）；或者把这台 Mac 上别的助手装过的复制一份（`~/.agents/skills`、`~/.claude/skills`、`~/.pi/agent/skills`、`~/.codex/skills`）。主节点：`packages/engine-pi/src/skills.ts`，路由 `/api/skills/*`（只许本机）。有改动就动 `skills.rev`，开着的会话下一轮重开。
+- 设置里的话不假设用户装了 Pi 或懂这些东西：只在这台 Mac 上真找到 Pi 的 key 或登录时才提它。连接器每行有服务自己的标志（`brand/svg`，Context7 和 DeepWiki 没有现成的，用首字母）。
+- 没搬的：pi-web「模型」里逐个模型的开关和上下文窗口、自己加 Provider；「子代理」「插件」在 Alfred 里没有对应的东西。
+
 Telegram 归到「连接器」里一个特殊条目（只能粘 token）。Robin 设置里的早报、求职汇总、Gmail 汇总、提醒时间这些**不进设置**：它们是自动任务，归工作台的「自动任务」页。
 
 连接放在最前面，因为第一次打开时那是唯一必须做的事：没有模型，Alfred 什么都做不了。第一次启动的引导就是这一页的前两块：「选一个模型登录」「连上 Google（可以跳过）」。

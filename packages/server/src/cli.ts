@@ -21,7 +21,7 @@ import { RemoteAccess } from "./remote.ts";
 import { PushService } from "./push.ts";
 import { cliRunner, findTailscale, Tailscale } from "./tailscale.ts";
 import { GoogleConnections } from "./google.ts";
-import { createCredentialStore, McpConnectors, ModelAccounts } from "@alfred/engine-pi";
+import { createCredentialStore, McpConnectors, ModelAccounts, Skills } from "@alfred/engine-pi";
 import { recordDomainEvent } from "@alfred/core";
 import { defaultSecretStore } from "./secrets.ts";
 import { watchTodoSources } from "./todo-sources.ts";
@@ -72,6 +72,11 @@ if (command === "serve") {
     dataDir, secrets: defaultSecretStore(dataDir), log,
     onChange: (kind, name) => home.world.tx(() => recordDomainEvent(home.world, { kind: `connector.${kind}`, subject: `connector:${name}`, actor: "user", payload: { name } })),
   });
+  // Skills: the folders in <data>/skills/, listed, switched, and added from this Mac or from skills.sh.
+  const skills = new Skills({
+    dataDir, log,
+    onChange: (kind, name) => home.world.tx(() => recordDomainEvent(home.world, { kind: `skill.${kind}`, subject: `skill:${name}`, actor: "user", payload: { name } })),
+  });
   // The calendar and mail modules read the connected accounts through it.
   services = { google: googleService(google) };
   // Other devices: Tailscale Serve forwards to the ingress port, where every request needs a paired device.
@@ -87,8 +92,8 @@ if (command === "serve") {
   const stopTodoSources = watchTodoSources(home.world, calendarModule, log);
   // Speech to text for every device; the model loads when someone starts talking.
   const voice = new Transcriber({ log });
-  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, mcp, remote, push, voice });
-  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, models, mcp, remote, push, voice });
+  const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, mcp, skills, remote, push, voice });
+  const ingress = createIngressServer(home, { port: ingressPort, uiDir: defaultUiDir(), log, google, models, mcp, skills, remote, push, voice });
   server.on("error", (error: NodeJS.ErrnoException) => {
     void engine.close();
     home.close();
