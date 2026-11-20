@@ -367,7 +367,7 @@ test("automations over HTTP: made by the user, fired once by the clock, unattend
   const { server, base } = await start(home);
   try {
     const initial = (await (await fetch(`${base}/api/state`)).json()) as StateResponse;
-    assert.deepEqual(initial.automations.map((automation) => [automation.template, automation.enabled]), [["brief", false]], "the brief is there, off");
+    assert.deepEqual(initial.automations.map((automation) => [automation.template, automation.enabled]).sort(), [["brief", false], ["mail_todos", false]], "the shipped ones are there, off");
 
     const now = Date.now();
     const soon = new Date(now + 60_000);

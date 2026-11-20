@@ -77,6 +77,13 @@ CREATE TABLE calendar_colours (
 ) STRICT;
 UPDATE calendar_sources SET digest = NULL;
 `,
+}, {
+  // Which repeating event an event is one time of (the todo list keeps one todo for a weekly one, not one a time).
+  id: "calendar:4",
+  sql: `
+ALTER TABLE calendar_events ADD COLUMN recurring TEXT;
+UPDATE calendar_sources SET digest = NULL;
+`,
 }];
 
 /** Gives each series that has no colour yet the one that carries the fewest of this account's events (those of its
@@ -149,10 +156,10 @@ export async function syncCalendar(world: World, services: ModuleServices, signa
       if (before?.digest === digest && !before?.error) return;
       db.prepare("DELETE FROM calendar_events WHERE account = ?").run(account);
       const insert = db.prepare(`INSERT OR REPLACE INTO calendar_events (account, id, calendar_id, calendar, title, all_day, start_date, end_date, start_at, end_at,
-        location, link, meeting, organizer, response, attendees, etag, organizer_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        location, link, meeting, organizer, response, attendees, etag, organizer_self, recurring) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const event of result!.events) {
         insert.run(account, event.id, event.calendarId, event.calendar, event.title, event.allDay ? 1 : 0, event.startDate, event.endDate,
-          event.startAt, event.endAt, event.location, event.link, event.meeting, event.organizer, event.response, event.attendees, event.etag, event.organizerSelf ? 1 : 0);
+          event.startAt, event.endAt, event.location, event.link, event.meeting, event.organizer, event.response, event.attendees, event.etag, event.organizerSelf ? 1 : 0, event.recurring);
       }
       colourSeries(world, account);
       recordDomainEvent(world, { kind: "calendar.synced", subject: `calendar:${account}`, payload: { events: result!.events.length } });
@@ -195,6 +202,7 @@ export function listEvents(world: World, from: string, to: string): CalendarEven
       ?? colour.get(`${row.account as string}|${row.calendar_id as string}`) ?? "gray",
     editable: row.organizer_self === 1 && writable.has(`${row.account as string}|${row.calendar_id as string}`),
     invited: !!row.response && row.organizer_self !== 1 && writable.has(`${row.account as string}|${row.calendar_id as string}`),
+    ...(row.recurring ? { recurring: row.recurring as string } : {}),
   }));
 }
 

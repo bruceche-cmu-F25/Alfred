@@ -111,7 +111,7 @@ function AutomationRow({ automation, onOpenConversation }: { automation: Automat
   if (editing) return <li className="auto-row editing"><AutomationForm automation={automation} onDone={() => setEditing(false)} /></li>;
   return (
     <li className="auto-row" data-enabled={automation.enabled || undefined}>
-      <div className="auto-name" data-k={automation.template === "brief" ? "orange" : "green"}>
+      <div className="auto-name" data-k={automation.template === "brief" ? "orange" : automation.template === "mail_todos" ? "blue" : "green"}>
         <i><Icon name="clock" /></i>
         <span>
           <b>{title}</b>

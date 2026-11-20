@@ -323,6 +323,38 @@ select.area-pick[data-empty] { background: none; color: var(--muted); box-shadow
 .remove { flex: none; min-width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); opacity: 0; font-size: .75rem; }
 .todo:hover .remove, .remove:focus-visible, .remove.confirming { opacity: 1; }
 .remove.confirming { padding: 0 10px; background: var(--bad); color: #fff; }
+/* Where todos come from: a source on a todo, Alfred's suggestions (not todos yet, so drawn dashed), and the choices. */
+.todo-src { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: .75rem; }
+.todo[data-suggested] { margin: 2px 4px; outline: 1px dashed var(--line); outline-offset: -1px; }
+.todo[data-suggested] .todo-title { color: var(--copy); }
+.todo[data-suggested] .remove { opacity: .7; }
+.keep { flex: none; min-height: 28px; padding: 0 12px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .75rem; white-space: nowrap; }
+.todo-group[data-group="suggested"] h3 { color: var(--accent); }
+.todo-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 6px 18px 2px; color: var(--muted); font-size: .75rem; }
+.todo-sources label, .todo-pick { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.todo-sources .switch { transform: scale(.8); transform-origin: left center; margin-right: -6px; }
+.todo-pick .pick-now { color: var(--copy); font-size: .75rem; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.todo-pick .pick-now:hover { color: var(--ink); text-decoration-color: currentColor; }
+/* What repeats weekly: said on its one todo, and drawn as a week (Monday first) behind the chip at the row's end. */
+.todo-repeat { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.chip-view { margin-left: auto; }
+.chip-view svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.todo-groups[hidden] { display: none; }
+.todo-week { padding: 12px 4px 0; }
+.week-day { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: start; gap: 0 8px; padding: 6px 8px; border-top: 1px solid var(--line); }
+.week-day:first-child { border-top: 0; }
+.week-day h3 { padding: 9px 0 0 4px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: .8125rem; font-weight: 500; white-space: nowrap; }
+.week-day[data-today] h3 { color: var(--accent); }
+.week-day[data-empty] { min-height: 36px; }
+.week-day[data-empty] h3 { opacity: .6; }
+.week-row { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 8px; border-radius: 10px; color: var(--copy); }
+.week-row[data-next] { color: var(--ink); }
+.week-row[data-next]:hover { background: var(--wash); }
+.week-dot { flex: none; width: 20px; height: 20px; display: grid; place-items: center; }
+.week-dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--k-solid, var(--line)); opacity: .7; }
+.week-at { flex: none; font: .75rem var(--mono); color: var(--muted); }
+.week-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.week-row .due { flex: none; }
 @media (hover: none) { .remove { opacity: .7; } }
 
 /* Inbox (通知): a list of what needs you on the left, the chosen item on the right. */
@@ -388,6 +420,8 @@ html.desktop .topbar button, html.desktop .alf-head button { -webkit-app-region:
   .inbox-list { border-right: 0; padding: 4px 8px 24px; }
   .chips { flex-wrap: nowrap; overflow-x: auto; }
   .chip { flex: none; }
+  /* In a row that scrolls sideways the week's chip leads, or it would sit out of sight at the end. */
+  .chip-view { order: -1; margin-left: 0; }
   .alfred { position: fixed; inset: 0; z-index: 30; border: 0; padding-top: env(safe-area-inset-top, 0px); }
   .nav { position: fixed; inset: 0 auto 0 0; width: min(300px, 86vw); z-index: 32; padding-top: calc(14px + env(safe-area-inset-top, 0px)); box-shadow: 0 0 40px #0006; }
   .scrim { display: block; position: fixed; inset: 0; z-index: 31; background: #00000040; }

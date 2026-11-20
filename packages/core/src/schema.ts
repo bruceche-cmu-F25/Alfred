@@ -241,4 +241,28 @@ INSERT INTO core_presence (id, active_at, active_seq, away_at, away_seq)
 ALTER TABLE core_conversations ADD COLUMN commands TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(commands) AND json_type(commands) = 'array');
 ALTER TABLE core_devices ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scopes) AND json_type(scopes) = 'array');
 `,
+}, {
+  // A second automation Alfred ships with (automation-templates.ts): picking todos out of mail. The templates a row
+  // may name are in the table's own check, which SQLite cannot change in place, so the table is made again.
+  id: "core:14",
+  sql: `
+CREATE TABLE core_automations_next (
+  id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 64),
+  name TEXT CHECK (name IS NULL OR length(name) BETWEEN 1 AND 60),
+  template TEXT CHECK (template IS NULL OR template IN ('brief', 'mail_todos')),
+  goal TEXT CHECK (goal IS NULL OR length(goal) BETWEEN 1 AND 2000),
+  schedule TEXT NOT NULL CHECK (json_valid(schedule) AND json_type(schedule) = 'object'),
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  conversation_id TEXT,
+  last_slot TEXT,
+  last_run_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (template IS NOT NULL OR (name IS NOT NULL AND goal IS NOT NULL))
+) STRICT;
+INSERT INTO core_automations_next (id, name, template, goal, schedule, enabled, conversation_id, last_slot, last_run_id, created_at, updated_at)
+  SELECT id, name, template, goal, schedule, enabled, conversation_id, last_slot, last_run_id, created_at, updated_at FROM core_automations;
+DROP TABLE core_automations;
+ALTER TABLE core_automations_next RENAME TO core_automations;
+`,
 }];

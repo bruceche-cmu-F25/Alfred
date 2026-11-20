@@ -69,7 +69,7 @@ test("runs use reversible tools directly; deleting asks the user, naming the tod
   const w = world();
   const { todo } = addTodo(w, { title: "Old receipt" });
   const tools = runTools(w, [todoModule]);
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), ["todo_add", "todo_complete", "todo_delete", "todo_list", "todo_update"]);
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), ["todo_add", "todo_complete", "todo_delete", "todo_list", "todo_suggest", "todo_update"]);
   assert.deepEqual(tools.filter((tool) => tool.permission).map((tool) => tool.name), ["todo_delete"]);
   const remove = tools.find((tool) => tool.name === "todo_delete")!;
   assert.equal(remove.permission!({ id: todo.id }), "Delete the todo “Old receipt” for good? This can't be undone.");

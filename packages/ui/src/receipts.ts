@@ -11,6 +11,7 @@ export function describeReceipt(event: CoreEvent): string {
   const title = typeof event.payload.title === "string" ? event.payload.title : "";
   switch (event.kind) {
     case "todo.added": return t("rcpt.added", { title });
+    case "todo.suggested": return t("rcpt.suggested", { title });
     case "todo.completed": return t("rcpt.completed", { title });
     case "todo.deleted": return t("rcpt.deleted", { title });
     case "todo.updated": {

@@ -23,6 +23,7 @@ import { GoogleConnections } from "./google.ts";
 import { createCredentialStore, McpConnectors, ModelAccounts } from "@alfred/engine-pi";
 import { recordDomainEvent } from "@alfred/core";
 import { defaultSecretStore } from "./secrets.ts";
+import { watchTodoSources } from "./todo-sources.ts";
 
 const MODULES = [todoModule, calendarModule, mailModule];
 const log = (message: string) => console.log(`[alfred] ${message}`);
@@ -81,6 +82,8 @@ if (command === "serve") {
   remote.events.on("revoked", (id) => { push.unsubscribe(id); home.outlets.forget(id); });
   // The phones' notifications: one more outlet the home node's attention can hand a notice to.
   home.reach(() => push.reaches());
+  // Calendar events become todos by themselves (which ones is the user's choice, on the Todos page).
+  const stopTodoSources = watchTodoSources(home.world, calendarModule, log);
   // Speech to text for every device; the model loads when someone starts talking.
   const voice = new Transcriber({ log });
   const server = createHttpServer(home, { port, uiDir: defaultUiDir(), log, google, models, mcp, remote, push, voice });
@@ -104,6 +107,7 @@ if (command === "serve") {
   });
   ingress.on("error", (error: NodeJS.ErrnoException) => log(`ingress port ${ingressPort} unavailable (${error.code ?? error.message}); other devices cannot connect`));
   const stop = async () => {
+    stopTodoSources();
     voice.close();
     google.close();
     models.close();

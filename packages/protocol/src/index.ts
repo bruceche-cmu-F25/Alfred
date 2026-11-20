@@ -444,7 +444,7 @@ export interface Automation {
   id: string;
   /** Null for a template (the morning brief), which is named in the user's language. */
   name: string | null;
-  template: "brief" | null;
+  template: "brief" | "mail_todos" | null;
   /** What Alfred is told each time; null for a template. */
   goal: string | null;
   schedule: Schedule;

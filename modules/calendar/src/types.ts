@@ -27,6 +27,9 @@ export interface CalendarEvent {
   editable: boolean;
   /** An invitation the user can answer. */
   invited: boolean;
+  /** One time of an event that repeats: what names the repeating event, the same for all its times. (Not the
+   * colour's "series", which is events of one title.) */
+  recurring?: string;
 }
 
 /** One connected account's calendars, and how its last read went. */

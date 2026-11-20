@@ -88,7 +88,8 @@ function soonest(state: StateResponse) {
 /** Counts the todo page and its lines share. A range running today counts as due today. */
 function todoCounts(snapshot: unknown) {
   const { todos = [], today = "" } = (snapshot as TodoSnapshot | undefined) ?? {};
-  const open = todos.filter((todo) => !todo.done);
+  // Alfred's suggestions are not todos until the user keeps them.
+  const open = todos.filter((todo) => !todo.done && !todo.suggested);
   const runsToday = (todo: (typeof open)[number]) => !!todo.due && (todo.due === today || (!!todo.startDate && todo.startDate <= today && todo.due >= today));
   return {
     open: open.length,
@@ -136,7 +137,7 @@ const PAGES: PageDef[] = [
   },
   {
     key: "todo.list", get title() { return t("page.todos"); }, icon: "todo", k: "blue", group: "work",
-    badge: (snapshot) => (snapshot as TodoSnapshot | undefined)?.todos.filter((todo) => !todo.done).length,
+    badge: (snapshot) => (snapshot as TodoSnapshot | undefined)?.todos.filter((todo) => !todo.done && !todo.suggested).length,
     summary: (snapshot) => {
       const { open, late } = todoCounts(snapshot);
       return open ? t("page.todos.open", { n: open }) + (late ? t("page.todos.late", { n: late }) : "") : t("page.todos.allDone");
@@ -152,7 +153,7 @@ const PAGES: PageDef[] = [
       if (!open) return [];
       return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
-    render: ({ snapshot, fresh, areas }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} />,
+    render: ({ snapshot, fresh, areas, state }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} automations={state.automations} />,
   },
   {
     key: "mail.inbox", get title() { return t("page.mail"); }, icon: "mail", k: "teal", group: "modules",

@@ -50,7 +50,7 @@ function fakeGoogle(events: Record<string, unknown[]>, options: { fail?: Service
 test("a sync mirrors the shown calendars of each account that may read them, and says so only when something changed", async () => {
   const w = world();
   const google = fakeGoogle({
-    "me@example.com": [{ id: "a", summary: "Dentist", start: { dateTime: at(19, 15) }, end: { dateTime: at(19, 16) } }],
+    "me@example.com": [{ id: "a", summary: "Dentist", start: { dateTime: at(19, 15) }, end: { dateTime: at(19, 16) }, recurringEventId: "checkups" }],
     team: [{ id: "b", summary: "Offsite", start: { date: "2026-11-20" }, end: { date: "2026-11-21" } }],
   });
   await syncCalendar(w, { google }, undefined, NOW);
@@ -58,6 +58,7 @@ test("a sync mirrors the shown calendars of each account that may read them, and
   assert.ok(!google.calls.some((call) => call.includes("holidays")), "calendars the user hides in Google are left out");
   const snapshot = calendarModule.snapshot!(w) as CalendarSnapshot;
   assert.deepEqual(snapshot.events.map((event) => [event.title, event.calendar, event.k]), [["Dentist", "me@example.com", "blue"], ["Offsite", "Team", "green"]]);
+  assert.deepEqual(snapshot.events.map((event) => event.recurring), ["me@example.com:checkups", undefined], "one time of an event that repeats says which");
   assert.equal(snapshot.sources[0].error, null);
   assert.equal(synced(w).length, 1);
 

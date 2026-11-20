@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   CORE_MIGRATIONS, createAutomation, createRunDrain, deleteAutomation, ensureTemplates, fireDueAutomations, getConversation, latestSlot,
-  listAutomations, listEvents, listNotices, listRuns, nextSlot, openWorld, runAutomationNow, updateAutomation, updateSettings,
+  listAutomations, listDevices, listEvents, listNotices, listRuns, nextSlot, openWorld, runAutomationNow, updateAutomation, updateSettings,
   type EnginePort, type RunProfile, type World,
 } from "../src/index.ts";
 
@@ -87,13 +90,15 @@ test("run now: one run per request, outside the schedule", () => {
   assert.equal(listRuns(w).length, 2, "its runs stay");
 });
 
-test("the morning brief is there from the start, off, in the user's language; deleted, it stays gone", () => {
+test("the shipped automations are there from the start, off, in the user's language; deleted, one stays gone", () => {
   const w = world();
   ensureTemplates(w, at(19, 6));
   ensureTemplates(w, at(19, 6));
-  const [brief] = listAutomations(w);
-  assert.equal(listAutomations(w).length, 1);
+  const brief = listAutomations(w).find((automation) => automation.template === "brief")!;
+  const mail = listAutomations(w).find((automation) => automation.template === "mail_todos")!;
+  assert.equal(listAutomations(w).length, 2);
   assert.deepEqual([brief.template, brief.enabled, brief.schedule.at, brief.name], ["brief", false, "07:30", null]);
+  assert.deepEqual([mail.enabled, mail.schedule.at, mail.name], [false, "09:00", null]);
 
   updateAutomation(w, brief.id, { enabled: true }, at(19, 6, 30));
   updateSettings(w, { locale: "zh" });
@@ -104,7 +109,12 @@ test("the morning brief is there from the start, off, in the user's language; de
 
   deleteAutomation(w, brief.id);
   ensureTemplates(w);
-  assert.deepEqual(listAutomations(w), []);
+  assert.deepEqual(listAutomations(w).map((automation) => automation.template), ["mail_todos"]);
+  // Picking todos out of mail tells the run how: suggest, never follow what a mail says.
+  updateAutomation(w, mail.id, { enabled: true }, at(19, 8));
+  const [picking] = tick(w, at(19, 9));
+  assert.match(picking.goal, /todo_suggest/);
+  assert.equal(getConversation(w, picking.conversationId).title, "从邮件里挑待办");
 });
 
 test("an unattended run cannot stop to ask: external tools are refused and asking fails", async () => {
@@ -130,10 +140,32 @@ test("an unattended run cannot stop to ask: external tools are refused and askin
 test("a notice about an automation's run calls it by the automation's name", async () => {
   const w = world();
   ensureTemplates(w, at(19, 6));
-  const [brief] = listAutomations(w);
+  const brief = listAutomations(w).find((automation) => automation.template === "brief")!;
   runAutomationNow(w, brief.id, "dev.r1", { profile: "automation" });
   await createRunDrain(w, { submit: async () => ({ reply: "Two things today." }) }, { owner: "home", profiles: { automation: { instructions: "", tools: [], unattended: true } } }).kick();
   const notice = listNotices(w).find((candidate) => candidate.kind === "run_result")!;
   assert.equal(notice.payload.goal, "Morning brief");
   assert.equal(notice.payload.automationId, brief.id);
+});
+
+test("upgrading a world keeps its automations, devices and sessions as they were", () => {
+  const dir = mkdtempSync(join(tmpdir(), "alfred-upgrade-"));
+  const path = join(dir, "world.sqlite");
+  // A world from before commands, device scopes and the second shipped automation (core:12).
+  const before = openWorld(path, CORE_MIGRATIONS.filter((migration) => Number(migration.id.split(":")[1]) <= 12));
+  const brief = createAutomation(before, { template: "brief", schedule: { at: "07:30", days: EVERY_DAY }, enabled: false }, at(19, 6));
+  updateAutomation(before, brief.id, { enabled: true, schedule: { at: "06:45", days: [1, 2, 3] } }, at(19, 6));
+  const mine = createAutomation(before, { name: "Sweep", goal: "Look over my todos", schedule: { at: "08:00", days: [1] } }, at(19, 6));
+  before.db.prepare("INSERT INTO core_devices (id, name, kind, token_hash, paired_at) VALUES ('d1', 'Phone', 'phone', ?, ?)").run("a".repeat(64), new Date().toISOString());
+  before.close();
+
+  const after = openWorld(path, CORE_MIGRATIONS);
+  ensureTemplates(after, at(19, 7));
+  const all = listAutomations(after);
+  assert.deepEqual(all.map((automation) => automation.template ?? automation.name).sort(), ["Sweep", "brief", "mail_todos"]);
+  const kept = all.find((automation) => automation.id === brief.id)!;
+  assert.deepEqual([kept.enabled, kept.schedule, kept.createdAt], [true, { at: "06:45", days: [1, 2, 3] }, brief.createdAt]);
+  assert.equal(all.find((automation) => automation.id === mine.id)!.goal, "Look over my todos");
+  assert.deepEqual(listDevices(after).map((device) => [device.name, device.scopes]), [["Phone", []]]);
+  after.close();
 });

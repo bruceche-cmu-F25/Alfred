@@ -13,6 +13,8 @@ export interface GoogleEvent {
   id?: string;
   etag?: string;
   status?: string;
+  /** On one time of a repeating event: the id of the event that repeats. */
+  recurringEventId?: string;
   summary?: string;
   location?: string;
   htmlLink?: string;
@@ -45,6 +47,8 @@ export interface EventRow {
   etag: string | null;
   /** The user organizes it (only then can it be moved for everyone). */
   organizerSelf: boolean;
+  /** `<calendar id>:<id of the repeating event>` when this is one time of an event that repeats. */
+  recurring: string | null;
 }
 
 export function addDays(date: string, days: number): string {
@@ -87,6 +91,7 @@ export function mapEvent(item: GoogleEvent, calendarId: string, calendar: string
     attendees: item.attendees?.length ?? 0,
     etag: item.etag?.slice(0, 200) ?? null,
     organizerSelf: !!item.organizer?.self || (!item.organizer && !item.attendees?.length),
+    recurring: item.recurringEventId ? `${calendarId}:${item.recurringEventId}`.slice(0, 300) : null,
   };
 }
 

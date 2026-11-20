@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import type { Area } from "@alfred/protocol";
-import type { TodoSnapshot } from "@alfred/module-todo/types";
+import type { Area, Automation } from "@alfred/protocol";
+import type { CalendarMode, TodoSnapshot } from "@alfred/module-todo/types";
 import { api } from "./api.ts";
 import { Linked, OutLink } from "./Linked.tsx";
 import { getLocale, t, type Key } from "./i18n/index.ts";
@@ -42,7 +42,87 @@ function groupOf(todo: Item, today: string): Group {
   return todo.due <= weekEnd(today) ? "week" : "later";
 }
 
+/** How an event that repeats weekly says so: "每周二、四 19:00", "Every Tue, Thu 19:00". Monday first. */
+type Repeat = NonNullable<NonNullable<Item["source"]>["repeat"]>;
+const mondayFirst = (day: number) => (day + 6) % 7;
+function repeatLabel(repeat: Repeat): string {
+  const names = t("todo.rep.days").split(",");
+  const days = [...repeat.days].sort((a, b) => mondayFirst(a) - mondayFirst(b)).map((day) => names[day]).join(t("todo.rep.join"));
+  return `${repeat.days.length >= 7 ? t("todo.rep.daily") : t("todo.rep.weekly", { days })}${repeat.at ? ` ${repeat.at}` : ""}`;
+}
+const weekdayOf = (date: string) => { const [y, m, d] = date.split("-").map(Number); return new Date(y, m - 1, d).getDay(); };
+
 const BY: Record<string, Key> = { "todo.added": "todo.by.added", "todo.completed": "todo.by.completed" };
+
+/** Where a todo came from, when the user did not write it: the calendar it is on, or the mail it was picked out of. */
+function Source({ todo }: { todo: Item }) {
+  const source = todo.source;
+  if (!source) return null;
+  const text = `${t(source.kind === "calendar" ? "todo.src.calendar" : "todo.src.mail")} · ${source.label}`;
+  return source.link
+    ? <OutLink className="todo-src" href={source.link}>{text}</OutLink>
+    : <span className="todo-src" title={text}>{text}</span>;
+}
+
+/** One of Alfred's suggestions: not a todo yet. Keep it, or drop it (it is not suggested again). */
+function SuggestedRow({ todo, today, onError }: { todo: Item; today: string; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const run = (op: string) => {
+    setBusy(true);
+    api.op(op, { id: todo.id, revision: todo.revision }).then((response) => {
+      const result = response.result as { error?: string } | null;
+      if (result && typeof result.error === "string") onError(result.error);
+    }).catch((reason: Error) => onError(reason.message)).finally(() => setBusy(false));
+  };
+  const due = dueLabel(todo, today);
+  return (
+    <li className="todo" data-suggested>
+      <div className="todo-body">
+        <span className="todo-title"><Linked text={todo.title} /></span>
+        <span className="todo-meta">
+          <Source todo={todo} />
+          {due && <span className="due">{due}</span>}
+        </span>
+      </div>
+      <button type="button" className="keep" disabled={busy} onClick={() => run("todo.accept")} aria-label={t("todo.keepIt", { title: todo.title })}>{t("todo.keep")}</button>
+      <button type="button" className="remove" disabled={busy} onClick={() => run("todo.delete")} aria-label={t("todo.dropIt", { title: todo.title })} title={t("todo.drop")}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+      </button>
+    </li>
+  );
+}
+
+const MODES: CalendarMode[] = ["off", "allday", "all"];
+
+/** What becomes a todo without the user writing it: calendar events (which ones), and what Alfred picks out of
+ * mail (an automation, switched on and off here and run on its schedule). */
+function Sources({ mode, picking, onError }: { mode: CalendarMode; picking?: Automation; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const act = (action: () => Promise<unknown>) => {
+    setBusy(true);
+    action().catch((reason: Error) => onError(reason.message)).finally(() => setBusy(false));
+  };
+  return (
+    <div className="todo-sources" role="group" aria-label={t("todo.sources")}>
+      <label>
+        <span>{t("todo.src.calendar")}</span>
+        <select className="tag area-pick" value={mode} disabled={busy} aria-label={t("todo.src.calendarWhich")}
+          onChange={(event) => act(() => api.op("todo.sources", { fromCalendar: event.target.value }))}>
+          {MODES.map((candidate) => <option key={candidate} value={candidate}>{t(`todo.src.cal.${candidate}` as Key)}</option>)}
+        </select>
+      </label>
+      {picking && (
+        <span className="todo-pick">
+          <span>{t("todo.src.mail")}</span>
+          <button type="button" className="switch" role="switch" aria-checked={picking.enabled} disabled={busy} aria-label={t("todo.src.mailPick")} title={t("todo.src.mailPick")}
+            onClick={() => act(() => api.updateAutomation(picking.id, { enabled: !picking.enabled }))} />
+          {picking.enabled && <span className="quiet">{picking.schedule.at}</span>}
+          <button type="button" className="pick-now" disabled={busy} onClick={() => act(() => api.runAutomation(picking.id))}>{t("todo.src.pickNow")}</button>
+        </span>
+      )}
+    </div>
+  );
+}
 
 function TodoRow({ todo, today, areas, fresh, onError }: { todo: Item; today: string; areas: Area[]; fresh: boolean; onError: (message: string) => void }) {
   const [busy, setBusy] = useState(false);
@@ -91,6 +171,8 @@ function TodoRow({ todo, today, areas, fresh, onError }: { todo: Item; today: st
           {todo.status === "doing" && !todo.done && <span className="tag" data-k="alfred">{t("todo.doing")}</span>}
           {due && <span className={overdue ? "due overdue" : "due"}>{due}</span>}
           {todo.plannedOn && !todo.done && <span className="due">{t("todo.planned", { date: todo.plannedOn.slice(5) })}</span>}
+          {todo.source?.repeat && !todo.done && <span className="todo-repeat">{repeatLabel(todo.source.repeat)}</span>}
+          <Source todo={todo} />
           {todo.changedBy && <span className="by" title={new Date(todo.changedBy.at).toLocaleString()}>{t(BY[todo.changedBy.kind] ?? "todo.by.changed")}</span>}
         </span>
       </div>
@@ -102,10 +184,64 @@ function TodoRow({ todo, today, areas, fresh, onError }: { todo: Item; today: st
   );
 }
 
+/** One event that repeats, on one of its weekdays. On the day of its next time it can be ticked off. */
+function WeekRow({ todo, next, today, areas, onError }: { todo: Item; next: boolean; today: string; areas: Area[]; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const complete = () => {
+    setBusy(true);
+    api.op("todo.complete", { id: todo.id, revision: todo.revision }).then((response) => {
+      const result = response.result as { error?: string } | null;
+      if (result && typeof result.error === "string") onError(result.error);
+    }).catch((reason: Error) => onError(reason.message)).finally(() => setBusy(false));
+  };
+  const area = areas.find((candidate) => candidate.id === todo.area);
+  return (
+    <li className="week-row" data-k={area?.k} data-next={next || undefined}>
+      {next
+        ? <button type="button" className="check" role="checkbox" aria-checked={false} disabled={busy} onClick={complete} aria-label={t("todo.check", { title: todo.title })}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 10.5l3 3 6-7" /></svg>
+          </button>
+        : <span className="week-dot" aria-hidden="true" />}
+      {todo.source?.repeat?.at && <span className="week-at">{todo.source.repeat.at}</span>}
+      <span className="week-title"><Linked text={todo.title} /></span>
+      {next && <span className="due">{dueLabel(todo, today)}</span>}
+    </li>
+  );
+}
+
+/** What repeats every week, by weekday, Monday first: the shape of a week, not a list of dates. What is on every
+ * day is said once, above the days. */
+function Week({ todos, today, areas, onError }: { todos: Item[]; today: string; areas: Area[]; onError: (message: string) => void }) {
+  const names = t("todo.weekdays").split(",");
+  const now = weekdayOf(today);
+  const byHour = (a: Item, b: Item) => (a.source?.repeat?.at ?? "").localeCompare(b.source?.repeat?.at ?? "") || a.title.localeCompare(b.title);
+  const daily = todos.filter((todo) => todo.source!.repeat!.days.length >= 7).sort(byHour);
+  const some = todos.filter((todo) => todo.source!.repeat!.days.length < 7);
+  return (
+    <div className="todo-week">
+      {daily.length > 0 && (
+        <section className="week-day" data-daily aria-label={t("todo.rep.daily")}>
+          <h3>{t("todo.rep.daily")}</h3>
+          <ul>{daily.map((todo) => <WeekRow key={todo.id} todo={todo} next today={today} areas={areas} onError={onError} />)}</ul>
+        </section>
+      )}
+      {[1, 2, 3, 4, 5, 6, 0].map((day) => {
+        const items = some.filter((todo) => todo.source!.repeat!.days.includes(day)).sort(byHour);
+        return (
+          <section className="week-day" key={day} data-today={day === now || undefined} data-empty={items.length ? undefined : true} aria-label={names[day]}>
+            <h3>{names[day]}</h3>
+            <ul>{items.map((todo) => <WeekRow key={todo.id} todo={todo} next={!!todo.due && weekdayOf(todo.due) === day} today={today} areas={areas} onError={onError} />)}</ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 const byDue = (a: Item, b: Item) => (a.due ?? "9999").localeCompare(b.due ?? "9999");
 
 /** The todo page: what is open, by when it is due, filterable by area. */
-export function Todos({ snapshot, fresh, areas }: { snapshot: TodoSnapshot; fresh: ReadonlySet<string>; areas: Area[] }) {
+export function Todos({ snapshot, fresh, areas, automations }: { snapshot: TodoSnapshot; fresh: ReadonlySet<string>; areas: Area[]; automations?: Automation[] }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
   const [filter, setFilter] = useState<string>("all");
@@ -113,9 +249,12 @@ export function Todos({ snapshot, fresh, areas }: { snapshot: TodoSnapshot; fres
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
+  const [view, setView] = useState<"list" | "week">("list");
   const { today, todos } = snapshot;
 
-  const open = todos.filter((todo) => !todo.done);
+  // A suggestion is not a todo until it is kept: it is drawn apart and counted nowhere.
+  const suggested = todos.filter((todo) => todo.suggested && !todo.done);
+  const open = todos.filter((todo) => !todo.done && !todo.suggested);
   const shown = (todo: Item) => filter === "all" || (filter === "none" ? !todo.area : todo.area === filter);
   const chips = useMemo(() => {
     const used = areas.filter((area) => open.some((todo) => todo.area === area.id) || filter === area.id);
@@ -129,6 +268,9 @@ export function Todos({ snapshot, fresh, areas }: { snapshot: TodoSnapshot; fres
   const groups = GROUPS.map(([group, label]) => [group, label, open.filter((todo) => shown(todo) && groupOf(todo, today) === group).sort(byDue)] as const);
   const done = todos.filter((todo) => todo.done && shown(todo)).sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? "")).slice(0, 30);
   const visibleOpen = open.filter(shown).length;
+  // What repeats weekly (one todo each, from the calendar) can also be seen as a week.
+  const weekly = open.filter((todo) => todo.source?.repeat?.days.length);
+  const week = view === "week" && weekly.length > 0;
 
   // New todos go into the area being looked at.
   useEffect(() => { setNewArea(areas.some((area) => area.id === filter) ? filter : ""); }, [filter, areas]);
@@ -151,13 +293,19 @@ export function Todos({ snapshot, fresh, areas }: { snapshot: TodoSnapshot; fres
         <h2>{t("todo.label")}</h2>
         <span className="count">{open.length}</span>
       </header>
-      {chips.length > 1 && (
+      {(chips.length > 1 || weekly.length > 0) && (
         <div className="chips" role="group" aria-label={t("todo.byArea")}>
-          {chips.map((chip) => (
+          {chips.length > 1 && chips.map((chip) => (
             <button type="button" key={chip.id} className="chip" aria-pressed={filter === chip.id} onClick={() => setFilter(chip.id)}>
               {chip.k && <span className="mark" data-k={chip.k} />}{chip.label}<span className="count">{chip.count}</span>
             </button>
           ))}
+          {weekly.length > 0 && (
+            <button type="button" className="chip chip-view" aria-pressed={week} onClick={() => setView(week ? "list" : "week")} title={t("todo.view.weekHint")}>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 9a5.5 5.5 0 0 1 9.6-3.4L15.5 7M15.5 3.5V7H12M15.5 11a5.5 5.5 0 0 1-9.6 3.4L4.5 13M4.5 16.5V13H8" /></svg>
+              {t("todo.view.week")}<span className="count">{weekly.length}</span>
+            </button>
+          )}
         </div>
       )}
       <form className="todo-add" onSubmit={add}>
@@ -169,9 +317,21 @@ export function Todos({ snapshot, fresh, areas }: { snapshot: TodoSnapshot; fres
         </select>
         <button type="submit" disabled={!title.trim() || adding}>{t("todo.add")}</button>
       </form>
+      <Sources mode={snapshot.settings?.fromCalendar ?? "allday"} picking={automations?.find((automation) => automation.template === "mail_todos")} onError={setError} />
       {error && <p className="problem small" role="alert">{error}</p>}
-      <div className="todo-groups">
-        {visibleOpen === 0 && <p className="quiet empty-list">{t(filter === "all" ? "todo.emptyAll" : "todo.emptyArea")}</p>}
+      {week && (
+        <div className="todo-groups">
+          {weekly.some(shown) ? <Week todos={weekly.filter(shown)} today={today} areas={areas} onError={setError} /> : <p className="quiet empty-list">{t("todo.emptyArea")}</p>}
+        </div>
+      )}
+      <div className="todo-groups" hidden={week}>
+        {suggested.length > 0 && (
+          <div className="todo-group" data-group="suggested">
+            <h3>{t("todo.g.suggested")}<span className="count">{suggested.length}</span></h3>
+            <ul>{suggested.map((todo) => <SuggestedRow key={todo.id} todo={todo} today={today} onError={setError} />)}</ul>
+          </div>
+        )}
+        {visibleOpen === 0 && suggested.length === 0 && <p className="quiet empty-list">{t(filter === "all" ? "todo.emptyAll" : "todo.emptyArea")}</p>}
         {groups.map(([group, label, items]) => items.length > 0 && (
           <div className="todo-group" key={group} data-group={group}>
             <h3>{t(label)}<span className="count">{items.length}</span></h3>

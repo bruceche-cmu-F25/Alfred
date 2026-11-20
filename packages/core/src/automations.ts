@@ -15,7 +15,7 @@ import { recordDomainEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { submitRun, type Run, type RunState } from "./runs.ts";
 import { userLocale, type Locale } from "./settings.ts";
-import { AUTOMATION_TEMPLATES, TEMPLATE_TEXT, type AutomationTemplate } from "./automation-templates.ts";
+import { AUTOMATION_TEMPLATES, TEMPLATE_SCHEDULE, TEMPLATE_TEXT, type AutomationTemplate } from "./automation-templates.ts";
 import type { World } from "./world.ts";
 
 /** Every day is all seven; weekdays are 1 (Monday) to 7 (Sunday). */
@@ -258,8 +258,11 @@ export function runAutomationNow(world: World, id: string, requestId: string, op
   return fire(world, getAutomation(world, id), { requestId: `auto-now:${requestId}`, slot: null, profile: options.profile, now: options.now ?? Date.now() });
 }
 
-/** The morning brief is there from the start, switched off, until the user has deleted it once. */
+/** The automations Alfred ships with (the morning brief, todos from mail) are there from the start, switched off;
+ * one the user has deleted is not made again. */
 export function ensureTemplates(world: World, now: number = Date.now()): void {
-  const made = world.db.prepare("SELECT 1 FROM core_events WHERE kind = 'automation.created' AND json_extract(payload, '$.template') = 'brief' LIMIT 1").get();
-  if (!made) withDefaultActor("system", () => createAutomation(world, { template: "brief", schedule: { at: "07:30", days: [1, 2, 3, 4, 5, 6, 7] }, enabled: false }, now));
+  const made = world.db.prepare("SELECT 1 FROM core_events WHERE kind = 'automation.created' AND json_extract(payload, '$.template') = ? LIMIT 1");
+  for (const template of AUTOMATION_TEMPLATES) {
+    if (!made.get(template)) withDefaultActor("system", () => createAutomation(world, { template, schedule: TEMPLATE_SCHEDULE[template], enabled: false }, now));
+  }
 }

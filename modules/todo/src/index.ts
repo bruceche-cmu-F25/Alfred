@@ -1,7 +1,8 @@
 import { AREAS, areaName, lastChanges, localDate, userLocale, type World } from "@alfred/core";
 import { defineModule, defineOp, defineTool, Type } from "@alfred/module-kit";
 import {
-  addTodo, completeTodo, deleteTodo, formatTodo, listTodos, MIGRATIONS, resolveTodo, todoRevision, updateTodo, type Todo,
+  acceptTodo, addTodo, completeTodo, deleteTodo, formatTodo, getTodoSettings, listTodos, MIGRATIONS, resolveTodo, setTodoSettings, suggestTodo, todoRevision,
+  updateTodo, type Todo,
 } from "./domain.ts";
 import type { TodoSnapshot } from "./types.ts";
 
@@ -56,6 +57,7 @@ function snapshot(world: World): TodoSnapshot {
   const changes = lastChanges(world, "todo:");
   return {
     today: localDate(),
+    settings: getTodoSettings(world),
     todos: listTodos(world, { includeDone: true }).map((todo) => {
       const last = changes.get(`todo:${todo.id}`);
       return { ...todo, revision: todoRevision(todo), ...(last?.actor === "alfred" ? { changedBy: { actor: "alfred" as const, kind: last.kind, at: last.at } } : {}) };
@@ -93,6 +95,8 @@ export const todoModule = defineModule({
     "A todo has a due date, never a time. Resolve relative dates (\"Friday\", \"tomorrow\") against the local date you were given.",
     "For a task spanning several days, set startDate to its first day and due to its last day: one ranged todo, not one per day.",
     "Before editing or completing a todo you have not seen in this run, call todo_list to find its id.",
+    "todo_suggest is for something you found yourself, in a mail, that the user did not ask you to add: it waits on the Todos page as a suggestion for them to keep or drop. When the user asks for a todo, use todo_add.",
+    "Todos marked \"from the calendar\" follow the user's calendar by themselves; do not add a todo for a calendar event.",
     `Set a todo's area when it is clear which part of life it belongs to (${AREAS.map((area) => area.id).join(", ")}); leave it out when unsure.`,
   ].join("\n"),
 
@@ -122,6 +126,18 @@ export const todoModule = defineModule({
       name: "todo.complete",
       input: Type.Object({ id: Type.String(), revision: Type.Optional(Type.String()) }),
       run: (world, input) => completeTodo(world, input),
+    }),
+    defineOp({
+      // The user keeps one of Alfred's suggestions.
+      name: "todo.accept",
+      input: Type.Object({ id: Type.String(), revision: Type.Optional(Type.String()) }),
+      run: (world, input) => acceptTodo(world, input),
+    }),
+    defineOp({
+      // What becomes a todo by itself: which calendar events.
+      name: "todo.sources",
+      input: Type.Object({ fromCalendar: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("allday"), Type.Literal("all")])) }),
+      run: (world, input) => setTodoSettings(world, input),
     }),
     defineOp({
       // Permanent. A device's explicit delete is the user's own decision; a run must ask first, every time (todo_delete).
@@ -161,6 +177,33 @@ export const todoModule = defineModule({
         try {
           const { todo, open } = addTodo(world, params);
           return `Added ${formatTodo(todo)}\n${open} open todo(s).`;
+        } catch (error) {
+          return message(error);
+        }
+      },
+    }),
+    defineTool({
+      name: "todo_suggest", label: "Suggest todo", level: "local",
+      description: [
+        "Suggest a todo you picked out of one of the user's mails: something that mail asks the user to do, or a deadline it sets for them.",
+        "It appears on the Todos page marked as your suggestion, with the mail it came from, and becomes a todo only if the user keeps it.",
+        "One suggestion per mail and thing to do; a mail already suggested from, or one the user said no to, is refused.",
+      ].join(" "),
+      parameters: Type.Object({
+        title: Type.String({ maxLength: 200, description: "What the user has to do, as a short todo in their language (not the mail's subject)" }),
+        due: DateField("The date it has to be done by, as YYYY-MM-DD in the user's local timezone, when the mail gives one"),
+        area: AreaField,
+        mailId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$", description: "The message's id, from mail_list" }),
+        subject: Type.String({ maxLength: 200, description: "The message's subject, as mail_list gave it" }),
+      }),
+      describe: (_world, params) => params.title,
+      execute(world, params) {
+        try {
+          const result = suggestTodo(world, {
+            title: params.title, due: params.due, area: params.area,
+            source: { kind: "mail", ref: `mail:${params.mailId}`, label: params.subject || params.title },
+          });
+          return failed(result) ? result.error : `Suggested ${formatTodo(result)}`;
         } catch (error) {
           return message(error);
         }
