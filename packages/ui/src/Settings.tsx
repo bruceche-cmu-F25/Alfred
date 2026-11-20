@@ -12,6 +12,7 @@ import { api } from "./api.ts";
 import { Logo } from "./brand/Logo.tsx";
 import { Devices } from "./Devices.tsx";
 import { ModelSettings } from "./ModelSettings.tsx";
+import { Connectors } from "./Connectors.tsx";
 import { setLocale, t, useLocale, type Key, type Locale } from "./i18n/index.ts";
 import { origin, setAppearance, useAppearance, type Appearance } from "./scheme.ts";
 import "./settings.css";
@@ -256,6 +257,8 @@ export function Settings() {
 
       {/* Signing in to models, like accounts, happens only on the Mac that holds the credentials. */}
       {remote?.local !== false && <ModelSettings />}
+      {/* Connectors too: their tokens and secrets are the home node's. */}
+      {remote?.local !== false && <Connectors />}
     </div>
   );
 }

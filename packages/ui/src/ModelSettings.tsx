@@ -5,7 +5,7 @@
  * settings, used by any conversation that has not chosen its own.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EngineModel, ModelAccountsResponse, ModelAuthMethod, ModelProvider, ModelSignIn, StateResponse, ThinkingLevel } from "@alfred/protocol";
+import type { EngineModel, ModelAccountsResponse, ModelAuthMethod, ModelProvider, ModelSignIn, ModelUsage, ModelUsageResponse, ModelUsageWindow, StateResponse, ThinkingLevel } from "@alfred/protocol";
 import { api } from "./api.ts";
 import { Logo, providerMark } from "./brand/Logo.tsx";
 import { t } from "./i18n/index.ts";
@@ -24,6 +24,25 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 const host = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 const dismissedPi = () => { try { return localStorage.getItem(PI_DISMISSED) === "1"; } catch { return false; } };
 
+/** "5 hours", "Week", "Opus · Week": what a usage window covers. */
+function windowName(window: ModelUsageWindow): string {
+  const { minutes } = window;
+  const length = minutes === undefined ? t("models.usage.plan")
+    : minutes === 10_080 ? t("models.usage.week")
+    : minutes % 1440 === 0 ? t("models.usage.days", { n: minutes / 1440 })
+    : minutes % 60 === 0 ? t("models.usage.hours", { n: minutes / 60 })
+    : t("models.usage.minutes", { n: minutes });
+  return window.scope ? `${window.scope} · ${length}` : length;
+}
+/** "in 3 h", "4 天后": until a window resets. */
+function untilReset(at: number, now: number): string {
+  const minutes = Math.max(1, Math.round((at - now) / 60_000));
+  const span = minutes < 60 ? t("models.usage.minutes", { n: minutes })
+    : minutes < 48 * 60 ? t("models.usage.hours", { n: Math.round(minutes / 60) })
+    : t("models.usage.days", { n: Math.round(minutes / 1440) });
+  return t("models.usage.resets", { span });
+}
+
 type Said = { kind: "done" | "signedOut"; name: string } | { kind: "imported"; n: number };
 
 export function ModelSettings() {
@@ -37,12 +56,21 @@ export function ModelSettings() {
   const [showAll, setShowAll] = useState(false);
   const [piHidden, setPiHidden] = useState(dismissedPi);
   const [copied, setCopied] = useState(false);
+  const [usage, setUsage] = useState<Map<string, ModelUsage>>(new Map());
+  const [checking, setChecking] = useState(false);
   const opened = useRef(new Set<string>());
 
+  const loadUsage = useCallback((fresh = false) => {
+    setChecking(true);
+    call<ModelUsageResponse>(`/api/connections/models/usage${fresh ? "?fresh=1" : ""}`)
+      .then((response) => setUsage(new Map(response.usage.map((item) => [item.provider, item]))), () => {})
+      .finally(() => setChecking(false));
+  }, []);
   const load = useCallback(() => {
     call<ModelAccountsResponse>("/api/connections/models").then(setData, (reason: Error) => setError(reason.message));
     api.models().then((response) => setModels(response.models), () => setModels([]));
-  }, []);
+    loadUsage();
+  }, [loadUsage]);
   useEffect(() => {
     load();
     call<StateResponse>("/api/state").then((state) => setPreferred({ model: state.settings.model ?? null, thinking: state.settings.thinking ?? null }), () => {});
@@ -92,6 +120,7 @@ export function ModelSettings() {
     setError(null);
     call<ModelAccountsResponse>(`/api/connections/models/${provider.id}/logout`, {}).then((next) => {
       setData(next);
+      loadUsage();
       setSaid({ kind: "signedOut", name: provider.name });
       api.models().then((response) => setModels(response.models), () => {});
     }, (reason: Error) => setError(reason.message));
@@ -186,6 +215,39 @@ export function ModelSettings() {
     );
   };
 
+  /** How much of the plan is used, under a signed-in subscription's row. */
+  const usageOf = (provider: ModelProvider) => {
+    const item = usage.get(provider.id);
+    if (!item) return null;
+    const now = Date.now();
+    const refresh = (
+      <button type="button" className="usage-refresh" disabled={checking} onClick={() => loadUsage(true)}>
+        {checking ? t("models.usage.checking") : t("models.usage.refresh")}
+      </button>
+    );
+    if (item.status === "failed") {
+      return <div className="usage"><p className="usage-note small">{t(`models.usage.${item.error ?? "unreachable"}`)}{refresh}</p></div>;
+    }
+    return (
+      <div className="usage">
+        {item.windows.map((window) => {
+          const level = window.used >= 90 ? "high" : window.used >= 70 ? "mid" : "low";
+          return (
+            <div className="usage-row" key={window.id}>
+              <span className="usage-name">{windowName(window)}</span>
+              <span className="usage-bar" data-level={level} role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(window.used)} aria-label={windowName(window)}>
+                <span style={{ width: `${window.used}%` }} />
+              </span>
+              <span className="usage-pct" data-level={level}>{Math.round(window.used)}%</span>
+              <span className="usage-reset">{window.resetsAt && window.resetsAt > now ? untilReset(window.resetsAt, now) : ""}</span>
+            </div>
+          );
+        })}
+        <p className="usage-note small">{item.plan ? t("models.usage.planName", { plan: item.plan }) : ""}{refresh}</p>
+      </div>
+    );
+  };
+
   const busy = flow?.status === "running";
   const row = (provider: ModelProvider, kind: "subscription" | "key") => {
     const ours = provider.status.configured && provider.status.source === "alfred";
@@ -217,6 +279,7 @@ export function ModelSettings() {
             )}
           </span>
         </div>
+        {kind === "subscription" && (provider.status.method === "oauth") && usageOf(provider)}
         {flowCard(provider)}
       </div>
     );

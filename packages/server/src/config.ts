@@ -11,7 +11,9 @@ export function defaultDataDir(): string {
   return join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "alfred");
 }
 
-/** The built interface, next to this package in the workspace. */
+/** The built interface, next to this package in the workspace (or where ALFRED_UI_DIR says, to try a build that
+ * is not the one in use). */
 export function defaultUiDir(): string {
+  if (process.env.ALFRED_UI_DIR) return resolve(process.env.ALFRED_UI_DIR);
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "ui", "dist");
 }

@@ -14,8 +14,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { ModelAccountsResponse, ModelAuthMethod, ModelProvider, ModelSignIn, ModelSignInPrompt } from "@alfred/protocol";
+import type { ModelAccountsResponse, ModelAuthMethod, ModelProvider, ModelSignIn, ModelSignInPrompt, ModelUsage, ModelUsageResponse } from "@alfred/protocol";
 import type { Credential, CredentialStore } from "./credentials.ts";
+import { hasUsage, readUsage, type UsageProvider } from "./usage.ts";
 
 type Interaction = Parameters<ModelRuntime["login"]>[2];
 type AuthPrompt = Parameters<Interaction["prompt"]>[0];
@@ -39,7 +40,11 @@ export interface ModelAccountsOptions {
   /** Called after each change, for the world's audit trail. */
   onChange?(kind: "signed_in" | "signed_out" | "imported", provider: string, detail: Record<string, unknown>): void;
   log?(message: string): void;
+  /** For reading subscription usage; tests pass their own. */
+  fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 }
+
+const USAGE_CACHE_MS = 60_000;
 
 interface Flow {
   state: ModelSignIn;
@@ -55,6 +60,7 @@ export class ModelAccounts {
   private readonly options: ModelAccountsOptions;
   private readonly piAgentDir: string;
   private readonly flows = new Map<string, Flow>();
+  private readonly usageCache = new Map<string, { at: number; value: Promise<ModelUsage> }>();
 
   constructor(options: ModelAccountsOptions) {
     this.options = options;
@@ -234,6 +240,31 @@ export class ModelAccounts {
       this.options.onChange?.("imported", providerId, { from: "pi" });
     }
     return this.describe();
+  }
+
+  /** How much of each signed-in subscription's plan is used. Each provider is asked at most once a minute unless
+   * `fresh`; Pi refreshes an expiring token on the way (into Alfred's store, like a worker would). */
+  async usage(fresh = false): Promise<ModelUsageResponse> {
+    const signedIn = (await this.options.store.list()).filter((info) => info.type === "oauth" && hasUsage(info.providerId)).map((info) => info.providerId as UsageProvider);
+    for (const providerId of this.usageCache.keys()) if (!signedIn.includes(providerId as UsageProvider)) this.usageCache.delete(providerId);
+    if (!signedIn.length) return { usage: [] };
+    const runtime = await this.runtime();
+    const usage = await Promise.all(signedIn.map((providerId) => {
+      const cached = this.usageCache.get(providerId);
+      if (cached && !fresh && Date.now() - cached.at < USAGE_CACHE_MS) return cached.value;
+      const value = (async (): Promise<ModelUsage> => {
+        const resolved = await runtime.getAuth(providerId).catch(() => undefined);
+        // Most give the token as a key; Kimi gives it as an Authorization header.
+        const header = resolved?.auth.headers?.Authorization ?? resolved?.auth.headers?.authorization;
+        const token = resolved?.auth.apiKey ?? (typeof header === "string" ? /^Bearer\s+(.+)$/i.exec(header)?.[1] : undefined);
+        return token ? readUsage(providerId, token, this.options.fetch) : { provider: providerId, status: "failed", checkedAt: Date.now(), windows: [], error: "rejected" };
+      })();
+      this.usageCache.set(providerId, { at: Date.now(), value });
+      // A failure is not kept: the next look asks again.
+      void value.then((result) => { if (result.status === "failed") this.usageCache.delete(providerId); });
+      return value;
+    }));
+    return { usage };
   }
 
   close(): void {

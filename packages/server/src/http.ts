@@ -32,7 +32,7 @@ import { command, profileFor } from "./commands.ts";
 import { handleConnections } from "./connections-http.ts";
 import { workspaceChanges, workspaceDiff, type ChangedFile } from "./workspace.ts";
 import type { GoogleConnections } from "./google.ts";
-import type { ModelAccounts } from "@alfred/engine-pi";
+import type { McpConnectors, ModelAccounts } from "@alfred/engine-pi";
 import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
 import type { PushService } from "./push.ts";
 import { MAX_VOICE_BYTES, type Transcriber } from "./voice.ts";
@@ -513,6 +513,8 @@ export interface ServeOptions {
   google?: GoogleConnections;
   /** Model providers and signing in to them (`/api/connections/models`); left out, those routes are 404. */
   models?: ModelAccounts;
+  /** Connectors, the MCP servers runs can use (`/api/connections/mcp`); left out, those routes are 404. */
+  mcp?: McpConnectors;
   /** Remote access and devices (`/api/remote`, `/api/devices`, `/api/pair`); left out, those routes are 404. */
   remote?: RemoteAccess;
   /** Push notifications to paired devices (`/api/push`). */
@@ -572,8 +574,8 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
       }
     }
     if (path === "/api/voice" || path.startsWith("/api/voice/")) return voiceRoute(options.voice, req, res, path);
-    if (path.startsWith("/api/connections") && (options.google || options.models)
-      && await handleConnections({ google: options.google, models: options.models }, req, res, url, options.log)) return;
+    if (path.startsWith("/api/connections") && (options.google || options.models || options.mcp)
+      && await handleConnections({ google: options.google, models: options.models, mcp: options.mcp }, req, res, url, options.log)) return;
     if (path === "/api/outlets") return outletRoute(home, peer, req, res);
     await route(home, peer, req, res, url);
   };

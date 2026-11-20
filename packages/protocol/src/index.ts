@@ -472,6 +472,7 @@ export interface UpdateAutomationRequest { requestId: string; patch: { name?: st
  *   POST /api/connections/models/flows/:id/cancel    -> ModelSignIn
  *   POST /api/connections/models/:provider/logout    -> ModelAccountsResponse
  *   POST /api/connections/models/import              { providers } -> ModelAccountsResponse (API keys from the user's Pi setup)
+ *   GET  /api/connections/models/usage               ModelUsageResponse (subscription limits; `?fresh=1` asks again now)
  */
 export type ModelAuthMethod = "oauth" | "api_key";
 export interface ModelProvider {
@@ -492,6 +493,32 @@ export interface ModelAccountsResponse {
   /** Subscriptions signed in to in Pi but not in Alfred: they are signed in again, not copied (one token cannot serve two programs). */
   piSubscriptions: Array<{ id: string; name: string }>;
 }
+/** One limit window of a subscription plan, as the provider reports it. */
+export interface ModelUsageWindow {
+  id: string;
+  /** Length of the window in minutes (300 = 5 hours, 10080 = a week); absent for a plan-wide quota. */
+  minutes?: number;
+  /** What the window covers when it is not everything, e.g. "Opus" or "Code review". */
+  scope?: string;
+  /** Percent used, 0–100. */
+  used: number;
+  /** When it resets, epoch ms. */
+  resetsAt?: number;
+}
+export interface ModelUsage {
+  provider: string;
+  status: "ready" | "failed";
+  /** When the provider was asked, epoch ms. */
+  checkedAt: number;
+  windows: ModelUsageWindow[];
+  /** The plan's name when the provider says it, e.g. "pro". */
+  plan?: string;
+  /** Why it could not be read: the sign-in was refused, the provider was not reached, or its answer was not understood. */
+  error?: "rejected" | "unreachable" | "unreadable";
+}
+/** GET /api/connections/models/usage (add `?fresh=1` to skip the minute-long cache): the signed-in subscriptions
+ * whose usage can be read. */
+export interface ModelUsageResponse { usage: ModelUsage[] }
 export type ModelSignInStep =
   | { kind: "open_url"; url: string; instructions?: string }
   | { kind: "device_code"; code: string; url: string; expiresIn?: number }
@@ -514,3 +541,63 @@ export interface ModelSignIn {
   prompt: ModelSignInPrompt | null;
   error?: string;
 }
+
+/** Connectors: the MCP servers Alfred's runs can use (docs/design/settings-and-connections.md §3.3). Only on the home
+ * node's machine, like every `/api/connections` route. No secret ever appears in a response.
+ *
+ *   GET  /api/connections/mcp                        McpConnectorsResponse (a server not looked at lately is `checking`: ask again)
+ *   POST /api/connections/mcp                        NewMcpConnector -> McpConnector (from the catalog, or the user's own)
+ *   POST /api/connections/mcp/:name/login            -> McpSignIn (open its `url` in the system browser)
+ *   GET  /api/connections/mcp/flows/:id              McpSignIn (poll while `waiting`)
+ *   POST /api/connections/mcp/flows/:id/cancel       -> McpSignIn
+ *   POST /api/connections/mcp/:name/logout           -> McpConnector (the sign-in is forgotten here)
+ *   POST /api/connections/mcp/:name/(enable|disable) -> McpConnector
+ *   POST /api/connections/mcp/:name/check            -> McpConnector (reaches the server now)
+ *   POST /api/connections/mcp/:name/remove           -> {}
+ *
+ * A connected server only offers its tools. A tool its server does not mark read-only still asks before every call.
+ */
+export interface McpConnector {
+  /** Its key in `mcp.json`, and the middle of its tools' names (`mcp__<name>__<tool>`). */
+  name: string;
+  title: string;
+  kind: "http" | "stdio";
+  /** Its address, or its command line. */
+  where: string;
+  /** The catalog entry it was added from. */
+  catalog?: string;
+  enabled: boolean;
+  /** How it is authorised: a sign-in in the browser, a token or other secret the user gave, or nothing. */
+  auth: "oauth" | "secret" | "none";
+  signedIn: boolean;
+  /** `checking`: not looked at yet. `needs_login`: it wants a sign-in. `off`: switched off by the user. */
+  state: "connected" | "needs_login" | "error" | "off" | "checking";
+  error?: string;
+  /** Its tools, and how many of them its server marks read-only (those run without asking). */
+  tools?: number;
+  readOnly?: number;
+}
+export interface McpCatalogItem {
+  id: string;
+  title: string;
+  url: string;
+  /** `oauth`: one click and a sign-in. `none`: no account. `token`: a token made at `tokenPage`, pasted once. */
+  auth: "oauth" | "none" | "token";
+  about: Record<Locale, string>;
+  tokenPage?: string;
+  /** Already among the user's connectors. */
+  added: boolean;
+}
+export interface McpConnectorsResponse { servers: McpConnector[]; catalog: McpCatalogItem[]; /** `mcp.json` could not be read. */ error?: string }
+/** From the catalog: `catalog` (and `token` when it takes one). The user's own: `name` with `url` or `command`;
+ * `headers` and `env` are secrets and are kept in the keychain. */
+export interface NewMcpConnector {
+  catalog?: string; token?: string;
+  name?: string; url?: string; command?: string; args?: string[];
+  headers?: Record<string, string>; env?: Record<string, string>;
+}
+export type McpSignIn =
+  | { id: string; server: string; status: "waiting"; url: string }
+  | { id: string; server: string; status: "done" }
+  | { id: string; server: string; status: "failed"; error: string }
+  | { id: string; server: string; status: "cancelled" };

@@ -3,8 +3,8 @@
  * returns a secret.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { ModelSignInError, type ModelAccounts } from "@alfred/engine-pi";
-import type { ConnectionsResponse, GoogleConnectRequest } from "@alfred/protocol";
+import { McpConnectorError, ModelSignInError, type McpConnectors, type ModelAccounts } from "@alfred/engine-pi";
+import type { ConnectionsResponse, GoogleConnectRequest, NewMcpConnector } from "@alfred/protocol";
 import { GoogleError, isGoogleCapability, type GoogleConnections } from "./google.ts";
 
 const MAX_BODY = 16 * 1024;
@@ -34,13 +34,56 @@ const FLOW = /^\/api\/connections\/flows\/([A-Za-z0-9_-]{1,32})(\/cancel)?$/;
 const MODEL_PROVIDER = /^\/api\/connections\/models\/([a-z0-9][a-z0-9._-]{0,63})\/(login|logout)$/;
 const MODEL_FLOW = /^\/api\/connections\/models\/flows\/([A-Za-z0-9_-]{1,32})(?:\/(answer|cancel))?$/;
 
+const MCP_FLOW = /^\/api\/connections\/mcp\/flows\/([A-Za-z0-9_-]{1,32})(\/cancel)?$/;
+const MCP_SERVER = /^\/api\/connections\/mcp\/([A-Za-z0-9_-]{1,64})\/(login|logout|enable|disable|check|remove)$/;
+
 /** What the connections routes can reach; each part's routes are 404 without it. */
-export interface Connections { google?: GoogleConnections; models?: ModelAccounts }
+export interface Connections { google?: GoogleConnections; models?: ModelAccounts; mcp?: McpConnectors }
+
+const texts = (value: unknown): Record<string, string> | undefined => {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Object.values(value).every((item) => typeof item === "string")) throw Object.assign(new Error("headers and env are names with text values"), { status: 400 });
+  return value as Record<string, string>;
+};
+
+/** Connectors (MCP servers): the list and the catalog, adding and removing, signing in. */
+async function mcpRoutes(mcp: McpConnectors, req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+  const method = req.method ?? "GET";
+  if (method === "GET" && path === "/api/connections/mcp") return send(res, 200, await mcp.describe()), true;
+  if (method === "POST" && path === "/api/connections/mcp") {
+    const body = await readJson(req);
+    const text = (key: string) => (typeof body[key] === "string" ? body[key] as string : undefined);
+    const input: NewMcpConnector = {
+      catalog: text("catalog"), token: text("token"), name: text("name"), url: text("url"), command: text("command"),
+      ...(Array.isArray(body.args) ? { args: body.args.filter((item): item is string => typeof item === "string") } : {}),
+      headers: texts(body.headers), env: texts(body.env),
+    };
+    return send(res, 200, await mcp.add(input)), true;
+  }
+  const flow = MCP_FLOW.exec(path);
+  if (flow && (method === "GET" ? !flow[2] : method === "POST" && !!flow[2])) {
+    if (method === "POST") await readJson(req);
+    const state = flow[2] ? mcp.cancel(flow[1]) : mcp.flow(flow[1]);
+    return send(res, state ? 200 : 404, state ?? { error: "No such sign-in (finished long ago, or the home node restarted)" }), true;
+  }
+  const server = MCP_SERVER.exec(path);
+  if (server && method === "POST") {
+    await readJson(req);
+    const [, name, action] = server;
+    if (action === "login") return send(res, 200, await mcp.login(name)), true;
+    if (action === "logout") return send(res, 200, await mcp.logout(name)), true;
+    if (action === "check") return send(res, 200, await mcp.check(name)), true;
+    if (action === "remove") { await mcp.remove(name); return send(res, 200, {}), true; }
+    return send(res, 200, await mcp.setEnabled(name, action === "enable")), true;
+  }
+  return false;
+}
 
 /** Model sign-in: providers, signing in and out, importing keys from Pi. */
-async function modelRoutes(models: ModelAccounts, req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+async function modelRoutes(models: ModelAccounts, req: IncomingMessage, res: ServerResponse, path: string, url: URL): Promise<boolean> {
   const method = req.method ?? "GET";
   if (method === "GET" && path === "/api/connections/models") return send(res, 200, await models.describe()), true;
+  if (method === "GET" && path === "/api/connections/models/usage") return send(res, 200, await models.usage(url.searchParams.get("fresh") === "1")), true;
   if (method === "POST" && path === "/api/connections/models/import") {
     const body = await readJson(req);
     const providers = Array.isArray(body.providers) ? body.providers.filter((item): item is string => typeof item === "string") : [];
@@ -79,10 +122,15 @@ export async function handleConnections(services: Connections, req: IncomingMess
   const path = url.pathname;
   if (!path.startsWith("/api/connections")) return false;
   const method = req.method ?? "GET";
-  const { google, models } = services;
+  const { google, models, mcp } = services;
   try {
+    if (path === "/api/connections/mcp" || path.startsWith("/api/connections/mcp/")) {
+      if (mcp && await mcpRoutes(mcp, req, res, path)) return true;
+      send(res, 404, { error: "Not found" });
+      return true;
+    }
     if (path.startsWith("/api/connections/models")) {
-      if (models && await modelRoutes(models, req, res, path)) return true;
+      if (models && await modelRoutes(models, req, res, path, url)) return true;
       send(res, 404, { error: "Not found" });
       return true;
     }
@@ -128,7 +176,9 @@ export async function handleConnections(services: Connections, req: IncomingMess
     }
     send(res, 404, { error: "Not found" });
   } catch (error) {
-    if (error instanceof ModelSignInError) {
+    if (error instanceof McpConnectorError) {
+      send(res, error.code === "missing" ? 404 : error.code === "exists" || error.code === "state" || error.code === "busy" ? 409 : 400, { error: error.message, code: error.code });
+    } else if (error instanceof ModelSignInError) {
       const status = error.code === "unknown_provider" || error.code === "missing" ? 404 : error.code === "busy" || error.code === "state" ? 409 : 400;
       send(res, status, { error: error.message, code: error.code });
     } else if (error instanceof GoogleError) {

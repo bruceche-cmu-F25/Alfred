@@ -178,7 +178,13 @@ Telegram 归到「连接器」里一个特殊条目（只能粘 token）。Robin
 1. **凭证存储和模型设置**：钥匙串存储、从 Pi 导入、`/api/auth` 登录转发、设置页的「模型与订阅」。做完 Alfred 就不依赖你的 Pi 配置了。
 2. **Google 连接**：先用高级选项（自带客户端）把流程、钥匙串、增量授权、撤销跑通，再换成内置客户端。
 3. **日历和邮件模块**用这个连接（工作台方案的 W6）。
-4. **连接器目录**：MCP 登录转发，精选列表。
+4. **连接器目录**【已实现，2026-11-19】：MCP 登录转发，精选列表。
+   - 主节点：`packages/engine-pi/src/connectors.ts`（`McpConnectors`：读写 `mcp.json`、探测状态、登录流程），目录在 `mcp-catalog.ts`（Notion、Linear、Sentry、Atlassian、Vercel 走浏览器登录；GitHub 贴令牌；Context7、DeepWiki、Hugging Face 不用账号；每条都在 2026-11-19 用未登录的 `initialize` 和授权服务器的元数据核实过）。路由 `/api/connections/mcp/*`，只许本机。
+   - 存储：`mcp-store.ts`。OAuth 状态在钥匙串条目 `mcp-oauth:<名字>`，用户给的请求头和环境变量在 `mcp-secret:<名字>`；`mcp.json` 里只在 `alfred` 键下记名字，交给 Pi 之前去掉这个键。
+   - 登录用 pi-mcp 的 `startMcpSignIn` / `completeMcpSignIn` 和它的本机回调；Alfred 以「Alfred」的名字向服务动态注册客户端。Pi 的 `McpOAuthCredentialStore` 没有从包里导出，所以引擎子进程不传 `credentials`，而是给 `createMcpExtension` 传自己的 `createTransport`：用 pi-mcp 的 `createMcpAuthProvider` 接钥匙串里的状态。
+   - 配置变了（加、删、开关、登录、登出）主节点会改 `<数据目录>/mcp.rev`；子进程把它和 `mcp.json` 一起算进会话的形状，下一轮自动重开会话。
+   - 界面：设置 →「连接器」。每行：状态（已连接 / 要登录 / 连不上 / 已关）、工具数、其中几个要先问。显示的网址和命令行会遮掉看起来像凭证的部分（做法参考 pi-web 的 Settings › MCP）。
+   - 没做的：把登录页转给别的设备（现在只在主节点那台机器上登录）；粘贴回调网址；从 Claude Desktop / Cursor 导入现成的配置（pi-web 有）；真的在浏览器里点完一次 OAuth 同意（流程走到了 Notion 的授权页，之后要你自己的账号）。
 5. **设备、通知、隐私**。
 
 ## 6. 这一轮不做

@@ -11,6 +11,9 @@
  * - Alfred's tools (todos and the rest), executed in the home node.
  * - MCP servers from Alfred's own `<config>/mcp.json` (same format as Pi's and
  *   Claude Desktop's), reached directly, through `tool_search` or `codemode`.
+ *   Their secrets and the tokens of the user's sign-ins come from Alfred's
+ *   secret store (mcp-store.ts), never from that file; signing in happens on
+ *   the home node (Settings), and a server that needs it is simply not reached.
  * - Skills from `<config>/skills/`, and the `read` tool to load them.
  * - In a development session (a job with a workspace): the session works in the
  *   project's folder, with `read`, `grep`, `find` and `ls`, and, unless the
@@ -33,7 +36,7 @@
  *   worker.ts --cwd <dir> --sessions <dir> --config <dir> [--agent-dir <dir>]
  */
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -43,7 +46,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { change, CHANGERS, countPatch, type Change } from "./changing.ts";
 import { LOOKERS, look, real } from "./looking.ts";
-import { loadAlfredMcpConfig } from "./mcp-config.ts";
+import { loadAlfredMcpConfig, mcpPath } from "./mcp-config.ts";
+import { createMcpTransport, createMcpVault, type McpSecrets } from "./mcp-store.ts";
 import type { ExternalStep, ModelInfo, RunJob, ToParent, ToWorker } from "./protocol.ts";
 import { commandAllowed, defaultSecretStore, normalizeCommand, simpleCommand } from "@alfred/core";
 import { createCredentialStore } from "./credentials.ts";
@@ -57,6 +61,12 @@ const agentDir = values["agent-dir"];
 // happens; a fresh runtime per session sees the latest. Custom models from Pi's models.json still apply.
 const modelOptions = { credentials: createCredentialStore({ secrets: defaultSecretStore(config), lockDir: config }), ...(agentDir ? { modelsPath: join(agentDir, "models.json") } : {}) };
 const skillsDir = join(config, "skills");
+// The secrets and sign-ins of MCP servers: the same store the home node writes when the user connects one.
+const mcpVault = createMcpVault({ secrets: defaultSecretStore(config), lockDir: config });
+const textOf = (path: string) => { try { return readFileSync(path, "utf8"); } catch { return ""; } };
+/** What the user's connectors are right now: the file, and the stamp the home node moves when a secret or a sign-in
+ * changes. A session opened with another answer is opened anew. */
+const mcpRevision = () => createHash("sha256").update(textOf(mcpPath(config))).update("\0").update(textOf(join(config, "mcp.rev"))).digest("hex");
 // Pi discovers extensions, skills and context files in an agent directory; Alfred's is empty on purpose.
 const resourcesDir = join(cwd, "resources");
 for (const dir of [cwd, resourcesDir, skillsDir]) mkdirSync(dir, { recursive: true });
@@ -262,7 +272,7 @@ async function open(job: RunJob): Promise<Warm> {
   // What the session is opened with. The commands allowed for the session are not part of it: they are read by the
   // gate each turn, so allowing one does not reopen the session.
   const place = job.workspace ? { root: job.workspace.root, name: job.workspace.name, mode: job.workspace.mode } : null;
-  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: place })).digest("hex");
+  const shape = createHash("sha256").update(JSON.stringify({ instructions: job.instructions, tools: job.tools, workspace: place, mcp: mcpRevision() })).digest("hex");
   const existing = warm.get(job.thread);
   if (existing && existing.shape === shape) return existing;
   if (existing) await close(job.thread);
@@ -272,6 +282,10 @@ async function open(job: RunJob): Promise<Warm> {
   const state: Warm = { session: null as unknown as AgentSession, shape, run: null, idle: null, mode: job.workspace?.mode ?? null, always: false, commands: new Set() };
   const definitions = alfredTools(state, job);
   const root = job.workspace ? real(job.workspace.root) : null;
+  // The servers, and each one's secrets, read once here: Pi asks for both without waiting.
+  const mcp = loadAlfredMcpConfig(config);
+  const mcpSecrets = new Map<string, McpSecrets>();
+  await Promise.all(mcp.servers.map(async (server) => { mcpSecrets.set(server.name, await mcpVault.secrets(server.name).catch(() => ({}))); }));
   const loader = new DefaultResourceLoader({
     // Resources are discovered in Alfred's own folder, never the project's: its .pi/ settings and extensions stay out.
     cwd,
@@ -289,7 +303,9 @@ async function open(job: RunJob): Promise<Warm> {
       createToolSearchExtension(),
       // Alfred's own servers, not the user's Pi configuration.
       createMcpExtension({
-        loadConfig: () => loadAlfredMcpConfig(config) as never,
+        loadConfig: () => mcp as never,
+        // Alfred's own connection: secrets and sign-in tokens from its secret store, not Pi's files.
+        createTransport: (entry, where) => createMcpTransport({ name: entry.name, config: entry.config as unknown as Record<string, unknown> }, { cwd: where, vault: mcpVault, secrets: mcpSecrets.get(entry.name) ?? {} }),
         logPath: join(cwd, "mcp.log"),
         startupWaitMs: 5000,
       }),
