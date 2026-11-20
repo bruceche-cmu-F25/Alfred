@@ -158,20 +158,7 @@ const PAGES: PageDef[] = [
       if (!open) return [];
       return late ? ["sug.todos.first", "sug.todos.late", "sug.todos.week"] : ["sug.todos.first", "sug.todos.week"];
     },
-    render: ({ snapshot, fresh, areas, state }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} automations={state.automations} />,
-  },
-  {
-    key: "link.list", get title() { return t("page.links"); }, icon: "link", k: "violet", group: "modules",
-    summary: (snapshot) => {
-      const clips = (snapshot as LinksSnapshot | undefined)?.clips ?? [];
-      return clips.length ? t("links.sum", { n: clips.length, unread: clips.filter((clip) => clip.state === "unread").length }) : t("links.sum.none");
-    },
-    headline: (snapshot) => {
-      const clips = (snapshot as LinksSnapshot | undefined)?.clips ?? [];
-      const unread = clips.filter((clip) => clip.state === "unread").length;
-      return unread ? t("head.links.unread", { n: unread }) : t("head.links.clear");
-    },
-    render: ({ snapshot, fresh, areas }) => <Links snapshot={snapshot as LinksSnapshot | undefined} fresh={fresh} areas={areas} />,
+    render: ({ snapshot, fresh, areas, state }) => <Todos snapshot={snapshot as TodoSnapshot} fresh={fresh} areas={areas} automations={state.automations} calendar={state.modules.calendar as CalendarSnapshot | undefined} />,
   },
   {
     key: "mail.inbox", get title() { return t("page.mail"); }, icon: "mail", k: "teal", group: "modules",
@@ -188,6 +175,19 @@ const PAGES: PageDef[] = [
     },
     suggestions: (snapshot) => unreadMail(snapshot).sources.length ? ["sug.mail.reply", "sug.mail.today", "sug.mail.important"] : [],
     render: ({ snapshot, state, line }) => <Mail snapshot={snapshot as MailSnapshot | undefined} state={state} line={line} />,
+  },
+  {
+    key: "link.list", get title() { return t("page.links"); }, icon: "link", k: "violet", group: "modules",
+    summary: (snapshot) => {
+      const clips = (snapshot as LinksSnapshot | undefined)?.clips ?? [];
+      return clips.length ? t("links.sum", { n: clips.length, unread: clips.filter((clip) => clip.state === "unread").length }) : t("links.sum.none");
+    },
+    headline: (snapshot) => {
+      const clips = (snapshot as LinksSnapshot | undefined)?.clips ?? [];
+      const unread = clips.filter((clip) => clip.state === "unread").length;
+      return unread ? t("head.links.unread", { n: unread }) : t("head.links.clear");
+    },
+    render: ({ snapshot, fresh, areas }) => <Links snapshot={snapshot as LinksSnapshot | undefined} fresh={fresh} areas={areas} />,
   },
   {
     key: "core.automations", get title() { return t("page.automations"); }, icon: "clock", k: "green", group: "modules",

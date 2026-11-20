@@ -137,12 +137,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* Under the top bar, which has the page's name: the contents start straight away. */
 .page:not([data-bare]) > .page-body:first-child { padding-top: 16px; }
-.page .todos { background: none; max-width: 760px; width: 100%; padding: 0 24px; }
+.page .todos { background: none; max-width: 1120px; width: 100%; padding: 0 24px; }
+.page .todos[data-view="week"] { max-width: 760px; }
 .page .panel-head { display: none; }
 @container page (max-width: 600px) {
   .page .todos { padding: 0 6px; }
-  .todo-add { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .todo-add input:first-child { grid-column: 1 / -1; }
 }
 
 /* Alfred: the figure, a line on what it is doing, and the conversation. */
@@ -279,7 +278,7 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 .pick:has(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 .composer-error { text-align: center; margin: -8px 0 12px; }
 
-/* Todos: open things grouped by when they are due, coloured by their area. */
+/* Todos: day by day with today beside the list, a board, or what repeats as a week; coloured by area. */
 .todos { min-height: 0; display: flex; flex-direction: column; }
 .panel-head { display: flex; align-items: baseline; gap: 10px; padding: 22px 20px 10px; }
 .panel-head h2 { font: 1.125rem/1.2 var(--serif); }
@@ -290,60 +289,183 @@ button.ghost, .notice-actions button.ghost { background: none; color: var(--copy
 .chip[aria-pressed="true"] { background: var(--wash); color: var(--ink); font-weight: 500; box-shadow: inset 0 0 0 1px var(--line); }
 .chip .mark { width: 7px; height: 7px; }
 .chip .count { color: inherit; opacity: .6; font-size: .75rem; }
-.todo-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; padding: 0 16px 4px; }
-.todo-add input { min-width: 0; height: 40px; padding: 0 14px; border: 0; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); outline: none; }
-.todo-add input:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
-.todo-add input::placeholder { color: var(--muted); }
-.todo-add input[type="date"] { width: 136px; color: var(--copy); font-size: .8125rem; }
-.todo-groups { flex: 1; overflow-y: auto; padding: 0 8px 32px; }
+.chip svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.todo-groups { flex: 1; overflow-y: auto; padding: 0 4px 40px; }
 .todo-group { padding-top: 16px; }
 .todo-group h3, .disclosure { display: flex; gap: 8px; align-items: baseline; padding: 4px 12px 6px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
-.todo-group[data-group="late"] h3 { color: var(--warm); }
 .todo-group h3 .count, .disclosure .count { font-size: .75rem; color: inherit; opacity: .75; }
 .empty-list { padding: 24px 12px; }
-.todo { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px 6px 12px; border-radius: 10px; transition: background-color 600ms var(--ease); }
+.todo { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 8px 8px 10px; border-radius: 10px; cursor: default; transition: background-color 600ms var(--ease); }
 .todo:hover { background: var(--wash); }
-.todo[data-fresh] { background: var(--accent-soft); }
+.todo[data-fresh], .todo-tile[data-fresh] { background: var(--accent-soft); }
 .check { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--k-solid, var(--line)); color: transparent; }
 .check:hover { background: var(--k-fill, var(--wash)); }
-.check svg { width: 12px; height: 12px; stroke-width: 2.4; }
-.todo[data-done] .check { background: var(--k-solid, var(--accent)); box-shadow: none; color: #fff; opacity: .55; }
+.check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.check[aria-checked="true"] { background: var(--k-solid, var(--accent)); box-shadow: none; color: #fff; opacity: .55; }
+/* The next time of something that repeats, before its day: a dashed ring, not yet a thing to tick. */
+.check[data-later] { box-shadow: none; outline: 1.5px dashed var(--k-solid, var(--line)); outline-offset: -1.5px; opacity: .5; cursor: default; }
+.check[data-later]:hover { background: none; }
+/* Only suggested: an empty dashed ring, nothing to tick yet. */
+.check[data-suggested] { box-shadow: none; outline: 1.5px dashed var(--line); outline-offset: -1.5px; }
+.check[data-suggested]:hover { background: none; }
 .todo-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
-.todo-title { color: var(--ink); }
+.todo-title { color: var(--ink); min-width: 0; }
 .todo[data-done] .todo-title { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
-.todo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: .75rem; }
+.todo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px; color: var(--muted); font-size: .75rem; line-height: 1.5; min-width: 0; }
+.todo-meta > span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.todo-meta .tag { height: 20px; padding: 0 7px; }
+.ti { flex: none; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.todo .by, .todo-tile .by { color: var(--accent); }
+.doing { color: var(--accent); font-size: .75rem; white-space: nowrap; }
+.stale { color: var(--warm); }
 .due { color: var(--muted); font-size: .75rem; }
-.due.overdue { color: var(--warm); }
-.tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 6px; background: var(--k-fill, var(--wash)); color: var(--k-text, var(--copy)); font-size: .75rem; font-weight: 500; white-space: nowrap; }
-.by { color: var(--accent); font-size: .75rem; }
-/* The area tag is a native select dressed as a tag: change a todo's area in place. Empty ones show on hover. */
-select.area-pick { appearance: none; -webkit-appearance: none; border: 0; cursor: pointer; font-family: inherit; field-sizing: content; }
-select.area-pick[data-empty] { background: none; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
-.todo select.area-pick[data-empty] { opacity: 0; transition: opacity 150ms; }
-.todo:hover select.area-pick[data-empty], .todo select.area-pick[data-empty]:focus-visible { opacity: 1; }
-@media (hover: none) { .todo select.area-pick[data-empty] { opacity: .7; } }
-.todo-add select.area-pick { height: 30px; padding: 0 10px; }
-.remove { flex: none; min-width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); opacity: 0; font-size: .75rem; }
-.todo:hover .remove, .remove:focus-visible, .remove.confirming { opacity: 1; }
-.remove.confirming { padding: 0 10px; background: var(--bad); color: #fff; }
-/* Where todos come from: a source on a todo, Alfred's suggestions (not todos yet, so drawn dashed), and the choices. */
-.todo-src { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: .75rem; }
-.todo[data-suggested] { margin: 2px 4px; outline: 1px dashed var(--line); outline-offset: -1px; }
+/* How long is left, when it is under a day (amber), under three hours or past (red). */
+.left { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--k-fill); color: var(--k-text); font-size: .75rem; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.left i { width: 6px; height: 6px; border-radius: 50%; background: var(--k-solid); }
+/* A day off, on its day. */
+.ctx { display: inline-flex; align-items: center; gap: 5px; min-height: 20px; padding: 1px 8px; border-radius: 6px; background: var(--wash); color: var(--copy); font-size: .75rem; }
+.ctx .ti { width: 12px; height: 12px; }
+.keep-drop { display: inline-flex; gap: 6px; }
+.keep-drop button { min-height: 26px; padding: 0 11px; border-radius: 999px; font-size: .75rem; white-space: nowrap; }
+.keep-drop .keep { background: var(--accent-solid); color: var(--accent-ink); }
+.keep-drop .drop { color: var(--copy); box-shadow: inset 0 0 0 1px var(--line); }
+.todo[data-suggested], .todo-tile[data-suggested] { outline: 1px dashed color-mix(in oklch, var(--accent) 45%, transparent); outline-offset: -1px; }
 .todo[data-suggested] .todo-title { color: var(--copy); }
-.todo[data-suggested] .remove { opacity: .7; }
-.keep { flex: none; min-height: 28px; padding: 0 12px; border-radius: 999px; background: var(--accent-solid); color: var(--accent-ink); font-size: .75rem; white-space: nowrap; }
-.todo-group[data-group="suggested"] h3 { color: var(--accent); }
-.todo-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 6px 18px 2px; color: var(--muted); font-size: .75rem; }
-.todo-sources label, .todo-pick { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.todo-sources .switch { transform: scale(.8); transform-origin: left center; margin-right: -6px; }
-.todo-pick .pick-now { color: var(--copy); font-size: .75rem; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+
+/* The bar over the page: areas, the view, and where todos come from. */
+.todo-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 0 16px 12px; }
+.todo-bar .chips { flex: 1; min-width: 0; padding: 0; }
+.todo-views { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--wash); }
+.todo-views button { height: 26px; padding: 0 12px; border-radius: 999px; color: var(--muted); font-size: .8125rem; white-space: nowrap; }
+.todo-views button:hover { color: var(--ink); }
+.todo-views button[aria-pressed="true"] { background: var(--raise); color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px oklch(0 0 0 / .08), inset 0 0 0 1px var(--line-soft); }
+.todo-sources { position: relative; flex: none; }
+.todo-sources > .chip[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
+.todo-sources-pop { position: absolute; right: 0; top: 36px; z-index: 6; width: 280px; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--raise); box-shadow: 0 12px 36px oklch(0 0 0 / .14), inset 0 0 0 1px var(--line-soft); color: var(--copy); font-size: .8125rem; }
+/* A native select dressed as a tag. */
+select.area-pick { appearance: none; -webkit-appearance: none; height: 26px; padding: 0 10px; border: 0; border-radius: 8px; cursor: pointer; font-family: inherit; field-sizing: content; }
+.todo-sources-pop label, .todo-pick { display: flex; align-items: center; gap: 8px; justify-content: space-between; min-width: 0; }
+.todo-sources-pop .grow { flex: 1; }
+.todo-sources-pop .switch { transform: scale(.8); }
+.todo-sources-pop p { margin: 0; font-size: .75rem; }
+.todo-pick .pick-now { color: var(--copy); font-size: .75rem; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; white-space: nowrap; }
 .todo-pick .pick-now:hover { color: var(--ink); text-decoration-color: currentColor; }
-/* What repeats weekly: said on its one todo, and drawn as a week (Monday first) behind the chip at the row's end. */
+.todos .add-bar { margin: 0 16px 4px; }
+
+/* List: the days on the left, today beside them. */
+.todo-split { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 28px; align-items: start; padding: 0 12px; }
+.todo-split-list { min-width: 0; }
+.todo-rail { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 10px; padding-top: 12px; }
+.todo-panel { padding: 12px 14px; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.todo-panel h4 { display: flex; gap: 8px; margin: 0 0 8px; color: var(--muted); font-size: .75rem; font-weight: 500; }
+.todo-panel h4 span { margin-left: auto; }
+.todo-panel p { margin: 0; font-size: .75rem; }
+.todo-progress { display: flex; align-items: center; gap: 14px; }
+.todo-progress svg { width: 52px; height: 52px; flex: none; }
+.todo-progress circle { fill: none; stroke-width: 6; }
+.todo-progress .bg { stroke: var(--wash); }
+.todo-progress .fg { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 400ms var(--ease); }
+.todo-progress b { display: block; color: var(--ink); font-size: 1.0625rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.todo-progress small { color: var(--muted); font-size: .75rem; }
+.todo-big { color: var(--k-text); font-size: 1.25rem !important; font-weight: 650; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.todo-next-what { margin-top: 2px !important; color: var(--ink); font-size: .8125rem !important; overflow-wrap: anywhere; }
+.todo-panel .quiet { margin-top: 4px; }
+.todo-tl { position: relative; margin-left: 38px; }
+.todo-tl .hr { position: absolute; left: -38px; right: 0; border-top: 1px solid var(--line-soft); }
+.todo-tl .hr span { position: absolute; left: 0; top: -8px; padding-right: 4px; background: var(--raise); color: var(--muted); font-size: .625rem; font-variant-numeric: tabular-nums; }
+.todo-tl .ev { position: absolute; left: 4px; right: 0; padding: 1px 7px; border-radius: 6px; background: var(--k-fill); color: var(--k-text); box-shadow: inset 2px 0 0 var(--k-solid); font-size: .6875rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.todo-tl .free { position: absolute; left: 4px; right: 0; padding: 1px 7px; border-radius: 6px; background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--accent-soft) 6px 8px); color: var(--accent); font-size: .6875rem; overflow: hidden; white-space: nowrap; }
+.todo-tl .dl { position: absolute; left: -4px; right: 0; border-top: 2px solid var(--k-solid); }
+.todo-tl .dl span { position: absolute; right: 0; top: -17px; max-width: 92%; padding-left: 4px; background: var(--raise); color: var(--k-text); font-size: .6875rem; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.todo-tl .now-line { position: absolute; left: -42px; right: 0; border-top: 1.5px solid var(--bad); }
+.todo-tl .now-line::before { content: ""; position: absolute; left: 34px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
+
+/* By day: two weeks in a strip, then each day with its todos at their hour. */
+.todo-strip { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 3px; padding: 4px 0 2px; }
+.todo-cell { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 1px 7px; border-radius: 10px; color: var(--copy); }
+.todo-cell:hover { background: var(--wash); }
+.todo-cell .wd { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: .6875rem; }
+.todo-cell .d { font-size: .9375rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.todo-cell[data-today] { background: var(--accent-soft); }
+.todo-cell[data-today] .wd, .todo-cell[data-today] .d { color: var(--accent); }
+.todo-cell[data-off] { background: repeating-linear-gradient(-45deg, transparent 0 5px, var(--wash) 5px 7px); }
+.todo-cell .dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; max-width: 32px; min-height: 6px; }
+.todo-cell .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--k-solid, var(--muted)); }
+.todo-cell .dots i[data-hour] { border-radius: 1.5px; }
+.todo-cell .off { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: .625rem; }
+.todo-day { padding-top: 16px; scroll-margin-top: 8px; }
+.todo-day-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0 8px 6px; border-bottom: 1px solid var(--line-soft); }
+.todo-day-head h3 { display: flex; gap: 8px; align-items: baseline; margin: 0; color: var(--ink); font-size: .9375rem; font-weight: 600; }
+.todo-day-head h3 .count { color: var(--muted); font-size: .75rem; font-weight: 400; }
+.todo-day-head .date { color: var(--muted); font-size: .8125rem; }
+.todo-day-head .cal-n { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.todo-day[data-today] .todo-day-head h3 { color: var(--accent); }
+.todo-day[data-late] .todo-day-head h3 { color: var(--warm); }
+.todo-day-empty { padding: 10px 8px 2px 64px; font-size: .8125rem; }
+.todo-day ul { padding-top: 4px; }
+.todo-byday .todo { display: grid; grid-template-columns: 42px 20px minmax(0, 1fr) auto; align-items: start; column-gap: 12px; }
+.todo-byday .check { margin-top: 2px; }
+.todo-at { padding-top: 1px; color: var(--copy); font-size: .8125rem; text-align: right; font-variant-numeric: tabular-nums; }
+.todo-at small { display: block; color: var(--muted); font-size: .6875rem; line-height: 1.3; }
+.todo-end { padding-top: 1px; }
+.todo-byday .keep-drop { margin-top: 4px; }
+
+/* Board: columns by when; a card is dragged to another column to move it. */
+.todo-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(196px, 1fr); gap: 10px; overflow-x: auto; align-items: start; padding: 4px 12px 12px; }
+.todo-lane { min-width: 0; display: flex; flex-direction: column; gap: 8px; min-height: 140px; padding: 10px; border-radius: 14px; background: var(--paper); transition: box-shadow 160ms var(--ease); }
+.todo-lane[data-over] { box-shadow: inset 0 0 0 2px var(--accent); }
+.todo-lane h3 { display: flex; align-items: baseline; gap: 6px; margin: 0; padding: 0 2px 2px; color: var(--ink); font-size: .8125rem; font-weight: 600; }
+.todo-lane h3 .date { color: var(--muted); font-size: .75rem; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.todo-lane h3 .count { margin-left: auto; color: var(--muted); font-size: .75rem; font-weight: 400; }
+.todo-lane[data-today] h3 { color: var(--accent); }
+.todo-lane .ctx { align-self: flex-start; max-width: 100%; }
+.todo-lane ul { display: flex; flex-direction: column; gap: 8px; }
+.todo-lane-empty { padding: 6px 2px; font-size: .75rem; }
+.todo-tile { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 10px 14px; border-radius: 10px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); cursor: grab; transition: background-color 600ms var(--ease); }
+.todo-tile::before { content: ""; position: absolute; left: 5px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--k-solid, var(--line)); }
+.todo-tile:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.todo-tile[draggable="false"] { cursor: default; }
+.todo-tile-top { display: flex; align-items: flex-start; gap: 8px; }
+.todo-tile-top .check { margin-top: 1px; }
+.todo-tile .todo-title { font-size: .875rem; line-height: 1.45; overflow-wrap: anywhere; }
+.todo-tile-when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding-left: 28px; }
+.todo-tile .todo-meta { padding-left: 28px; }
+.todo-tile .keep-drop { padding-left: 28px; }
+
+/* One line a todo: done ones, and short rows. */
+.todo-line { min-height: 40px; }
+.todo-line .todo-title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.todo-when { flex: none; min-width: 40px; color: var(--muted); font-size: .75rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* A todo's card: over the blurred page, as an event's on the calendar. */
+.todo-card { gap: 0; padding: 14px 16px 12px; }
+.todo-card-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 10px; }
+.todo-card-head .check { margin-top: 5px; }
+.todo-card-title { flex: 1; min-width: 0; padding: 2px 6px; margin: 0 -6px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: 600 1.0625rem/1.45 var(--sans); resize: none; field-sizing: content; outline: none; }
+.todo-card-title:hover { background: var(--wash); }
+.todo-card-title:focus { background: var(--field); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.todo-fact { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-top: 1px solid var(--line-soft); color: var(--copy); font-size: .8125rem; }
+.todo-fact > .ti { width: 15px; height: 15px; margin-top: 2px; color: var(--muted); }
+.todo-fact > div { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.todo-fact p { margin: 0; overflow-wrap: anywhere; }
+.todo-fact a { color: var(--accent); }
+.todo-card-row, .todo-fact > .todo-card-row { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mini { min-height: 26px; padding: 0 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .75rem; white-space: nowrap; }
+.mini:hover { color: var(--ink); }
+.mini[aria-pressed="true"] { background: var(--k-fill, var(--wash)); color: var(--k-text, var(--ink)); box-shadow: inset 0 0 0 1px var(--k-line, var(--line)); font-weight: 500; }
+.mini.quiet-danger { color: var(--bad); box-shadow: none; }
+.mini.danger { background: var(--bad); color: #fff; box-shadow: none; }
+.todo-card-url { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.streak { display: flex; gap: 3px; }
+.streak i { width: 13px; height: 13px; border-radius: 4px; background: var(--wash); }
+.streak i[data-on] { background: var(--k-solid, var(--accent)); opacity: .8; }
+.streak i[data-today] { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.todo-card-foot { display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.todo-card-foot .grow { flex: 1; }
+
+/* What repeats weekly, drawn as a week (Monday first). */
 .todo-repeat { color: var(--muted); font-size: .75rem; white-space: nowrap; }
-.chip-view { margin-left: auto; }
-.chip-view svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.todo-groups[hidden] { display: none; }
-.todo-week { padding: 12px 4px 0; }
+.todo-week { padding: 12px 12px 0; }
 .week-day { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: start; gap: 0 8px; padding: 6px 8px; border-top: 1px solid var(--line); }
 .week-day:first-child { border-top: 0; }
 .week-day h3 { padding: 9px 0 0 4px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: .8125rem; font-weight: 500; white-space: nowrap; }
@@ -359,6 +481,50 @@ select.area-pick[data-empty] { background: none; color: var(--muted); box-shadow
 .week-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .week-row .due { flex: none; }
 @media (hover: none) { .remove { opacity: .7; } }
+
+/* The line a page adds things with (todos, links): one rounded field like the ask bar, pills inside it. */
+.add-bar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 6px 6px 6px 16px; border-radius: 16px; background: var(--field, var(--raise)); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow 160ms var(--ease); }
+.add-bar:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.add-text { flex: 1; min-width: 0; height: 36px; padding: 0; border: 0; background: none; color: var(--ink); outline: none; }
+.add-text::placeholder { color: var(--muted); }
+.add-pills { flex: none; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.add-pill { position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 999px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.add-pill:hover { background: var(--wash); color: var(--copy); }
+.add-pill:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.add-pill > svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.add-pill[data-set] { background: var(--k-fill, var(--accent-soft)); color: var(--k-text, var(--accent)); font-weight: 500; }
+/* The native picker lies over the pill, unseen: a click on the pill is a click on it. */
+.add-pill > select, .add-pill > input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; font-size: 16px; }
+.add-pill-clear { position: relative; z-index: 1; width: 16px; height: 16px; display: grid; place-items: center; margin-right: -4px; border-radius: 50%; color: inherit; opacity: .7; }
+.add-pill-clear:hover { opacity: 1; background: color-mix(in oklch, currentColor 14%, transparent); }
+.add-pill-clear svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.add-go { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-solid); color: var(--accent-ink); transition: background-color 160ms var(--ease); }
+.add-go:disabled { background: var(--wash); color: var(--muted); cursor: default; }
+.add-go svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.add-new { width: 120px; height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--wash); color: var(--ink); font-size: .75rem; outline: none; }
+.add-new:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
+
+@container page (max-width: 860px) {
+  .todo-split { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .todo-rail { position: static; order: -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); padding-top: 0; }
+  .todo-panel-tl { display: none; }
+}
+@container page (max-width: 640px) {
+  .todo-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .todo-cell[data-far] { display: none; }
+  .todo-views { order: -1; }
+  .add-bar { flex-wrap: wrap; padding-left: 14px; }
+  .add-text { flex-basis: 100%; }
+  .add-pills { flex: 1; flex-wrap: wrap; }
+}
+@container page (max-width: 520px) {
+  .todo-split { padding: 0 2px; }
+  .todo-byday .todo { grid-template-columns: 36px 20px minmax(0, 1fr); row-gap: 4px; column-gap: 10px; }
+  .todo-byday .todo-end { grid-column: 3; }
+  .todo-byday .todo-end:empty { display: none; }
+  .todo-at { font-size: .75rem; }
+  .todo-day-empty { padding-left: 54px; }
+}
 
 /* Inbox (通知): a list of what needs you on the left, the chosen item on the right. */
 .inbox { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; container: inbox / inline-size; }

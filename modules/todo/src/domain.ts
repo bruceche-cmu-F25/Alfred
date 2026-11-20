@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { AREA_IDS, changedFields, isArea, localDate, newId, recordDomainEvent, withDefaultActor, type World } from "@alfred/core";
-import { CALENDAR_MODES, TODO_STATUSES, type CalendarMode, type Todo, type TodoRepeat, type TodoSettings, type TodoSource, type TodoStatus } from "./types.ts";
+import { CALENDAR_MODES, isDayOff, TODO_STATUSES, type CalendarMode, type Todo, type TodoRepeat, type TodoSettings, type TodoSource, type TodoStatus } from "./types.ts";
 
 export { CALENDAR_MODES, TODO_STATUSES, type CalendarMode, type Todo, type TodoRepeat, type TodoSettings, type TodoSource, type TodoStatus };
 
@@ -17,6 +17,8 @@ export interface TodoPatch {
   startDate?: string;
   /** Empty string clears it. */
   due?: string;
+  /** The hour it is due by on its `due` day, as HH:MM; empty string clears it. Clearing `due` clears it too. */
+  at?: string;
   /** Empty string clears it; never changes `due`. */
   plannedOn?: string;
   /** Empty string clears it. */
@@ -67,6 +69,8 @@ CREATE TABLE todo_settings (
 }];
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function localDay(value: string, field: string): string {
   const trimmed = value.trim();
@@ -148,7 +152,13 @@ function applyPatch(todo: Todo, patch: TodoPatch): void {
     // A changed deadline is reviewed on its own merits.
     if (due !== todo.due) delete todo.reviewAfter;
     if (startDate) todo.startDate = startDate; else delete todo.startDate;
-    if (due) todo.due = due; else delete todo.due;
+    if (due) todo.due = due; else { delete todo.due; delete todo.at; }
+  }
+  if (patch.at !== undefined) {
+    const at = patch.at.trim();
+    if (at && !CLOCK.test(at)) throw new Error("at must be an hour as HH:MM (00:00–23:59)");
+    if (at && !todo.due) throw new Error("at needs a due day");
+    if (at) todo.at = at; else delete todo.at;
   }
   if (patch.plannedOn !== undefined) {
     if (patch.plannedOn.trim()) todo.plannedOn = localDay(patch.plannedOn, "plannedOn"); else delete todo.plannedOn;
@@ -182,7 +192,7 @@ export function addTodo(world: World, input: { title: string } & TodoPatch): { t
 }
 
 /** What of a todo Alfred wrote from its source, kept to tell later whether the user has changed it since. */
-const seenOf = (todo: Todo) => ({ title: todo.title, due: todo.due ?? null, startDate: todo.startDate ?? null });
+const seenOf = (todo: Todo) => ({ title: todo.title, due: todo.due ?? null, startDate: todo.startDate ?? null, at: todo.at ?? null });
 
 function insertTodo(world: World, input: { title: string } & TodoPatch, op: "added" | "suggested", from?: { source: TodoSource; account?: string; after?: string }): { todo: Todo; open: number } {
   if (!input.title?.trim()) throw new Error("title is required");
@@ -229,7 +239,14 @@ export function updateTodo(world: World, ref: TodoRef, patch: TodoPatch): TodoRe
   return changeTodo(world, ref, "updated", (todo) => { applyPatch(todo, patch); return todo; });
 }
 
-export function completeTodo(world: World, ref: TodoRef): TodoResult<{ todo: Todo; alreadyDone: boolean }> {
+/** Finishes a todo. The next time of something that repeats can be finished only once its day has come: finishing
+ * one makes the time after it, so ticking ahead would use up the days to come one click at a time. */
+export function completeTodo(world: World, ref: TodoRef, today = localDate(new Date())): TodoResult<{ todo: Todo; alreadyDone: boolean }> {
+  const found = resolveTodo(world, ref);
+  if (!("id" in found)) return found;
+  if (found.source?.repeat && !found.done && found.due && (found.startDate ?? found.due) > today) {
+    return { error: `"${found.title}" repeats; its next time is ${found.due} and can be ticked off on that day.` };
+  }
   return changeTodo(world, ref, "completed", (todo) => {
     const alreadyDone = todo.done;
     applyPatch(todo, { done: true });
@@ -283,6 +300,8 @@ export function suggestTodo(world: World, input: { title: string; due?: string; 
 export interface SourceEvent {
   id: string;
   account: string;
+  /** The calendar's id at its service (tells a holiday calendar apart). */
+  calendarId?: string;
   calendar: string;
   title: string;
   allDay: boolean;
@@ -329,7 +348,14 @@ function repeatOf(times: readonly SourceEvent[]): TodoRepeat {
   return { days: usual.sort((a, b) => a - b), ...(at ? { at } : {}) };
 }
 
-type Seen = { title: string; due: string | null; startDate: string | null; account?: string; after?: string };
+/** HH:MM of an instant, by this machine's clock (the home node's, as `today` is). */
+function clockOf(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? null : `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}
+
+type Seen = { title: string; due: string | null; startDate: string | null; at?: string | null; account?: string; after?: string };
 
 /** Keeps todos in step with the calendar, one way: an event of the next two weeks (all-day ones only, or all, as
  * `mode` says; never one the user declined) is a todo due on its day, made once. While the user has not touched
@@ -351,20 +377,28 @@ export function mirrorCalendar(
   const horizon = plusDays(options.today, CALENDAR_AHEAD_DAYS);
   const refOf = (event: SourceEvent) => `calendar:${event.account}:${event.id}`;
   const repeatRef = (event: SourceEvent) => `calendar:${event.account}:repeat:${event.recurring}`;
-  const covered = (event: SourceEvent) => !(options.mode === "allday" && !event.allDay) && event.response !== "declined" && !!event.title.trim();
+  // A day off (a holiday, a break) is not a thing to do: it labels its day (`daysOff`), it is never a todo.
+  const covered = (event: SourceEvent) => !(options.mode === "allday" && !event.allDay) && event.response !== "declined" && !!event.title.trim() && !isDayOff(event);
   const coming = (event: SourceEvent) => event.endDate >= options.today && event.startDate <= horizon;
   const shape = (event: SourceEvent) => {
     const title = event.title.trim().slice(0, 500);
     // A timed event is due the day it starts; an all-day one that spans days is a range.
     const due = event.allDay ? event.endDate : event.startDate;
-    return { title, due, startDate: event.allDay && event.startDate !== event.endDate ? event.startDate : null };
+    return { title, due, startDate: event.allDay && event.startDate !== event.endDate ? event.startDate : null, at: event.allDay ? null : clockOf(event.start) };
   };
   return withDefaultActor("system", () => world.tx((db) => {
     const now = new Date().toISOString();
     const rows = new Map(db.prepare("SELECT ref, todo_id, state, seen FROM todo_sources WHERE ref >= 'calendar:' AND ref < 'calendar;'").all().map((row) => [row.ref as string, row]));
     const todos = new Map(readAll(world).map((todo) => [todo.id, todo]));
     const seenOfRow = (row: { seen?: unknown }) => row.seen ? JSON.parse(row.seen as string) as Seen : null;
-    const untouched = (todo: Todo, seen: Seen) => todo.title === seen.title && (todo.due ?? null) === seen.due && (todo.startDate ?? null) === seen.startDate;
+    const untouched = (todo: Todo, seen: Seen) => todo.title === seen.title && (todo.due ?? null) === seen.due && (todo.startDate ?? null) === seen.startDate && (todo.at ?? null) === (seen.at ?? null);
+    const sameAs = (next: ReturnType<typeof shape>, seen: Seen) => next.title === seen.title && next.due === seen.due && next.startDate === seen.startDate && next.at === (seen.at ?? null);
+    const fit = (todo: Todo, next: ReturnType<typeof shape>) => {
+      todo.title = next.title;
+      todo.due = next.due;
+      if (next.startDate) todo.startDate = next.startDate; else delete todo.startDate;
+      if (next.at) todo.at = next.at; else delete todo.at;
+    };
 
     // What repeats weekly or more often: two of its times a week apart or less, or already kept as one todo (so
     // its last time, read alone, is still part of it).
@@ -383,6 +417,8 @@ export function mirrorCalendar(
       weekly.set(ref, all);
       for (const event of all) folded.add(refOf(event));
     }
+    // Todos made of days off before they were told apart go, unless the user has made them theirs.
+    const offRefs = new Set(events.filter(isDayOff).map(refOf));
     const wanted = new Map<string, SourceEvent>();
     for (const event of events) {
       if (!covered(event) || !coming(event) || folded.has(refOf(event))) continue;
@@ -394,7 +430,7 @@ export function mirrorCalendar(
       const row = rows.get(ref);
       if (!row) {
         const source: TodoSource = { kind: "calendar", ref, label: event.calendar.slice(0, 200), ...(event.link ? { link: event.link } : {}) };
-        insertTodo(world, { title: next.title, due: next.due, ...(next.startDate ? { startDate: next.startDate } : {}) }, "added", { source, account: event.account });
+        insertTodo(world, { title: next.title, due: next.due, ...(next.startDate ? { startDate: next.startDate } : {}), ...(next.at ? { at: next.at } : {}) }, "added", { source, account: event.account });
         done.added++;
         continue;
       }
@@ -402,12 +438,10 @@ export function mirrorCalendar(
       const todo = row.todo_id ? todos.get(row.todo_id as string) : undefined;
       const seen = seenOfRow(row);
       if (!todo || todo.done || todo.archivedAt || !seen) continue;
-      const same = next.title === seen.title && next.due === seen.due && next.startDate === seen.startDate;
+      const same = sameAs(next, seen);
       if (!untouched(todo, seen) || same) continue;
       const before = structuredClone(todo);
-      todo.title = next.title;
-      todo.due = next.due;
-      if (next.startDate) todo.startDate = next.startDate; else delete todo.startDate;
+      fit(todo, next);
       write(world, todo);
       db.prepare("UPDATE todo_sources SET seen = ?, updated_at = ? WHERE ref = ?").run(JSON.stringify({ ...next, account: event.account }), now, ref);
       recordTodoEvent(world, "updated", before, todo);
@@ -422,7 +456,7 @@ export function mirrorCalendar(
       const sourceOf = (event: SourceEvent): TodoSource => ({ kind: "calendar", ref, label: event.calendar.slice(0, 200), ...(event.link ? { link: event.link } : {}), repeat });
       const make = (event: SourceEvent, kept: { area?: string; after?: string } = {}) => {
         const next = shape(event);
-        insertTodo(world, { title: next.title, due: next.due, ...(next.startDate ? { startDate: next.startDate } : {}), ...(kept.area ? { area: kept.area } : {}) }, "added",
+        insertTodo(world, { title: next.title, due: next.due, ...(next.startDate ? { startDate: next.startDate } : {}), ...(next.at ? { at: next.at } : {}), ...(kept.area ? { area: kept.area } : {}) }, "added",
           { source: sourceOf(event), account: event.account, ...(kept.after ? { after: kept.after } : {}) });
         done.added++;
       };
@@ -442,12 +476,10 @@ export function mirrorCalendar(
       if (!event || !untouched(todo, seen)) continue;
       const next = shape(event);
       const source = sourceOf(event);
-      const same = next.title === seen.title && next.due === seen.due && next.startDate === seen.startDate;
+      const same = sameAs(next, seen);
       if (same && JSON.stringify(todo.source) === JSON.stringify(source)) continue;
       const before = structuredClone(todo);
-      todo.title = next.title;
-      todo.due = next.due;
-      if (next.startDate) todo.startDate = next.startDate; else delete todo.startDate;
+      fit(todo, next);
       todo.source = source;
       write(world, todo);
       db.prepare("UPDATE todo_sources SET seen = ?, updated_at = ? WHERE ref = ?").run(JSON.stringify({ ...next, account: event.account, ...(seen.after ? { after: seen.after } : {}) }), now, ref);
@@ -462,7 +494,7 @@ export function mirrorCalendar(
       const seen = seenOfRow(row);
       const todo = todos.get(row.todo_id as string);
       if (!seen || !todo || todo.done || todo.archivedAt || !untouched(todo, seen)) continue;
-      if (!folded.has(ref)) {
+      if (!folded.has(ref) && !offRefs.has(ref)) {
         if (!seen.account || !options.healthy.has(seen.account)) continue;
         // Past its day it is simply an overdue todo; and one the mode no longer covers stays as it is.
         if (!seen.due || seen.due < options.today || seen.due > horizon) continue;
@@ -518,6 +550,7 @@ export function formatTodo(todo: Todo, today: string = localDate()): string {
   const date = todo.startDate && todo.due && todo.startDate !== todo.due
     ? ` (${todo.startDate} – ${todo.due}${!todo.done && todo.due < today ? ", overdue" : ""})`
     : todo.due && !todo.done ? DUE[dueBucket(todo.due, today)](todo.due) : todo.due ? ` (was due ${todo.due})` : "";
+  const by = todo.at && !todo.done ? ` (by ${todo.at})` : "";
   const progress = todoStatus(todo) === "doing" ? " (in progress)" : "";
   const plan = todo.plannedOn ? ` (planned ${todo.plannedOn}, not a deadline)` : "";
   const link = todo.url ? ` -> ${todo.url}` : "";
@@ -525,5 +558,5 @@ export function formatTodo(todo: Todo, today: string = localDate()): string {
   const repeat = todo.source?.repeat;
   const repeats = repeat ? `; repeats ${repeat.days.length === 7 ? "every day" : repeat.days.map((day) => WEEKDAYS[day]).join(", ")}${repeat.at ? ` at ${repeat.at}` : ""}, this is its next time` : "";
   const from = todo.suggested ? " (your suggestion; the user has not kept it yet)" : todo.source?.kind === "calendar" ? ` (from the calendar${repeats})` : todo.source?.kind === "mail" ? " (from mail)" : "";
-  return `${box} ${todo.id}  ${todo.title}${area}${progress}${date}${plan}${from}${link}`;
+  return `${box} ${todo.id}  ${todo.title}${area}${progress}${date}${by}${plan}${from}${link}`;
 }

@@ -13,7 +13,7 @@ export type LinkResult<T> = T | { error: string };
 const failed = (result: object): result is { error: string } => "error" in result;
 
 /** The places every world starts with. They are the user's from then on: renamed, moved or removed like any other. */
-const DEFAULT_PLACES = [["Google", "https://www.google.com"], ["Gmail", "https://mail.google.com"], ["Google Calendar", "https://calendar.google.com"], ["YouTube", "https://www.youtube.com"]];
+const DEFAULT_PLACES = [["Google", "https://www.google.com"], ["Gmail", "https://mail.google.com"], ["YouTube", "https://www.youtube.com"]];
 
 export const MIGRATIONS = [{
   id: "link:1",

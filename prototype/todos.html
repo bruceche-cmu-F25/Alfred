@@ -1,0 +1,855 @@
+<!doctype html>
+<!--
+  Alfred: Todos. A prototype, no build step, sample data; "now" is fixed at Thursday 2026-11-19 16:20.
+  The question it asks: how should the todo page be laid out so it reads at a glance, and what more should it say?
+
+  What every view adds over the page in the app:
+    · a deadline time as its own field (21:00), not hidden in the title, and a countdown when it is under a day away;
+    · where a todo came from as an icon and one word (you, Alfred, calendar, mail), the full story in its card;
+    · how long it has waited (a todo of yours untouched for a week says so), and a repeating one's streak;
+    · calendar days off (a holiday, a break) as a label on their day, not as todos to tick;
+    · the sources settings (calendar, mail) moved behind a button in the head; adding goes through the line at the
+      bottom, as on the other daily pages, or the + which opens a card.
+  Clicking a todo opens its card over the blurred page (as on the calendar), with everything about it.
+
+  Three layouts of the same todos:
+    A 按天    a strip of the next two weeks (load per day, days off), then the todos day by day, with the hour.
+    B 看板    columns: today, tomorrow, this week, later, any time. Drag a card to another column to move it.
+    C 今天优先 the list on the left; on the right, today: how much is done, the next deadline, and the hours left
+              between your calendar's events before it.
+-->
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alfred：待办</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<style>
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { height: 100dvh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; text-align: inherit; }
+h1, h2, h3, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+a { color: inherit; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid var(--alf); outline-offset: 2px; }
+
+/* ── The prototype's own strip ── */
+.proto { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--ink); color: var(--bg); font-size: 12px; overflow-x: auto; white-space: nowrap; }
+.proto b { flex: none; padding: 0 6px; }
+.proto .lab { flex: none; padding: 0 4px 0 10px; opacity: .6; }
+.proto button, .proto a { flex: none; height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 8px; opacity: .72; text-decoration: none; }
+.proto button:hover, .proto a:hover { opacity: 1; }
+.proto button[aria-pressed="true"] { background: var(--bg); color: var(--ink); opacity: 1; }
+.proto .what { flex: 1; min-width: 0; padding: 0 10px; opacity: .7; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1000px) { .proto .what { visibility: hidden; } }
+@media (max-width: 620px) { .proto .lab, .proto b { display: none; } }
+
+/* ── The page ── */
+.page { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; container: page / inline-size; }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0 150px; }
+.col { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
+.head { display: flex; align-items: center; gap: 10px; padding: 20px 0 12px; flex-wrap: wrap; }
+.head h1 { display: flex; align-items: center; gap: 10px; font-size: 1.5rem; line-height: 1.25; font-weight: 650; letter-spacing: -.01em; }
+.head h1 svg { width: 22px; height: 22px; color: var(--alf); stroke-width: 1.8; }
+.head .sum { color: var(--muted); font-size: .875rem; white-space: nowrap; }
+.head .sum b { color: var(--copy); font-weight: 500; }
+.head .grow { flex: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 6px; }
+.chip { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); font-size: .8125rem; white-space: nowrap; }
+.chip:hover { color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); box-shadow: none; }
+.chip .n { font-size: .75rem; opacity: .7; }
+.mark { width: 8px; height: 8px; border-radius: 50%; background: var(--k-solid); flex: none; }
+.icon-btn { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 999px; color: var(--copy); font-size: .8125rem; box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; }
+.icon-btn:hover { color: var(--ink); background: var(--wash); }
+.icon-btn.solid { background: var(--alf-solid); color: var(--on-alf); box-shadow: none; }
+
+/* Sources, behind a button. */
+.srcs { position: relative; }
+.srcs-pop { position: absolute; right: 0; top: 36px; z-index: 5; width: 260px; padding: 12px; border-radius: 12px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); font-size: .8125rem; display: flex; flex-direction: column; gap: 10px; }
+.srcs-pop label { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.srcs-pop select { height: 28px; border-radius: 8px; border: 0; box-shadow: inset 0 0 0 1px var(--line); background: var(--field); padding: 0 6px; }
+.srcs-pop small { color: var(--muted); }
+
+/* What every row is made of. */
+.check { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--k-solid, var(--line)); color: transparent; }
+.check:hover { background: var(--k-fill, var(--wash)); }
+.check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.check[aria-checked="true"] { background: var(--k-solid, var(--alf)); box-shadow: none; color: #fff; opacity: .55; }
+.check[data-later] { box-shadow: none; outline: 1.5px dashed var(--k-solid, var(--line)); outline-offset: -1.5px; opacity: .5; cursor: default; }
+.check[data-later]:hover { background: none; }
+.title { min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+.done .title { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--muted); font-size: .75rem; line-height: 1.5; min-width: 0; }
+.meta > span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
+.meta svg.i { width: 13px; height: 13px; }
+.meta .alf { color: var(--alf); }
+.meta .old { color: var(--k-text); }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--k-fill, var(--wash)); color: var(--k-text, var(--copy)); font-size: .75rem; font-weight: 500; white-space: nowrap; }
+.left { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: .75rem; font-weight: 500; white-space: nowrap; background: var(--k-fill); color: var(--k-text); font-variant-numeric: tabular-nums; }
+.left i { width: 6px; height: 6px; border-radius: 50%; background: var(--k-solid); }
+.doing { color: var(--alf); }
+.ctx { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 6px; background: var(--wash); color: var(--copy); font-size: .75rem; white-space: nowrap; }
+.ctx svg.i { width: 12px; height: 12px; }
+.fresh { animation: fresh 1.6s var(--ease); }
+@keyframes fresh { from { background: var(--alf-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .fresh { animation: none; } }
+.sug { box-shadow: inset 0 0 0 1px var(--line); outline: 1px dashed color-mix(in oklch, var(--alf) 50%, transparent); outline-offset: -1px; border-radius: 12px; }
+.sug-acts { display: flex; gap: 6px; }
+.sug-acts button { height: 26px; padding: 0 10px; border-radius: 999px; font-size: .75rem; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); }
+.sug-acts button.yes { background: var(--alf-solid); color: var(--on-alf); box-shadow: none; }
+.section-h { display: flex; align-items: baseline; gap: 8px; padding: 22px 0 6px; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+.section-h .n { font-size: .75rem; opacity: .75; }
+.section-h button { margin-left: auto; color: var(--muted); font-size: .75rem; }
+.section-h button:hover { color: var(--ink); }
+
+/* ── A: by day ── */
+.strip { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 4px; padding: 6px 0 4px; }
+.cell { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px 7px; border-radius: 10px; color: var(--copy); }
+.cell:hover { background: var(--wash); }
+.cell .wd { font-size: .6875rem; color: var(--muted); }
+.cell .d { font-size: .9375rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.cell[data-today] { background: var(--alf-soft); }
+.cell[data-today] .d, .cell[data-today] .wd { color: var(--alf); }
+.cell[data-off] { background: repeating-linear-gradient(-45deg, transparent 0 5px, var(--wash) 5px 7px); }
+.cell[data-weekend] .wd { opacity: .7; }
+.dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; max-width: 34px; min-height: 6px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--k-solid, var(--muted)); }
+.dots i[data-deadline] { border-radius: 1.5px; }
+.cell .off { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: .625rem; color: var(--muted); }
+.strip-key { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: .6875rem; padding: 2px 4px 0; }
+.strip-key span { display: inline-flex; align-items: center; gap: 5px; }
+.strip-key i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.strip-key i.sq { border-radius: 1.5px; }
+.strip-key i.hatch { width: 12px; height: 8px; border-radius: 2px; background: repeating-linear-gradient(-45deg, transparent 0 2px, var(--line) 2px 3px); box-shadow: inset 0 0 0 1px var(--line); }
+.day { padding-top: 18px; scroll-margin-top: 12px; }
+.day-h { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 0 0 6px; border-bottom: 1px solid var(--line-soft); }
+.day-h h2 { font-size: .9375rem; font-weight: 600; }
+.day-h .date { color: var(--muted); font-size: .8125rem; }
+.day-h .cal { margin-left: auto; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.day[data-today] .day-h h2 { color: var(--alf); }
+.day[data-late] .day-h h2 { color: var(--k-text); }
+.rows-a > li { display: grid; grid-template-columns: 50px 20px minmax(0, 1fr) auto; align-items: start; column-gap: 12px; padding: 10px 6px; border-radius: 10px; cursor: default; }
+.rows-a > li:hover { background: var(--wash); }
+.rows-a .at { padding-top: 1px; color: var(--copy); font-size: .8125rem; font-variant-numeric: tabular-nums; text-align: right; }
+.rows-a .at small { display: block; color: var(--muted); font-size: .6875rem; line-height: 1.2; }
+.rows-a .check { margin-top: 2px; }
+.rows-a .body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rows-a .title { font-size: .9375rem; line-height: 1.45; }
+.rows-a .end { padding-top: 1px; }
+.rows-a .sug-acts { margin-top: 4px; }
+@container page (max-width: 720px) {
+  .strip { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .cell[data-far] { display: none; }
+}
+@container page (max-width: 520px) {
+  .col { padding: 0 14px; }
+  .rows-a > li { grid-template-columns: 20px minmax(0, 1fr); row-gap: 4px; }
+  .rows-a .at { display: none; }
+  .rows-a .end { grid-column: 2; }
+}
+
+/* ── B: board ── */
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(196px, 1fr); gap: 10px; overflow-x: auto; padding: 4px 0 12px; align-items: start; }
+.lane { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px; background: var(--paper); min-height: 140px; transition: box-shadow 160ms var(--ease); }
+.lane[data-over] { box-shadow: inset 0 0 0 2px var(--alf); }
+.lane-h { display: flex; align-items: baseline; gap: 6px; padding: 0 2px 2px; font-size: .8125rem; font-weight: 600; }
+.lane-h .date { color: var(--muted); font-weight: 400; font-size: .75rem; }
+.lane-h .n { margin-left: auto; color: var(--muted); font-weight: 400; font-size: .75rem; }
+.lane[data-today] .lane-h { color: var(--alf); }
+.lane .ctx { align-self: flex-start; height: auto; min-height: 20px; padding: 2px 8px; white-space: normal; max-width: 100%; }
+.card { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 10px 14px; border-radius: 10px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); cursor: grab; }
+.card::before { content: ""; position: absolute; left: 5px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--k-solid, var(--line)); }
+.card:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.card[data-drag] { opacity: .4; }
+.card .top { display: flex; gap: 8px; align-items: flex-start; }
+.card .check { margin-top: 1px; }
+.card .title { font-size: .875rem; line-height: 1.45; }
+.card .bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-left: 28px; }
+.card .when { color: var(--copy); font-size: .75rem; font-variant-numeric: tabular-nums; }
+.card.sug { cursor: default; }
+.lane .empty { color: var(--muted); font-size: .75rem; padding: 6px 2px; }
+
+/* ── C: today first ── */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; align-items: start; }
+.rail { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
+.panel { padding: 14px; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.panel h3 { color: var(--muted); font-size: .75rem; font-weight: 500; margin-bottom: 10px; display: flex; gap: 8px; }
+.panel h3 span { margin-left: auto; }
+.progress { display: flex; align-items: center; gap: 14px; }
+.ring { width: 56px; height: 56px; flex: none; }
+.ring circle { fill: none; stroke-width: 6; }
+.ring .bg { stroke: var(--wash); }
+.ring .fg { stroke: var(--alf); stroke-linecap: round; transition: stroke-dashoffset 400ms var(--ease); }
+.progress b { display: block; font-size: 1.125rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.progress small { color: var(--muted); font-size: .75rem; }
+.next { display: flex; flex-direction: column; gap: 4px; }
+.next .big { font-size: 1.375rem; font-weight: 650; letter-spacing: -.01em; font-variant-numeric: tabular-nums; color: var(--k-text); }
+.next .what { font-size: .875rem; overflow-wrap: anywhere; }
+.next small { color: var(--muted); font-size: .75rem; }
+.tl { position: relative; margin-left: 40px; height: 300px; }
+.tl .hr { position: absolute; left: -40px; right: 0; height: 0; border-top: 1px solid var(--line-soft); }
+.tl .hr span { position: absolute; left: 0; top: -8px; color: var(--muted); font-size: .625rem; font-variant-numeric: tabular-nums; background: var(--raise); padding-right: 4px; }
+.tl .ev { position: absolute; left: 4px; right: 0; padding: 2px 8px; border-radius: 6px; background: var(--k-fill); color: var(--k-text); font-size: .6875rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; box-shadow: inset 2px 0 0 var(--k-solid); }
+.tl .free { position: absolute; left: 4px; right: 0; border-radius: 6px; background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--alf-soft) 6px 8px); color: var(--alf); font-size: .6875rem; padding: 2px 8px; overflow: hidden; white-space: nowrap; }
+.tl .dl { position: absolute; left: -6px; right: 0; height: 0; border-top: 2px solid var(--k-solid); }
+.tl .dl span { position: absolute; right: 0; top: -18px; color: var(--k-text); font-size: .6875rem; font-weight: 600; background: var(--raise); padding-left: 4px; max-width: 90%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tl .now { position: absolute; left: -44px; right: 0; height: 0; border-top: 1.5px solid var(--now); }
+.tl .now::before { content: ""; position: absolute; left: 36px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--now); }
+.soon li { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; font-size: .8125rem; min-width: 0; }
+.soon .d { flex: none; width: 52px; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+.soon .w { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.soon .w.off { color: var(--muted); }
+.rows-c > li { display: flex; align-items: center; gap: 12px; padding: 8px 6px; border-radius: 10px; min-width: 0; }
+.rows-c > li:hover { background: var(--wash); }
+.rows-c .title { flex: 1; font-size: .9375rem; line-height: 1.45; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rows-c .src { flex: none; color: var(--muted); display: inline-flex; }
+.rows-c .src.alf { color: var(--alf); }
+.rows-c .when { flex: none; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+.rows-c .mark { margin-left: 2px; }
+.rows-c > li.sug { flex-wrap: wrap; padding: 10px; }
+@container page (max-width: 820px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; order: -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+}
+@container page (max-width: 520px) {
+  /* The next deadline is in the panel on top; a row keeps its title. */
+  .rows-c .left { display: none; }
+}
+
+/* ── A todo's card, over the blurred page ── */
+.pop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: color-mix(in oklch, var(--bg) 40%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: pop-in 180ms var(--ease); }
+@keyframes pop-in { from { opacity: 0; } }
+.sheet { width: min(460px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; border-radius: 16px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); animation: sheet-in 220ms var(--ease); }
+@keyframes sheet-in { from { transform: translateY(8px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .pop, .sheet { animation: none; } }
+.sheet-h { display: flex; gap: 12px; align-items: flex-start; padding: 18px 18px 12px; }
+.sheet-h .check { margin-top: 4px; }
+.sheet-h h2 { flex: 1; min-width: 0; font-size: 1.125rem; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.sheet-h .x { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.sheet-h .x:hover { background: var(--wash); color: var(--ink); }
+.facts { padding: 0 18px; display: flex; flex-direction: column; }
+.fact { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-top: 1px solid var(--line-soft); font-size: .875rem; }
+.fact > svg.i { margin-top: 3px; color: var(--muted); }
+.fact .v { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.fact .v small { color: var(--muted); font-size: .75rem; }
+.fact .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.fact a { color: var(--alf); text-decoration: none; }
+.fact a:hover { text-decoration: underline; }
+.mini { height: 26px; padding: 0 10px; border-radius: 999px; font-size: .75rem; box-shadow: inset 0 0 0 1px var(--line); color: var(--copy); white-space: nowrap; }
+.mini:hover { color: var(--ink); }
+.mini[aria-pressed="true"] { background: var(--pick); color: var(--on-pick); box-shadow: none; }
+.streak { display: flex; gap: 3px; }
+.streak i { width: 14px; height: 14px; border-radius: 4px; background: var(--wash); }
+.streak i[data-on] { background: var(--k-solid, var(--alf)); opacity: .8; }
+.streak i[data-today] { box-shadow: inset 0 0 0 1.5px var(--alf); }
+.log li { display: flex; gap: 8px; font-size: .8125rem; color: var(--copy); }
+.log li span:first-child { flex: none; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; min-width: 70px; }
+.sheet-f { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 18px 18px; border-top: 1px solid var(--line-soft); margin-top: 6px; }
+.sheet-f .grow { flex: 1; }
+.sheet-f .del { color: var(--now); }
+.field-in { width: 100%; height: 38px; border: 0; border-radius: 10px; padding: 0 12px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); outline: none; }
+.field-in:focus { box-shadow: inset 0 0 0 1.5px var(--alf); }
+
+/* ── The line at the bottom ── */
+.line-wrap { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 16px 16px; pointer-events: none; background: linear-gradient(to top, var(--bg) 62%, transparent); }
+.line-col { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+.will { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 14px; border-radius: 14px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); font-size: .8125rem; }
+.will b { font-weight: 600; }
+.will .grow { flex: 1; }
+.will kbd { padding: 1px 6px; border-radius: 5px; background: var(--wash); color: var(--muted); font: .6875rem var(--mono); }
+.line { display: flex; align-items: center; gap: 10px; height: 50px; padding: 0 8px 0 16px; border-radius: 16px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); }
+.line:focus-within { box-shadow: inset 0 0 0 1.5px var(--alf), var(--shadow); }
+.line svg.i { color: var(--alf); width: 20px; height: 20px; }
+.line input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; outline: none; }
+.line input::placeholder { color: var(--muted); }
+.line .go { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--alf-solid); color: var(--on-alf); }
+.line .go:disabled { background: var(--wash); color: var(--muted); cursor: default; }
+</style>
+</head>
+<body>
+<div class="proto" id="proto"></div>
+<main class="page">
+  <div class="scroll" id="scroll"><div class="col" id="view"></div></div>
+  <div class="line-wrap"><div class="line-col" id="line"></div></div>
+</main>
+<div id="pop"></div>
+
+<script type="module">
+/* ── State ── */
+const params = new URLSearchParams(location.search);
+const S = {
+  lang: params.get("lang") === "en" ? "en" : "zh",
+  view: ["a", "b", "c"].includes(params.get("v")) ? params.get("v") : "a",
+  area: "all",
+  open: null,          // the todo whose card is open, or "new"
+  srcs: false,         // the sources menu
+  draft: "",
+  fresh: null,
+  showDone: false,
+  drag: null,
+  todos: [],
+};
+const t = (zh, en) => (S.lang === "en" ? en : zh);
+const pick = (pair) => (Array.isArray(pair) ? pair[S.lang === "en" ? 1 : 0] : pair);
+const esc = (text) => String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ── Time: fixed at Thursday 2026-11-19 16:20 ── */
+const TODAY = "2026-11-19";
+const NOW_MIN = 16 * 60 + 20;
+const dn = (date) => { const [y, m, d] = date.split("-").map(Number); return Math.round(Date.UTC(y, m - 1, d) / 864e5); };
+const fromDn = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
+const plus = (date, days) => fromDn(dn(date) + days);
+const diff = (date) => dn(date) - dn(TODAY);
+const wday = (date) => (dn(date) + 4) % 7; // 0 Sunday
+const WD = () => S.lang === "en" ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] : ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const md = (date) => `${Number(date.slice(5, 7))}/${Number(date.slice(8))}`;
+const toMin = (at) => { const [h, m] = at.split(":").map(Number); return h * 60 + m; };
+/** "今天", "明天", "周日", "下周二", "12/3". */
+function dayWord(date) {
+  const d = diff(date);
+  if (d === 0) return t("今天", "Today");
+  if (d === 1) return t("明天", "Tomorrow");
+  if (d === -1) return t("昨天", "Yesterday");
+  const toSunday = (7 - wday(TODAY)) % 7;
+  if (d > 1 && d <= toSunday) return WD()[wday(date)];
+  if (d > toSunday && d <= toSunday + 7) return t(`下${WD()[wday(date)]}`, `Next ${WD()[wday(date)]}`);
+  return md(date);
+}
+/** Minutes until it is due: its hour, or the end of its day. */
+const minutesLeft = (todo) => todo.due ? diff(todo.due) * 1440 + (todo.at ? toMin(todo.at) : 1440) - NOW_MIN : null;
+function span(min) {
+  const abs = Math.abs(min), d = Math.floor(abs / 1440), h = Math.floor((abs % 1440) / 60), m = abs % 60;
+  if (d >= 1) return t(`${d} 天${h ? ` ${h} 小时` : ""}`, `${d}d${h ? ` ${h}h` : ""}`);
+  if (h >= 1) return t(`${h} 小时${m ? ` ${m} 分` : ""}`, `${h}h${m ? ` ${m}m` : ""}`);
+  return t(`${m} 分`, `${m}m`);
+}
+/** The countdown pill: only when it is under a day away (or late). */
+function leftPill(todo) {
+  if (todo.done || !todo.due || todo.repeat) return "";
+  const min = minutesLeft(todo);
+  if (min < 0) return `<span class="left" data-k="now"><i></i>${t(`已过 ${span(min)}`, `${span(min)} late`)}</span>`;
+  if (min > 1440) return "";
+  const k = min <= 180 ? "now" : "warm";
+  return `<span class="left" data-k="${k}"><i></i>${t(`还剩 ${span(min)}`, `${span(min)} left`)}</span>`;
+}
+const waited = (todo) => Math.max(0, dn(TODAY) - dn(todo.added.slice(0, 10)));
+/** How long a todo has waited says something only of one somebody wrote, not of one the calendar put there. */
+const stale = (todo) => !todo.done && !todo.repeat && !todo.suggested && ["you", "alfred"].includes(todo.src.kind) && waited(todo) >= 7;
+
+/* ── Sample world ── */
+const AREAS = [
+  { id: "learn", name: ["学习", "Learning"], k: "violet" }, { id: "work", name: ["工作", "Work"], k: "blue" },
+  { id: "life", name: ["生活", "Life"], k: "green" }, { id: "health", name: ["健康", "Health"], k: "teal" },
+];
+const areaOf = (todo) => AREAS.find((area) => area.id === todo.area);
+/** Days that are not tasks: they label their day. */
+const DAYS_OFF = [
+  { from: "2026-11-25", to: "2026-11-27", title: ["感恩节假期 · 停课", "Thanksgiving break · no classes"] },
+  { from: "2026-11-26", to: "2026-11-26", title: ["感恩节", "Thanksgiving"] },
+  { from: "2026-11-27", to: "2026-11-27", title: ["黑色星期五", "Black Friday"] },
+];
+const offOn = (date) => DAYS_OFF.filter((off) => off.from <= date && off.to >= date);
+/** Timed events on the calendar (not todos): what takes the hours. */
+const EVENTS = [
+  { date: "2026-11-19", from: "13:30", to: "14:50", title: ["算法课", "Algorithms lecture"], k: "violet" },
+  { date: "2026-11-19", from: "18:00", to: "19:20", title: ["分布式系统 答疑", "Distributed systems office hours"], k: "violet" },
+  { date: "2026-11-20", from: "10:00", to: "11:20", title: ["算法课", "Algorithms lecture"], k: "violet" },
+  { date: "2026-11-20", from: "15:00", to: "16:00", title: ["和导师 1:1", "1:1 with advisor"], k: "blue" },
+  { date: "2026-11-23", from: "13:30", to: "14:50", title: ["算法课", "Algorithms lecture"], k: "violet" },
+  { date: "2026-11-24", from: "13:30", to: "14:50", title: ["算法课", "Algorithms lecture"], k: "violet" },
+];
+const eventsOn = (date) => EVENTS.filter((event) => event.date === date);
+
+function seed() {
+  const td = (id, title, rest) => ({ id, title, done: false, added: "2026-11-19 08:00", src: { kind: "you" }, ...rest });
+  S.todos = [
+    td("t1", ["分布式系统 final project", "Distributed systems final project"], { area: "learn", due: TODAY, at: "21:00", doing: true, added: "2026-11-19 08:03",
+      src: { kind: "alfred", conv: ["final project 今晚 9 点截止", "final project due 9 tonight"] }, note: ["交到 Gradescope，记得附 README", "Submit on Gradescope with the README"],
+      log: [["08:03", ["Alfred 从对话里加的", "Added by Alfred from a conversation"]], ["12:40", ["你标了进行中", "You marked it in progress"]]] }),
+    td("t2", ["交完 project 后关掉云服务器", "Shut down the cloud servers after submitting"], { area: "work", due: TODAY, at: "22:00", added: "2026-11-19 19:45",
+      src: { kind: "alfred", conv: ["记得晚上交完 project 关服务器", "remind me to shut the servers"] } }),
+    td("t3", ["算法课作业 4", "Algorithms homework 4"], { area: "learn", due: "2026-11-20", at: "12:00", added: "2026-11-17 11:52",
+      src: { kind: "alfred", conv: ["明天要做 14757 作业", "homework due tomorrow noon"] } }),
+    td("t4", ["春季选课", "Spring 2027 registration"], { due: "2026-11-20", added: "2026-11-12 09:00", src: { kind: "calendar", label: ["学校日历", "School calendar"] } }),
+    td("t5", ["看算法视频", "Watch algorithms lectures"], { area: "learn", due: "2026-11-20", added: "2026-11-15 09:00",
+      src: { kind: "calendar", label: ["个人日历", "Personal"] }, repeat: { days: "daily", streak: 4, last: TODAY } }),
+    td("t6", ["回复 Leo：合同第二版", "Reply to Leo: contract v2"], { area: "work", due: "2026-11-20", added: "2026-11-18 10:12",
+      src: { kind: "mail", label: ["合同第二版", "Contract v2"], from: "Leo Chen" } }),
+    td("t7", ["Pass/No Pass 截止", "Pass/No Pass deadline"], { due: "2026-11-23", added: "2026-11-09 09:00", src: { kind: "calendar", label: ["学校日历", "School calendar"] } }),
+    td("t8", ["分布式系统最后一个作业", "Last distributed systems assignment"], { area: "learn", due: "2026-11-24", at: "23:59", added: "2026-11-19 08:05" }),
+    td("t9", ["订感恩节回家的机票", "Book flights home for Thanksgiving"], { area: "life", due: "2026-11-21", added: "2026-11-11 21:30" }),
+    td("t10", ["课程评价", "Course evaluations"], { start: "2026-11-23", due: "2026-12-04", added: "2026-11-09 09:00", src: { kind: "calendar", label: ["学校日历", "School calendar"] } }),
+    td("t11", ["续健身房会员", "Renew gym membership"], { area: "health", added: "2026-11-06 18:20" }),
+    td("t12", ["更新简历", "Update résumé"], { area: "work", added: "2026-11-12 22:04", src: { kind: "alfred", conv: ["求职准备", "job search prep"] } }),
+    td("s1", ["报销 10 月差旅", "Expense October travel"], { area: "work", due: "2026-11-30", added: "2026-11-19 09:00", suggested: true,
+      src: { kind: "mail", label: ["10 月报销提醒", "October expenses reminder"], from: "Finance" } }),
+    td("d1", ["看算法视频", "Watch algorithms lectures"], { area: "learn", due: TODAY, done: true, doneAt: "09:10", src: { kind: "calendar", label: ["个人日历", "Personal"] } }),
+    td("d2", ["交算法小测", "Submit algorithms quiz"], { area: "learn", due: TODAY, at: "14:00", done: true, doneAt: "13:52" }),
+  ];
+}
+
+/* ── Icons ── */
+const I = {
+  check: '<path d="M5.5 10.5l3 3 6-7"/>',
+  you: '<circle cx="10" cy="7" r="3"/><path d="M4 17c.8-3 3.2-4.5 6-4.5s5.2 1.5 6 4.5"/>',
+  alfred: '<path d="M10 2.5l6.5 3.75v7.5L10 17.5l-6.5-3.75v-7.5z"/><path d="M10 10l6.5-3.75M10 10v7.5M10 10L3.5 6.25"/>',
+  calendar: '<rect x="3" y="4.5" width="14" height="12.5" rx="2.5"/><path d="M3 8.5h14M7 2.5v3M13 2.5v3"/>',
+  mail: '<rect x="2.5" y="4.5" width="15" height="11" rx="2.5"/><path d="M3 6l7 5 7-5"/>',
+  repeat: '<path d="M4 9a6 6 0 0 1 10.5-4M16 11a6 6 0 0 1-10.5 4"/><path d="M14.5 2v3h-3M5.5 18v-3h3"/>',
+  clock: '<circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.5 2"/>',
+  hourglass: '<path d="M6 3h8M6 17h8M7 3c0 4 6 4 6 7s-6 3-6 7M13 3c0 4-6 4-6 7s6 3 6 7"/>',
+  note: '<path d="M5 3h7l3 3v11H5z"/><path d="M8 9h4M8 12h4"/>',
+  tag: '<path d="M3 3h6l8 8-6 6-8-8z"/><circle cx="7" cy="7" r="1.2"/>',
+  x: '<path d="M6 6l8 8M14 6l-8 8"/>',
+  plus: '<path d="M10 4v12M4 10h12"/>',
+  sliders: '<path d="M4 6h8M15 6h1M4 14h2M9 14h7"/><circle cx="13.5" cy="6" r="1.5"/><circle cx="7.5" cy="14" r="1.5"/>',
+  arrow: '<path d="M4 10h12M11 5l5 5-5 5"/>',
+  off: '<path d="M10 3v2M10 15v2M3 10h2M15 10h2M5 5l1.4 1.4M13.6 13.6L15 15M5 15l1.4-1.4M13.6 6.4L15 5"/><circle cx="10" cy="10" r="3"/>',
+  done: '<circle cx="10" cy="10" r="7"/><path d="M7 10.5l2 2 4-4.5"/>',
+};
+const icon = (name, cls = "i") => `<svg class="${cls}" viewBox="0 0 20 20" aria-hidden="true">${I[name]}</svg>`;
+
+/* ── Pieces ── */
+const visible = (todo) => S.area === "all" || (S.area === "none" ? !todo.area : todo.area === S.area);
+const open = () => S.todos.filter((todo) => !todo.done && !todo.suggested);
+const notYet = (todo) => !!todo.repeat && !todo.done && !!todo.due && todo.due > TODAY;
+function checkBtn(todo) {
+  const later = notYet(todo);
+  return `<button type="button" class="check" role="checkbox" aria-checked="${todo.done}" data-act="check" data-id="${todo.id}" ${later ? `data-later disabled title="${t(`下次：${dayWord(todo.due)}`, `Next time: ${dayWord(todo.due)}`)}"` : ""} aria-label="${t("完成", "Complete")} ${esc(pick(todo.title))}">${icon("check", "")}</button>`;
+}
+const SRC = {
+  you: () => [icon("you"), t("你", "You"), ""],
+  alfred: () => [icon("alfred"), "Alfred", "alf"],
+  calendar: (src) => [icon("calendar"), pick(src.label), ""],
+  mail: (src) => [icon("mail"), src.from, ""],
+};
+function srcBit(todo) { const [svg, word, cls] = SRC[todo.src.kind](todo.src); return `<span class="${cls}" title="${esc(srcLong(todo))}">${svg}${esc(word)}</span>`; }
+function srcLong(todo) {
+  const src = todo.src;
+  if (src.kind === "you") return t("你加的", "Added by you");
+  if (src.kind === "alfred") return t(`Alfred 从对话「${pick(src.conv)}」里加的`, `Added by Alfred from “${pick(src.conv)}”`);
+  if (src.kind === "calendar") return t(`来自日历 · ${pick(src.label)}`, `From the calendar · ${pick(src.label)}`);
+  return t(`${src.from} 的邮件「${pick(src.label)}」`, `${src.from}'s mail “${pick(src.label)}”`);
+}
+function metaBits(todo, { when = false } = {}) {
+  const area = areaOf(todo);
+  const bits = [];
+  if (area) bits.push(`<span class="tag" data-k="${area.k}">${pick(area.name)}</span>`);
+  if (when && todo.due) bits.push(`<span>${todo.start ? `${md(todo.start)} – ${md(todo.due)}` : dayWord(todo.due)}${todo.at ? ` ${todo.at}` : ""}</span>`);
+  if (todo.start && !when) bits.push(`<span>${t(`${md(todo.start)} 起，到 ${md(todo.due)}`, `${md(todo.start)} to ${md(todo.due)}`)}</span>`);
+  if (todo.doing && !todo.done) bits.push(`<span class="doing">${t("进行中", "In progress")}</span>`);
+  if (todo.repeat) bits.push(`<span>${icon("repeat")}${t(`每天 · 连续 ${todo.repeat.streak} 天`, `Every day · ${todo.repeat.streak}-day streak`)}</span>`);
+  bits.push(srcBit(todo));
+  const w = waited(todo);
+  if (stale(todo)) bits.push(`<span class="old" data-k="warm">${icon("hourglass")}${t(`放了 ${w} 天`, `waiting ${w} days`)}</span>`);
+  if (todo.note && !todo.done) bits.push(`<span>${icon("note")}${t("有备注", "Note")}</span>`);
+  return bits.join("");
+}
+const sugActs = (todo) => `<div class="sug-acts"><button type="button" class="yes" data-act="keep" data-id="${todo.id}">${t("留下", "Keep")}</button><button type="button" data-act="drop" data-id="${todo.id}">${t("不要", "Drop")}</button></div>`;
+
+/* ── Head: title, summary, areas, sources, + ── */
+function head() {
+  const o = open();
+  const today = o.filter((todo) => todo.due && todo.due <= TODAY && (!todo.start || todo.start <= TODAY));
+  const soon = o.filter((todo) => { const m = minutesLeft(todo); return m !== null && m >= 0 && m <= 1440 && !todo.repeat; });
+  const counts = AREAS.map((area) => ({ ...area, n: o.filter((todo) => todo.area === area.id).length })).filter((area) => area.n);
+  const none = o.filter((todo) => !todo.area).length;
+  const chips = [`<button type="button" class="chip" data-area="all" aria-pressed="${S.area === "all"}">${t("全部", "All")}<span class="n">${o.length}</span></button>`,
+    ...counts.map((area) => `<button type="button" class="chip" data-area="${area.id}" aria-pressed="${S.area === area.id}" data-k="${area.k}"><span class="mark"></span>${pick(area.name)}<span class="n">${area.n}</span></button>`),
+    none ? `<button type="button" class="chip" data-area="none" aria-pressed="${S.area === "none"}" data-k="gray"><span class="mark"></span>${t("未分类", "No area")}<span class="n">${none}</span></button>` : ""];
+  return `<div class="head">
+    <h1>${icon("done")}${t("待办", "Todos")}</h1>
+    <span class="sum">${t(`<b>${today.length}</b> 件今天 · <b>${soon.length}</b> 件 24 小时内截止`, `<b>${today.length}</b> today · <b>${soon.length}</b> due within a day`)}</span>
+    <span class="grow"></span>
+    <div class="srcs">
+      <button type="button" class="icon-btn" data-act="srcs" aria-expanded="${S.srcs}">${icon("sliders")}${t("来源", "Sources")}</button>
+      ${S.srcs ? `<div class="srcs-pop">
+        <label>${t("日历", "Calendar")}<select><option>${t("关", "Off")}</option><option selected>${t("全天事件", "All-day events")}</option><option>${t("全部", "All")}</option></select></label>
+        <label>${t("邮件", "Mail")} <span><small>09:00</small> <button type="button" class="mini">${t("现在挑", "Pick now")}</button></span></label>
+        <small>${t("假期、停课这类日子不变成待办，显示在当天上。", "Days off (holidays, breaks) label their day instead of becoming todos.")}</small>
+      </div>` : ""}
+    </div>
+    <button type="button" class="icon-btn solid" data-act="new">${icon("plus")}${t("添加", "Add")}</button>
+  </div>
+  <div class="chips" role="group">${chips.join("")}</div>`;
+}
+
+/* ── A: by day ── */
+function viewA() {
+  const o = open().filter(visible);
+  const sugs = S.todos.filter((todo) => todo.suggested && visible(todo));
+  const strip = Array.from({ length: 14 }, (_, i) => {
+    const date = plus(TODAY, i);
+    const on = o.filter((todo) => todo.due === date);
+    const off = offOn(date);
+    const dots = on.slice(0, 6).map((todo) => `<i ${areaOf(todo) ? `data-k="${areaOf(todo).k}"` : ""} ${todo.at ? "data-deadline" : ""}></i>`).join("");
+    return `<button type="button" class="cell" data-goto="${date}" ${i === 0 ? "data-today" : ""} ${off.length ? "data-off" : ""} ${i >= 7 ? "data-far" : ""} ${[0, 6].includes(wday(date)) ? "data-weekend" : ""} title="${esc(off.map((x) => pick(x.title)).join(" · "))}">
+      <span class="wd">${i === 0 ? t("今", "Today") : WD()[wday(date)]}</span><span class="d">${Number(date.slice(8))}</span>
+      <span class="dots">${dots}${on.length > 6 ? `<i></i>` : ""}</span>
+      ${off.length ? `<span class="off">${esc(pick(off[0].title).split(" · ")[0])}</span>` : ""}
+    </button>`;
+  }).join("");
+
+  const groups = new Map();
+  const put = (key, todo) => groups.set(key, [...(groups.get(key) ?? []), todo]);
+  for (const todo of o) {
+    if (!todo.due) put("any", todo);
+    else if (todo.start && todo.start <= TODAY && todo.due >= TODAY) put(TODAY, todo);
+    else if (todo.due < TODAY) put("late", todo);
+    else if (diff(todo.start ?? todo.due) > 13) put("later", todo);
+    else put(todo.start ?? todo.due, todo);
+  }
+  for (const s of sugs) put(s.due && diff(s.due) <= 13 ? s.due : "later", s);
+  // Days with something on them, or a day off, in the two weeks.
+  const keys = Array.from({ length: 14 }, (_, i) => plus(TODAY, i)).filter((date) => groups.has(date) || offOn(date).length || date === TODAY);
+  const order = ["late", ...keys, "later", "any"].filter((key) => groups.has(key) || keys.includes(key));
+  const byTime = (a, b) => (a.at ?? "99").localeCompare(b.at ?? "99");
+
+  const row = (todo) => {
+    const late = todo.due && todo.due < TODAY;
+    const at = todo.at ? `${todo.at}${late ? `<small>${md(todo.due)}</small>` : ""}` : todo.due && !todo.start ? `<small>${late ? md(todo.due) : t("全天", "All day")}</small>` : todo.start ? `<small>${t("期间", "Range")}</small>` : "";
+    return `<li class="${todo.suggested ? "sug" : ""} ${S.fresh === todo.id ? "fresh" : ""}" data-k="${areaOf(todo)?.k ?? ""}" data-open="${todo.id}">
+      <span class="at">${at}</span>
+      ${todo.suggested ? `<span class="check" style="opacity:.4"></span>` : checkBtn(todo)}
+      <span class="body"><span class="title">${esc(pick(todo.title))}</span><span class="meta">${todo.suggested ? `<span class="alf">${icon("alfred")}${t("Alfred 建议", "Alfred suggests")}</span>` : ""}${metaBits(todo)}</span>${todo.suggested ? sugActs(todo) : ""}</span>
+      <span class="end">${leftPill(todo)}</span>
+    </li>`;
+  };
+  const sections = order.map((key) => {
+    const items = (groups.get(key) ?? []).sort(byTime);
+    if (key === "late") return `<section class="day" data-late data-k="now"><div class="day-h"><h2>${t("已过期", "Overdue")}</h2><span class="date">${items.length}</span></div><ul class="rows-a">${items.map(row).join("")}</ul></section>`;
+    if (key === "later") return `<section class="day"><div class="day-h"><h2>${t("两周以后", "After two weeks")}</h2><span class="date">${items.length}</span></div><ul class="rows-a">${items.map(row).join("")}</ul></section>`;
+    if (key === "any") return `<section class="day"><div class="day-h"><h2>${t("随时", "Any time")}</h2><span class="date">${items.length}</span></div><ul class="rows-a">${items.map(row).join("")}</ul></section>`;
+    const off = offOn(key);
+    const ev = eventsOn(key);
+    return `<section class="day" id="d-${key}" ${key === TODAY ? "data-today" : ""}>
+      <div class="day-h"><h2>${dayWord(key)}</h2><span class="date">${md(key)} ${WD()[wday(key)]}</span>
+        ${off.map((x) => `<span class="ctx">${icon("off")}${esc(pick(x.title))}</span>`).join("")}
+        ${ev.length ? `<span class="cal" title="${esc(ev.map((e) => `${e.from} ${pick(e.title)}`).join("\n"))}">${icon("calendar")} ${t(`${ev.length} 个日程`, `${ev.length} event${ev.length > 1 ? "s" : ""}`)}</span>` : ""}
+      </div>
+      ${items.length ? `<ul class="rows-a">${items.map(row).join("")}</ul>` : `<p class="date" style="padding:10px 6px;color:var(--muted);font-size:.8125rem">${off.length ? t("没有待办", "Nothing to do") : t("今天的都做完了", "All done for today")}</p>`}
+    </section>`;
+  }).join("");
+  return `<div class="strip">${strip}</div>
+    <div class="strip-key"><span><i></i>${t("一件待办", "a todo")}</span><span><i class="sq"></i>${t("有截止时间", "has a deadline hour")}</span><span><i class="hatch"></i>${t("放假 / 停课", "day off")}</span></div>
+    ${sections}${doneSection(viewDoneRow)}`;
+}
+
+/* ── B: board ── */
+function viewB() {
+  const o = open().filter(visible);
+  const sugs = S.todos.filter((todo) => todo.suggested && visible(todo));
+  const toSunday = (7 - wday(TODAY)) % 7;
+  const lanes = [
+    { id: "today", name: t("今天", "Today"), date: md(TODAY), test: (todo) => todo.due && (todo.due <= TODAY || (todo.start && todo.start <= TODAY)), to: TODAY },
+    { id: "tomorrow", name: t("明天", "Tomorrow"), date: md(plus(TODAY, 1)), test: (todo) => todo.due && diff(todo.due) === 1, to: plus(TODAY, 1) },
+    { id: "week", name: t("本周", "This week"), date: `${md(plus(TODAY, 2))} – ${md(plus(TODAY, toSunday))}`, test: (todo) => todo.due && diff(todo.start ?? todo.due) > 1 && diff(todo.start ?? todo.due) <= toSunday, to: plus(TODAY, 2) },
+    { id: "later", name: t("以后", "Later"), date: t(`${md(plus(TODAY, toSunday + 1))} 起`, `from ${md(plus(TODAY, toSunday + 1))}`), test: (todo) => todo.due && diff(todo.start ?? todo.due) > toSunday, to: plus(TODAY, toSunday + 1) },
+    { id: "any", name: t("随时", "Any time"), date: "", test: (todo) => !todo.due, to: null },
+  ];
+  const card = (todo) => {
+    const when = todo.due ? `${todo.start ? `${md(todo.start)} – ${md(todo.due)}` : dayWord(todo.due)}${todo.at ? ` ${todo.at}` : ""}` : "";
+    return `<li class="card ${todo.suggested ? "sug" : ""} ${S.fresh === todo.id ? "fresh" : ""}" data-k="${areaOf(todo)?.k ?? ""}" data-open="${todo.id}" ${todo.suggested ? "" : `draggable="true" data-drag-id="${todo.id}"`}>
+      <div class="top">${todo.suggested ? `<span class="check" style="opacity:.4"></span>` : checkBtn(todo)}<span class="title">${esc(pick(todo.title))}</span></div>
+      <div class="bottom">${when ? `<span class="when">${when}</span>` : ""}${leftPill(todo)}</div>
+      <div class="bottom"><span class="meta">${todo.suggested ? `<span class="alf">${icon("alfred")}${t("Alfred 建议", "Alfred suggests")}</span>` : ""}${metaBits(todo)}</span></div>
+      ${todo.suggested ? `<div class="bottom">${sugActs(todo)}</div>` : ""}
+    </li>`;
+  };
+  const byWhen = (a, b) => (a.due ?? "9").localeCompare(b.due ?? "9") || (a.at ?? "99").localeCompare(b.at ?? "99");
+  return `<div class="board">${lanes.map((lane) => {
+    const items = [...o, ...sugs].filter((todo) => lane.test(todo) && !(lane.id !== "today" && lanes[0].test(todo))).sort(byWhen);
+    const offs = lane.id === "later" ? DAYS_OFF.filter((x) => x.to > plus(TODAY, toSunday)) : lane.id === "week" ? DAYS_OFF.filter((x) => x.from <= plus(TODAY, toSunday) && x.to > plus(TODAY, 1)) : offOn(lane.id === "today" ? TODAY : plus(TODAY, 1)).filter(() => lane.id !== "any");
+    return `<section class="lane" data-lane="${lane.id}" data-to="${lane.to ?? ""}" ${lane.id === "today" ? "data-today" : ""}>
+      <div class="lane-h">${lane.name}<span class="date">${lane.date}</span><span class="n">${items.length}</span></div>
+      ${offs.map((x) => `<span class="ctx">${icon("off")}${md(x.from)}${x.to !== x.from ? `–${md(x.to)}` : ""} ${esc(pick(x.title))}</span>`).join("")}
+      <ul style="display:flex;flex-direction:column;gap:8px">${items.map(card).join("")}</ul>
+      ${items.length ? "" : `<p class="empty">${t("拖到这里", "Drop here")}</p>`}
+    </section>`;
+  }).join("")}</div>${doneSection(viewDoneRow)}`;
+}
+
+/* ── C: today first ── */
+function viewC() {
+  const o = open().filter(visible);
+  const sugs = S.todos.filter((todo) => todo.suggested && visible(todo));
+  const groups = [
+    ["today", t("今天", "Today"), (todo) => todo.due && (todo.due <= TODAY || (todo.start && todo.start <= TODAY))],
+    ["tomorrow", t("明天", "Tomorrow"), (todo) => todo.due && diff(todo.due) === 1],
+    ["soon", t("两周内", "Next two weeks"), (todo) => todo.due && diff(todo.start ?? todo.due) > 1 && diff(todo.start ?? todo.due) <= 13],
+    ["later", t("以后", "Later"), (todo) => todo.due && diff(todo.start ?? todo.due) > 13],
+    ["any", t("随时", "Any time"), (todo) => !todo.due],
+  ];
+  const seen = new Set();
+  const row = (todo) => {
+    const area = areaOf(todo);
+    const [svg, word, cls] = SRC[todo.src.kind](todo.src);
+    const when = todo.due ? (diff(todo.due) <= 1 && todo.at ? todo.at : todo.start ? `→${md(todo.due)}` : diff(todo.due) <= 1 ? "" : dayWord(todo.due)) : "";
+    return `<li class="${todo.suggested ? "sug" : ""} ${S.fresh === todo.id ? "fresh" : ""}" data-k="${area?.k ?? ""}" data-open="${todo.id}" title="${esc(srcLong(todo))}">
+      ${todo.suggested ? `<span class="check" style="opacity:.4"></span>` : checkBtn(todo)}
+      <span class="title">${esc(pick(todo.title))}</span>
+      ${todo.repeat ? `<span class="src">${icon("repeat")}</span>` : ""}
+      ${stale(todo) ? `<span class="src" data-k="warm" style="color:var(--k-text)" title="${t(`放了 ${waited(todo)} 天`, `waiting ${waited(todo)} days`)}">${icon("hourglass")}</span>` : ""}
+      <span class="src ${cls}" title="${esc(word)}">${svg}</span>
+      ${leftPill(todo)}
+      <span class="when">${when}</span>
+      ${area ? `<span class="mark" title="${esc(pick(area.name))}"></span>` : `<span class="mark" style="visibility:hidden"></span>`}
+      ${todo.suggested ? `<div style="flex-basis:100%;display:flex;gap:8px;align-items:center;padding-left:32px"><span class="meta"><span class="alf">${icon("alfred")}${t("Alfred 建议 · 来自邮件", "Alfred suggests · from mail")}</span></span>${sugActs(todo)}</div>` : ""}
+    </li>`;
+  };
+  const list = groups.map(([id, name, test]) => {
+    const items = [...o, ...sugs].filter((todo) => !seen.has(todo.id) && test(todo)).sort((a, b) => (a.due ?? "9").localeCompare(b.due ?? "9") || (a.at ?? "99").localeCompare(b.at ?? "99"));
+    items.forEach((todo) => seen.add(todo.id));
+    if (!items.length) return "";
+    return `<div class="section-h">${name}<span class="n">${items.length}</span></div><ul class="rows-c">${items.map(row).join("")}</ul>`;
+  }).join("");
+
+  // Today, on the right.
+  const todayAll = S.todos.filter((todo) => !todo.suggested && todo.due === TODAY && !(todo.repeat && todo.due !== TODAY));
+  const doneN = todayAll.filter((todo) => todo.done).length;
+  const totalN = todayAll.length;
+  const r = 24, c = 2 * Math.PI * r;
+  const next = o.filter((todo) => todo.at && minutesLeft(todo) >= 0).sort((a, b) => minutesLeft(a) - minutesLeft(b))[0];
+  // The hours from now to the end of the day: calendar events, free time, deadlines.
+  const from = 16 * 60, to = 24 * 60, H = 300, y = (min) => ((min - from) / (to - from)) * H;
+  const evs = eventsOn(TODAY).filter((e) => toMin(e.to) > NOW_MIN);
+  const deadline = next ? toMin(next.at) : to;
+  let cursor = NOW_MIN, free = 0;
+  const frees = [];
+  for (const e of [...evs].sort((a, b) => a.from.localeCompare(b.from))) {
+    if (toMin(e.from) > cursor && toMin(e.from) <= deadline) { frees.push([cursor, toMin(e.from)]); free += toMin(e.from) - cursor; }
+    cursor = Math.max(cursor, toMin(e.to));
+  }
+  if (deadline > cursor) { frees.push([cursor, deadline]); free += deadline - cursor; }
+  const hours = [16, 18, 20, 22, 24].map((h) => `<div class="hr" style="top:${y(h * 60)}px"><span>${String(h % 24).padStart(2, "0")}:00</span></div>`).join("");
+  const blocks = evs.map((e) => `<div class="ev" data-k="${e.k}" style="top:${y(Math.max(toMin(e.from), from))}px;height:${y(toMin(e.to)) - y(Math.max(toMin(e.from), from)) - 2}px">${e.from} ${esc(pick(e.title))}</div>`).join("");
+  const freeBlocks = frees.filter(([a, b]) => b - a >= 30).map(([a, b]) => `<div class="free" style="top:${y(a) + 1}px;height:${y(b) - y(a) - 3}px">${t(`空 ${span(b - a)}`, `free ${span(b - a)}`)}</div>`).join("");
+  const lines = o.filter((todo) => todo.due === TODAY && todo.at).map((todo) => `<div class="dl" data-k="${areaOf(todo)?.k ?? "gray"}" style="top:${y(toMin(todo.at))}px"><span>${todo.at} ${esc(pick(todo.title))}</span></div>`).join("");
+  const soon = [
+    ...o.filter((todo) => todo.due && diff(todo.due) >= 2 && diff(todo.due) <= 13).map((todo) => ({ date: todo.due, html: `<span class="w">${esc(pick(todo.title))}</span>` })),
+    ...DAYS_OFF.filter((x) => diff(x.from) <= 13).map((x) => ({ date: x.from, html: `<span class="w off">${esc(pick(x.title))}</span>` })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+
+  const rail = `<aside class="rail">
+    <div class="panel"><h3>${t("今天", "Today")} · ${md(TODAY)} ${WD()[wday(TODAY)]}</h3>
+      <div class="progress"><svg class="ring" viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="${r}"/><circle class="fg" cx="28" cy="28" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - (totalN ? doneN / totalN : 0))}" transform="rotate(-90 28 28)"/></svg>
+        <div><b>${doneN} / ${totalN}</b><small>${t("今天的做完了", "of today's done")}</small></div></div>
+    </div>
+    ${next ? `<div class="panel" data-k="${minutesLeft(next) <= 180 ? "now" : "warm"}"><h3>${t("下一个截止", "Next deadline")}</h3>
+      <div class="next"><span class="big">${t(`还剩 ${span(minutesLeft(next))}`, `${span(minutesLeft(next))} left`)}</span><span class="what">${next.at} · ${esc(pick(next.title))}</span>
+      <small>${t(`到那之前，日历上还空 ${span(free)}`, `Before then, ${span(free)} free on your calendar`)}</small></div></div>` : ""}
+    <div class="panel"><h3>${t("今天剩下的时间", "The rest of today")}<span>${t("日历 + 截止", "calendar + deadlines")}</span></h3>
+      <div class="tl">${hours}${freeBlocks}${blocks}${lines}<div class="now" style="top:${y(NOW_MIN)}px"></div></div></div>
+    <div class="panel"><h3>${t("接下来两周", "Next two weeks")}</h3><ul class="soon">${soon.map((s) => `<li><span class="d">${dayWord(s.date)}</span>${s.html}</li>`).join("")}</ul></div>
+  </aside>`;
+  return `<div class="split"><div>${list}${doneSection(viewDoneRow)}</div>${rail}</div>`;
+}
+
+function viewDoneRow(todo) {
+  return `<li class="done" data-open="${todo.id}" data-k="${areaOf(todo)?.k ?? ""}" style="display:flex;gap:12px;align-items:center;padding:8px 6px">
+    ${checkBtn(todo)}<span class="title" style="flex:1">${esc(pick(todo.title))}</span><span class="meta"><span>${todo.doneAt}</span></span></li>`;
+}
+function doneSection(row) {
+  const done = S.todos.filter((todo) => todo.done && visible(todo));
+  if (!done.length) return "";
+  return `<div class="section-h">${t("今天做完的", "Done today")}<span class="n">${done.length}</span><button type="button" data-act="show-done">${S.showDone ? t("收起", "Hide") : t("展开", "Show")}</button></div>
+    ${S.showDone ? `<ul>${done.map(row).join("")}</ul>` : ""}`;
+}
+
+/* ── A todo's card ── */
+function sheet(todo) {
+  if (S.open === "new") return sheetNew();
+  const area = areaOf(todo);
+  const min = minutesLeft(todo);
+  const dayChips = [[TODAY, t("今天", "Today")], [plus(TODAY, 1), t("明天", "Tomorrow")], [plus(TODAY, (8 - wday(TODAY)) % 7 || 7), t("下周一", "Next Mon")], [null, t("不定", "No date")]];
+  const facts = [];
+  facts.push(`<div class="fact">${icon("clock")}<div class="v">
+    <div>${todo.due ? `${todo.start ? `${md(todo.start)} – ` : ""}${dayWord(todo.due)} · ${md(todo.due)} ${WD()[wday(todo.due)]}${todo.at ? ` · ${todo.at}` : t(" · 全天", " · all day")}` : t("没有日期", "No date")}
+      ${min !== null && !todo.done && !todo.repeat ? `<small>${min < 0 ? t(`已过 ${span(min)}`, `${span(min)} late`) : t(`还剩 ${span(min)}`, `${span(min)} left`)}</small>` : ""}</div>
+    ${todo.repeat || todo.done ? "" : `<div class="row">${dayChips.map(([date, word]) => `<button type="button" class="mini" data-act="move" data-to="${date ?? ""}" aria-pressed="${(todo.due ?? null) === date}">${word}</button>`).join("")}</div>`}
+  </div></div>`);
+  if (todo.repeat) {
+    const cells = Array.from({ length: 14 }, (_, i) => { const back = 13 - i; return `<i ${back < todo.repeat.streak ? "data-on" : ""} ${back === 0 ? "data-today" : ""}></i>`; }).join("");
+    facts.push(`<div class="fact">${icon("repeat")}<div class="v"><div>${t("每天重复", "Repeats every day")}<small> · ${t(`连续 ${todo.repeat.streak} 天`, `${todo.repeat.streak}-day streak`)}</small></div>
+      <div class="streak" data-k="${area?.k ?? ""}">${cells}</div><small>${t(`今天的已做完，下一次 ${dayWord(todo.due)} 才能勾`, `Today's is done; the next can be ticked ${dayWord(todo.due).toLowerCase()}`)}</small></div></div>`);
+  }
+  facts.push(`<div class="fact">${icon("tag")}<div class="v"><div class="row">${AREAS.map((a) => `<button type="button" class="mini" data-act="area" data-to="${a.id}" aria-pressed="${todo.area === a.id}">${pick(a.name)}</button>`).join("")}</div></div></div>`);
+  const [svg] = SRC[todo.src.kind](todo.src);
+  facts.push(`<div class="fact">${svg}<div class="v"><div>${esc(srcLong(todo))}${todo.src.kind === "calendar" || todo.src.kind === "mail" ? ` · <a href="#" onclick="return false">${t("打开", "Open")} ↗</a>` : ""}</div>
+    <small>${t(`${md(todo.added.slice(0, 10))} ${todo.added.slice(11)} 加入`, `Added ${md(todo.added.slice(0, 10))} ${todo.added.slice(11)}`)}${waited(todo) >= 1 && !todo.done ? t(` · 已经 ${waited(todo)} 天`, ` · ${waited(todo)} days ago`) : ""}</small></div></div>`);
+  if (todo.note) facts.push(`<div class="fact">${icon("note")}<div class="v">${esc(pick(todo.note))}</div></div>`);
+  if (todo.log) facts.push(`<div class="fact">${icon("alfred")}<div class="v"><ul class="log">${todo.log.map(([at, what]) => `<li><span>${t("今天", "Today")} ${at}</span><span>${esc(pick(what))}</span></li>`).join("")}</ul></div></div>`);
+  return `<div class="pop" data-act="close"><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(pick(todo.title))}" data-k="${area?.k ?? ""}">
+    <div class="sheet-h">${checkBtn(todo)}<h2>${esc(pick(todo.title))}</h2><button type="button" class="x" data-act="close" aria-label="${t("关闭", "Close")}">${icon("x")}</button></div>
+    <div class="facts">${facts.join("")}</div>
+    <div class="sheet-f">
+      ${todo.done ? "" : `<button type="button" class="mini" data-act="doing" aria-pressed="${!!todo.doing}">${t("进行中", "In progress")}</button>`}
+      <button type="button" class="mini" data-act="ask">${icon("alfred")} ${t("让 Alfred…", "Ask Alfred…")}</button>
+      <span class="grow"></span>
+      <button type="button" class="mini del" data-act="delete">${t("删除", "Delete")}</button>
+    </div>
+  </div></div>`;
+}
+function sheetNew() {
+  return `<div class="pop" data-act="close"><div class="sheet" role="dialog" aria-modal="true" aria-label="${t("添加待办", "Add a todo")}">
+    <div class="sheet-h"><h2>${t("添加待办", "Add a todo")}</h2><button type="button" class="x" data-act="close" aria-label="${t("关闭", "Close")}">${icon("x")}</button></div>
+    <div class="facts"><div class="fact" style="border:0">${icon("done")}<div class="v"><input class="field-in" id="new-title" placeholder="${t("要做什么", "What to do")}"></div></div>
+      <div class="fact">${icon("clock")}<div class="v"><div class="row">${[[TODAY, t("今天", "Today")], [plus(TODAY, 1), t("明天", "Tomorrow")], ["", t("不定", "No date")]].map(([d, w], i) => `<button type="button" class="mini" data-new-day="${d}" aria-pressed="${i === 2}">${w}</button>`).join("")}<input class="field-in" id="new-at" type="time" style="width:120px;height:28px"></div></div></div>
+      <div class="fact">${icon("tag")}<div class="v"><div class="row">${AREAS.map((a) => `<button type="button" class="mini" data-new-area="${a.id}" aria-pressed="false">${pick(a.name)}</button>`).join("")}</div></div></div></div>
+    <div class="sheet-f"><span class="grow"></span><button type="button" class="icon-btn solid" data-act="create">${t("添加", "Add")}</button></div>
+  </div></div>`;
+}
+
+/* ── The line: say it, see what it becomes ── */
+function parse(text) {
+  let due = null, at = null, area = null, title = text.trim();
+  const cut = (re) => { title = title.replace(re, " ").replace(/\s+/g, " ").trim(); };
+  const wk = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
+  let m;
+  if (/今天|今晚|today|tonight/i.test(text)) { due = TODAY; cut(/今天|今晚|today|tonight/i); }
+  else if (/后天/.test(text)) { due = plus(TODAY, 2); cut(/后天/); }
+  else if (/明天|明早|明晚|tomorrow/i.test(text)) { due = plus(TODAY, 1); cut(/明天|明早|明晚|tomorrow/i); }
+  else if ((m = text.match(/(下)?(?:周|星期|礼拜)([一二三四五六日天])/))) {
+    const want = wk[m[2]]; let d = (want - wday(TODAY) + 7) % 7 || 7; if (m[1]) d += d <= (7 - wday(TODAY)) % 7 ? 7 : 0; due = plus(TODAY, d); cut(m[0]);
+  } else if ((m = text.match(/\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i))) {
+    const want = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(m[1].toLowerCase()); due = plus(TODAY, (want - wday(TODAY) + 7) % 7 || 7); cut(m[0]);
+  }
+  if ((m = text.match(/(早上|上午|中午|下午|晚上)?\s*(\d{1,2})(?:[点:：](\d{2})?|\s*(am|pm))/i))) {
+    let h = Number(m[2]); const pm = /下午|晚上/.test(m[1] ?? "") || /pm/i.test(m[4] ?? ""); if (pm && h < 12) h += 12; if (/中午/.test(m[1] ?? "") && h < 6) h += 12;
+    if (h <= 24) { at = `${String(h).padStart(2, "0")}:${m[3] ?? "00"}`; cut(m[0]); }
+    if (!due) due = TODAY;
+  }
+  cut(/之前|以前|前|截止|before|by/gi);
+  if (/作业|课|project|lecture|homework|论文|考试|exam/i.test(text)) area = "learn";
+  else if (/合同|邮件|会议|简历|报销|meeting|contract|mail/i.test(text)) area = "work";
+  else if (/健身|跑步|医生|gym|run|doctor/i.test(text)) area = "health";
+  else if (/买|机票|房租|buy|flight|rent/i.test(text)) area = "life";
+  return { title, due, at, area };
+}
+function line() {
+  const d = S.draft.trim() ? parse(S.draft) : null;
+  const area = d && AREAS.find((a) => a.id === d.area);
+  const will = d && d.title ? `<div class="will"><b>${t("待办", "Todo")}</b><span>${esc(d.title)}</span>
+    ${d.due ? `<span class="tag">${dayWord(d.due)}${d.at ? ` ${d.at}` : ""}</span>` : `<span class="tag">${t("不定", "No date")}</span>`}
+    ${area ? `<span class="tag" data-k="${area.k}">${pick(area.name)}</span>` : ""}<span class="grow"></span><kbd>↵</kbd></div>` : "";
+  return `${will}<form class="line" id="line-form">${icon("alfred")}<input id="draft" autocomplete="off" value="${esc(S.draft)}" placeholder="${t("说一句添加，例如：周五中午前交算法作业", "Say one to add, e.g. algorithms homework by Friday noon")}"><button class="go" type="submit" ${S.draft.trim() ? "" : "disabled"} aria-label="${t("添加", "Add")}">${icon("arrow")}</button></form>`;
+}
+
+/* ── Render ── */
+const WHAT = {
+  a: ["A 按天：两周的日子一条，再按天列，每件带钟点", "A By day: two weeks in a strip, then day by day, each with its hour"],
+  b: ["B 看板：今天 / 明天 / 本周 / 以后 / 随时，拖卡片改日子", "B Board: today / tomorrow / this week / later / any time; drag to move"],
+  c: ["C 今天优先：左边清单，右边今天还剩多少、下一个截止、空闲时间", "C Today first: the list, and beside it today's progress, next deadline and free hours"],
+};
+function render() {
+  document.documentElement.lang = S.lang === "en" ? "en" : "zh-CN";
+  document.title = t("Alfred：待办", "Alfred: Todos");
+  document.getElementById("proto").innerHTML = `<b>Alfred · ${t("待办", "Todos")}</b><span class="lab">${t("视图", "View")}</span>`
+    + ["a", "b", "c"].map((v) => `<button type="button" data-view="${v}" aria-pressed="${S.view === v}">${pick(WHAT[v]).split("：")[0].split(":")[0]}</button>`).join("")
+    + `<span class="what">${pick(WHAT[S.view])} · ${t("「现在」固定在 11/19 周四 16:20", "“now” is fixed at Thu 11/19 16:20")}</span>`
+    + `<button type="button" data-reset>${t("重来", "Reset")}</button><button type="button" data-lang>${S.lang === "en" ? "中文" : "EN"}</button><button type="button" data-scheme aria-label="${t("深浅", "Light or dark")}">◐</button>`;
+  document.getElementById("view").innerHTML = head() + (S.view === "a" ? viewA() : S.view === "b" ? viewB() : viewC());
+  const focused = document.activeElement?.id === "draft";
+  document.getElementById("line").innerHTML = line();
+  if (focused) { const input = document.getElementById("draft"); input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  const todo = S.todos.find((x) => x.id === S.open);
+  document.getElementById("pop").innerHTML = S.open === "new" ? sheetNew() : todo ? sheet(todo) : "";
+  if (S.open === "new") document.getElementById("new-title")?.focus();
+}
+
+/* ── Doing things ── */
+const byId = (id) => S.todos.find((todo) => todo.id === id);
+function tick(todo) {
+  if (notYet(todo)) return;
+  if (todo.done) { todo.done = false; delete todo.doneAt; return; }
+  if (todo.repeat) {
+    // Today's time is done; the next one is tomorrow's, not tickable till then.
+    S.todos.push({ ...structuredClone(todo), id: `d${Date.now()}`, done: true, doneAt: "16:20", due: TODAY, repeat: undefined });
+    todo.due = plus(TODAY, 1); todo.repeat.streak += 1; return;
+  }
+  todo.done = true; todo.doneAt = "16:20";
+}
+let newDay = "", newArea = null;
+document.addEventListener("click", (event) => {
+  const el = event.target.closest("[data-act],[data-view],[data-area],[data-goto],[data-open],[data-lang],[data-scheme],[data-reset],[data-new-day],[data-new-area]");
+  if (!el) { if (S.srcs) { S.srcs = false; render(); } return; }
+  if (el.dataset.view) { S.view = el.dataset.view; history.replaceState(null, "", `?v=${S.view}${S.lang === "en" ? "&lang=en" : ""}`); return render(); }
+  if (el.hasAttribute("data-lang")) { S.lang = S.lang === "en" ? "zh" : "en"; return render(); }
+  if (el.hasAttribute("data-scheme")) { const root = document.documentElement; root.dataset.scheme = root.dataset.scheme === "dark" ? "light" : "dark"; return; }
+  if (el.hasAttribute("data-reset")) { seed(); S.open = null; S.area = "all"; return render(); }
+  if (el.dataset.area) { S.area = el.dataset.area; return render(); }
+  if (el.dataset.goto) { document.getElementById(`d-${el.dataset.goto}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+  if (el.dataset.newDay !== undefined) { newDay = el.dataset.newDay; el.parentElement.querySelectorAll("[data-new-day]").forEach((b) => b.setAttribute("aria-pressed", String(b === el))); return; }
+  if (el.dataset.newArea) { newArea = el.dataset.newArea; el.parentElement.querySelectorAll("[data-new-area]").forEach((b) => b.setAttribute("aria-pressed", String(b === el))); return; }
+  const act = el.dataset.act;
+  if (!act && el.dataset.open) { if (event.target.closest("button, a")) return; S.open = el.dataset.open; return render(); }
+  const id = el.dataset.id ?? S.open;
+  const todo = byId(id);
+  switch (act) {
+    case "close": if (event.target === el || el.classList.contains("x")) { S.open = null; render(); } return;
+    case "check": event.stopPropagation(); if (todo) { tick(todo); S.fresh = null; render(); } return;
+    case "keep": todo.suggested = false; todo.src = { ...todo.src }; S.fresh = todo.id; return render();
+    case "drop": S.todos = S.todos.filter((x) => x !== todo); return render();
+    case "srcs": S.srcs = !S.srcs; return render();
+    case "new": S.open = "new"; newDay = ""; newArea = null; return render();
+    case "create": {
+      const title = document.getElementById("new-title").value.trim(); if (!title) return;
+      const at = document.getElementById("new-at").value || undefined;
+      const id2 = `n${Date.now()}`;
+      S.todos.push({ id: id2, title: [title, title], done: false, added: `${TODAY} 16:20`, src: { kind: "you" }, ...(newDay ? { due: newDay } : at ? { due: TODAY } : {}), ...(at ? { at } : {}), ...(newArea ? { area: newArea } : {}) });
+      S.open = null; S.fresh = id2; return render();
+    }
+    case "move": if (el.dataset.to) todo.due = el.dataset.to; else { delete todo.due; delete todo.at; delete todo.start; } return render();
+    case "area": todo.area = todo.area === el.dataset.to ? undefined : el.dataset.to; return render();
+    case "doing": todo.doing = !todo.doing; return render();
+    case "delete": S.todos = S.todos.filter((x) => x !== todo); S.open = null; return render();
+    case "ask": S.draft = t(`关于「${pick(todo.title)}」：`, `About “${pick(todo.title)}”: `); S.open = null; render(); document.getElementById("draft").focus(); return;
+    case "show-done": S.showDone = !S.showDone; return render();
+  }
+});
+document.addEventListener("keydown", (event) => { if (event.key === "Escape" && S.open) { S.open = null; render(); } });
+document.addEventListener("input", (event) => {
+  if (event.target.id !== "draft") return;
+  S.draft = event.target.value;
+  const will = document.getElementById("line");
+  const pos = event.target.selectionStart;
+  will.innerHTML = line();
+  const input = document.getElementById("draft"); input.focus(); input.setSelectionRange(pos, pos);
+});
+document.addEventListener("submit", (event) => {
+  if (event.target.id !== "line-form") return;
+  event.preventDefault();
+  const d = parse(S.draft);
+  if (!d.title) return;
+  const id = `n${Date.now()}`;
+  S.todos.push({ id, title: [d.title, d.title], done: false, added: `${TODAY} 16:20`, src: { kind: "you" }, ...(d.due ? { due: d.due } : {}), ...(d.at ? { at: d.at } : {}), ...(d.area ? { area: d.area } : {}) });
+  S.draft = ""; S.fresh = id; render();
+});
+/* Board: drag a card to another column. */
+document.addEventListener("dragstart", (event) => { const card = event.target.closest?.("[data-drag-id]"); if (!card) return; S.drag = card.dataset.dragId; card.dataset.drag = ""; event.dataTransfer.effectAllowed = "move"; });
+document.addEventListener("dragend", () => { S.drag = null; document.querySelectorAll("[data-drag],[data-over]").forEach((el) => { delete el.dataset.drag; delete el.dataset.over; }); });
+document.addEventListener("dragover", (event) => { const lane = event.target.closest?.(".lane"); if (!lane || !S.drag) return; event.preventDefault(); document.querySelectorAll(".lane[data-over]").forEach((l) => l !== lane && delete l.dataset.over); lane.dataset.over = ""; });
+document.addEventListener("drop", (event) => {
+  const lane = event.target.closest?.(".lane"); const todo = byId(S.drag); if (!lane || !todo) return;
+  event.preventDefault();
+  if (lane.dataset.to) { todo.due = lane.dataset.to; delete todo.start; } else { delete todo.due; delete todo.at; delete todo.start; }
+  S.fresh = todo.id; S.drag = null; render();
+});
+
+seed();
+if (params.get("scheme") === "dark") document.documentElement.dataset.scheme = "dark";
+render();
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import type { TodoSnapshot } from "./types.ts";
 
 export * from "./domain.ts";
 export type { TodoSnapshot } from "./types.ts";
+export { isDayOff } from "./types.ts";
 export { readRobinTodos, compareTodos, robinDataDir, type TodoComparison } from "./import-robin.ts";
 
 const Ref = {
@@ -15,6 +16,7 @@ const Ref = {
   title: Type.Optional(Type.String({ description: "A distinctive part of the todo's current title, if the id is unknown" })),
 };
 const DateField = (description: string) => Type.Optional(Type.String({ description }));
+const AtField = (description: string) => Type.Optional(Type.String({ description }));
 const Status = Type.Union([Type.Literal("todo"), Type.Literal("doing"), Type.Literal("done")]);
 
 /** What the user reads about a todo change (a proposal's step, a permission question), in their language. */
@@ -23,6 +25,7 @@ const SAY = {
     add: (title: string, due?: string) => `添加待办「${title}」${due ? `，截止 ${due}` : ""}`,
     rename: (title: string) => `改名为「${title}」`,
     due: (date: string) => (date ? `截止日改为 ${date}` : "去掉截止日"),
+    at: (at: string) => (at ? `截止时间改为 ${at}` : "去掉截止时间"),
     start: (date: string) => (date ? `开始日改为 ${date}` : "去掉开始日"),
     area: (name: string) => (name ? `领域改为${name}` : "去掉领域"),
     status: (status: string) => (status === "doing" ? "标成进行中" : "标回未开始"),
@@ -36,6 +39,7 @@ const SAY = {
     add: (title: string, due?: string) => `Add the todo “${title}”${due ? `, due ${due}` : ""}`,
     rename: (title: string) => `rename it “${title}”`,
     due: (date: string) => (date ? `move its due date to ${date}` : "remove its due date"),
+    at: (at: string) => (at ? `make it due by ${at}` : "remove its hour"),
     start: (date: string) => (date ? `move its start to ${date}` : "remove its start date"),
     area: (name: string) => (name ? `put it under ${name}` : "take it out of its area"),
     status: (status: string) => (status === "doing" ? "mark it in progress" : "mark it not started"),
@@ -105,7 +109,7 @@ export const todoModule = defineModule({
       name: "todo.add",
       input: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 500 }),
-        due: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
+        due: Type.Optional(Type.String()), at: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
         plannedOn: Type.Optional(Type.String()), url: Type.Optional(Type.String()), area: Type.Optional(Type.String()),
       }),
       run: (world, input) => addTodo(world, input).todo,
@@ -116,7 +120,7 @@ export const todoModule = defineModule({
         id: Type.String(), revision: Type.Optional(Type.String()),
         patch: Type.Object({
           title: Type.Optional(Type.String()), done: Type.Optional(Type.Boolean()), status: Type.Optional(Status),
-          due: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
+          due: Type.Optional(Type.String()), at: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()),
           plannedOn: Type.Optional(Type.String()), url: Type.Optional(Type.String()), area: Type.Optional(Type.String()),
         }, { additionalProperties: false }),
       }),
@@ -167,6 +171,7 @@ export const todoModule = defineModule({
       parameters: Type.Object({
         title: Type.String({ description: "Short description of the task" }),
         due: DateField("Due date, or last day of a multi-day task, as YYYY-MM-DD in the user's local timezone"),
+        at: AtField("The hour it is due by on its due day, as HH:MM (24-hour, local), when the user names one (\"by 9pm\" → 21:00). Only with due; keep it out of the title."),
         startDate: DateField("First day of a multi-day task as YYYY-MM-DD. Only with due."),
         url: Type.Optional(Type.String({ description: "Link to where the task is actually done (http, https or mailto)" })),
         area: AreaField,
@@ -216,6 +221,7 @@ export const todoModule = defineModule({
         ...Ref,
         newTitle: Type.Optional(Type.String({ description: "Replacement title" })),
         due: DateField("Replacement due date as YYYY-MM-DD, or an empty string to remove it"),
+        at: AtField("Replacement hour it is due by, as HH:MM, or an empty string to remove it"),
         startDate: DateField("Replacement first day as YYYY-MM-DD, or an empty string to remove it"),
         url: Type.Optional(Type.String({ description: "Replacement link, or an empty string to remove it" })),
         area: AreaField,
@@ -229,6 +235,7 @@ export const todoModule = defineModule({
         const text = say(world), locale = userLocale(world), said: string[] = [];
         if (patch.title !== undefined) said.push(text.rename(String(patch.title)));
         if (patch.due !== undefined) said.push(text.due(String(patch.due)));
+        if (patch.at !== undefined) said.push(text.at(String(patch.at)));
         if (patch.startDate !== undefined) said.push(text.start(String(patch.startDate)));
         if (patch.area !== undefined) said.push(text.area(patch.area ? areaName(String(patch.area), locale) ?? String(patch.area) : ""));
         if (patch.status !== undefined) said.push(text.status(String(patch.status)));
@@ -237,7 +244,7 @@ export const todoModule = defineModule({
       },
       execute(world, params) {
         const { id, title, newTitle, ...rest } = params;
-        if (newTitle === undefined && Object.values(rest).every((value) => value === undefined)) return "Provide a newTitle, due, startDate, url, area or status to update.";
+        if (newTitle === undefined && Object.values(rest).every((value) => value === undefined)) return "Provide a newTitle, due, at, startDate, url, area or status to update.";
         try {
           const result = updateTodo(world, { id, title }, { ...rest, ...(newTitle !== undefined ? { title: newTitle } : {}) });
           return failed(result) ? result.error : `Updated ${formatTodo(result)}`;

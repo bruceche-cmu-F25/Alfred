@@ -22,6 +22,15 @@ export interface TodoSource {
   repeat?: TodoRepeat;
 }
 
+/** A day off: an event of a holiday calendar (Google's are `…#holiday@group.v.calendar.google.com`), or an all-day
+ * event that says it is a holiday, a break or a day without classes (a lunch break has a time, so it is not one).
+ * It is never made a todo; the todo page labels its days with it. */
+const OFF_WORDS = /\b(holidays?|break|recess|no classes|classes cancel+ed|university closed|day off)\b|放假|假期|假日|停课|休假|节假日/i;
+export function isDayOff(event: { allDay: boolean; title: string; calendarId?: string }): boolean {
+  if (!event.allDay) return false;
+  return (event.calendarId ?? "").includes("#holiday@") || OFF_WORDS.test(event.title);
+}
+
 /** Which calendar events become todos by themselves: none, the all-day ones (deadlines, days to remember), or all. */
 export const CALENDAR_MODES = ["off", "allday", "all"] as const;
 export type CalendarMode = (typeof CALENDAR_MODES)[number];
@@ -37,6 +46,8 @@ export interface Todo {
   /** First day of a multi-day task. Only with `due`. */
   startDate?: string;
   due?: string;
+  /** The hour it is due by on its `due` day (HH:MM, the home node's clock). */
+  at?: string;
   /** Deliberate work date, never a deadline. */
   plannedOn?: string;
   /** Abandoned, not completed; reversible and left out of ordinary lists. */

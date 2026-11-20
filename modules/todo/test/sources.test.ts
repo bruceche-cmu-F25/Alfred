@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { CORE_MIGRATIONS, listEvents, openWorld, withCoreContext, type World } from "@alfred/core";
 import { invokeOp, runTools } from "@alfred/module-kit";
 import {
-  acceptTodo, completeTodo, deleteTodo, getTodoSettings, listTodos, mirrorCalendar, suggestTodo, todoModule, updateTodo, type SourceEvent, type TodoSnapshot,
+  acceptTodo, addTodo, completeTodo, deleteTodo, isDayOff, getTodoSettings, listTodos, mirrorCalendar, suggestTodo, todoModule, updateTodo, type SourceEvent, type TodoSnapshot,
 } from "../src/index.ts";
 
 const world = (): World => openWorld(":memory:", [...CORE_MIGRATIONS, ...todoModule.migrations]);
@@ -173,4 +173,57 @@ test("in all-day mode a timed weekly event makes nothing; a daily all-day one is
   assert.deepEqual(mirror(w, [...classes(GYM), ...vitamins]), { added: 1, updated: 0, removed: 0 });
   const [todo] = listTodos(w);
   assert.deepEqual([todo.title, todo.due, todo.source!.repeat], ["Vitamins", TODAY, { days: [0, 1, 2, 3, 4, 5, 6] }]);
+});
+
+test("the next time of what repeats can be ticked off only on its day, so clicks ahead do not use up the days to come", () => {
+  const w = world();
+  const days = ["2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22"];
+  const vitamins = days.map((date) => event(`vit_${date}`, { title: "Vitamins", startDate: date, endDate: date, recurring: "primary:vit" }));
+  mirror(w, vitamins);
+  const today = listTodos(w)[0];
+  assert.ok(!("error" in completeTodo(w, { id: today.id }, TODAY)));
+  mirror(w, vitamins);
+  const tomorrow = listTodos(w)[0];
+  assert.equal(tomorrow.due, "2026-11-20");
+  const refused = completeTodo(w, { id: tomorrow.id }, TODAY);
+  assert.match("error" in refused ? refused.error : "", /can be ticked off on that day/);
+  assert.equal(listTodos(w)[0].done, false);
+  assert.ok(!("error" in completeTodo(w, { id: tomorrow.id }, "2026-11-20")));
+  // A todo that does not repeat can be finished early, as always.
+  const other = mirror(w, [event("tax", { title: "Tax return due" })]) && listTodos(w).find((todo) => todo.title === "Tax return due")!;
+  assert.ok(!("error" in completeTodo(w, { id: other.id }, TODAY)));
+});
+
+test("a todo can say the hour it is due by; a timed event's todo takes the event's hour and follows it", () => {
+  const w = world();
+  const { todo } = addTodo(w, { title: "Final project", due: TODAY, at: "21:00" });
+  assert.equal(todo.at, "21:00");
+  assert.throws(() => addTodo(w, { title: "No day", at: "09:00" }), /at needs a due day/);
+  assert.throws(() => updateTodo(w, { id: todo.id }, { at: "25:00" }), /HH:MM/);
+  updateTodo(w, { id: todo.id }, { due: "" });
+  assert.equal(listTodos(w).find((x) => x.id === todo.id)!.at, undefined, "no day, no hour");
+
+  const start = (hour: number) => new Date(2026, 10, 21, hour, 30).toISOString();
+  mirror(w, [event("talk", { title: "Talk", allDay: false, start: start(15) })], "all");
+  const talk = () => listTodos(w).find((x) => x.title === "Talk")!;
+  assert.deepEqual([talk().due, talk().at], ["2026-11-21", "15:30"]);
+  mirror(w, [event("talk", { title: "Talk", allDay: false, start: start(17) })], "all");
+  assert.equal(talk().at, "17:30", "moved with the event");
+});
+
+test("a day off (a holiday calendar's day, a break, no classes) is never a todo, and one made before goes", () => {
+  const w = world();
+  const ordinary = event("tax", { title: "Tax return due" });
+  // As an older home node made it: a todo for the break.
+  mirror(w, [ordinary, event("brk", { title: "Thanksgiving Break; No Classes", startDate: "2026-11-25", endDate: "2026-11-25" })].map((e) => ({ ...e, title: e.id === "brk" ? "Old entry" : e.title })));
+  assert.deepEqual(titles(w).sort(), ["Old entry", "Tax return due"]);
+  const offs = [
+    event("brk", { title: "Thanksgiving Break; No Classes", startDate: "2026-11-25", endDate: "2026-11-25" }),
+    event("hol", { title: "Black Friday", calendarId: "en.usa#holiday@group.v.calendar.google.com", startDate: "2026-11-27", endDate: "2026-11-27" }),
+    event("lunch", { title: "Lunch Break", allDay: false }),
+  ];
+  assert.ok(isDayOff(offs[0]) && isDayOff(offs[1]) && !isDayOff(offs[2]) && !isDayOff(ordinary));
+  // The break is read again under its own title: it is a day off now, so its untouched todo goes.
+  mirror(w, [ordinary, ...offs], "all");
+  assert.deepEqual(titles(w).sort(), ["Lunch Break", "Tax return due"]);
 });

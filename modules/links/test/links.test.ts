@@ -34,7 +34,7 @@ test("an address is kept in one form: no share tracking, no fragment, one way to
 
 test("a world starts with a few places; they are the user's to rename, reorder, remove and add to", () => {
   const w = world();
-  assert.deepEqual(listPlaces(w).map((place) => place.title), ["Google", "Gmail", "Google Calendar", "YouTube"]);
+  assert.deepEqual(listPlaces(w).map((place) => place.title), ["Google", "Gmail", "YouTube"]);
   const canvas = ok(pinPlace(w, { url: "canvas.cmu.edu", title: "Canvas" }));
   assert.equal(canvas.existing, false);
   assert.equal(ok(pinPlace(w, { url: "https://canvas.cmu.edu/" })).existing, true, "the same address is the same place");
@@ -43,7 +43,7 @@ test("a world starts with a few places; they are the user's to rename, reorder, 
   invokeOp(w, [linksModule], { op: "link.rename", requestId: "r1", input: { id: gmail.id, title: "Mail" } });
   invokeOp(w, [linksModule], { op: "link.order", requestId: "r2", input: { ids: [canvas.place.id, gmail.id] } });
   invokeOp(w, [linksModule], { op: "link.remove", requestId: "r3", input: { id: google.id } });
-  assert.deepEqual(listPlaces(w).map((place) => place.title), ["Canvas", "Mail", "Google Calendar", "YouTube", "Github"]);
+  assert.deepEqual(listPlaces(w).map((place) => place.title), ["Canvas", "Mail", "YouTube", "Github"]);
   assert.deepEqual(listEvents(w).events.map((event) => event.kind), ["link.pinned", "link.pinned", "link.renamed", "link.places_ordered", "link.removed"]);
 });
 
@@ -153,22 +153,22 @@ test("a site's own icon is kept once per host and shown from there; a site witho
     fetcher: async (url) => (url.includes("example.com") ? { url, title: "An essay", icons: ["https://example.com/touch.png"] } : { url }),
     icons: async (pageUrl, candidates) => {
       asked.push(`${new URL(pageUrl).hostname} ${candidates.join(",")}`);
-      return /google\.com|example\.com/.test(pageUrl) && !pageUrl.includes("calendar") ? { type: "image/png", bytes: PNG } : null;
+      return /google\.com|example\.com/.test(pageUrl) ? { type: "image/png", bytes: PNG } : null;
     },
   });
   ok(saveClip(w, { url: "https://example.com/essay" }));
   ok(saveClip(w, { url: "https://example.com/another" }));
   await module.sync!.run(w, {}, signal);
   // One question per host: the page's own candidate for the clips' site, nothing to go on for the places.
-  assert.deepEqual(asked.sort(), ["calendar.google.com ", "example.com https://example.com/touch.png", "mail.google.com ", "www.google.com ", "www.youtube.com "]);
+  assert.deepEqual(asked.sort(), ["example.com https://example.com/touch.png", "mail.google.com ", "www.google.com ", "www.youtube.com "]);
   const snapshot = module.snapshot!(w) as LinksSnapshot;
-  assert.deepEqual(snapshot.places.map((place) => place.icon), ["www.google.com", "mail.google.com", undefined, undefined]);
+  assert.deepEqual(snapshot.places.map((place) => place.icon), ["www.google.com", "mail.google.com", undefined]);
   assert.deepEqual(snapshot.clips.map((clip) => clip.icon), ["example.com", "example.com"]);
   assert.deepEqual(module.file!(w, "example.com"), { type: "image/png", bytes: PNG });
   assert.equal(module.file!(w, "www.youtube.com"), null);
   assert.equal(getIcon(w, "nowhere.example"), null);
   // Nothing is asked twice now; a site that had none is asked again after a week.
   assert.deepEqual(iconsToFetch(w), []);
-  assert.deepEqual(iconsToFetch(w, 8, Date.now() + 8 * 86_400_000).map((entry) => entry.host).sort(), ["calendar.google.com", "www.youtube.com"]);
+  assert.deepEqual(iconsToFetch(w, 8, Date.now() + 8 * 86_400_000).map((entry) => entry.host), ["www.youtube.com"]);
   assert.equal(listEvents(w).events.filter((event) => event.kind === "link.icons").length, 1, "devices are told once that icons arrived");
 });

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import type { Area } from "@alfred/protocol";
 import type { Clip, ClipState, LinksSnapshot, LinkType, Place, Topic } from "@alfred/module-links/types";
 import { classify, findUrl } from "@alfred/module-links/url";
+import { AddBar, Pill } from "./AddBar.tsx";
 import { api } from "./api.ts";
 import { OutLink } from "./Linked.tsx";
 import { getLocale, t, type Key } from "./i18n/index.ts";
@@ -77,6 +78,36 @@ function TopicPick({ topics, areas, value, disabled, label, onPick }: {
       {topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.name}{areaName(topic.area) ? ` · ${areaName(topic.area)}` : ""}</option>)}
       <option value="+">{t("links.topic.new")}</option>
     </select>
+  );
+}
+
+/** The topic a new link goes under, as a pill in the add bar: none, one of the user's, or a new one named there. */
+function TopicPill({ topics, areas, pick, onPick }: {
+  topics: Topic[]; areas: Area[]; pick: { topicId: string } | { topic: string }; onPick(choice: { topicId: string } | { topic: string }): void;
+}) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  if (naming) {
+    const done = () => { const next = name.trim(); setNaming(false); setName(""); if (next) onPick({ topic: next }); };
+    return (
+      <input className="add-new" autoFocus value={name} maxLength={60} placeholder={t("links.topic.name")} aria-label={t("links.topic.name")}
+        onChange={(event) => setName(event.target.value)} onBlur={done}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); done(); } if (event.key === "Escape") { setNaming(false); setName(""); } }} />
+    );
+  }
+  const chosen = "topicId" in pick ? topics.find((topic) => topic.id === pick.topicId) : undefined;
+  const k = chosen ? areas.find((area) => area.id === chosen.area)?.k : "alfred";
+  const text = "topic" in pick ? `${pick.topic} · ${t("links.topic.isNew")}` : chosen?.name ?? t("links.topic.none");
+  const areaName = (id: string | undefined) => areas.find((area) => area.id === id)?.name[getLocale()];
+  return (
+    <Pill icon="tag" text={text} set={"topic" in pick || !!chosen} k={k} label={t("links.topic.pick")} onClear={() => onPick({ topicId: "" })}>
+      <select value={"topicId" in pick ? pick.topicId : ""} aria-label={t("links.topic.pick")}
+        onChange={(event) => { if (event.target.value === "+") setNaming(true); else onPick({ topicId: event.target.value }); }}>
+        <option value="">{t("links.topic.none")}</option>
+        {topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.name}{areaName(topic.area) ? ` · ${areaName(topic.area)}` : ""}</option>)}
+        <option value="+">{t("links.topic.new")}</option>
+      </select>
+    </Pill>
   );
 }
 
@@ -221,8 +252,7 @@ export function Links({ snapshot, fresh, areas }: { snapshot: LinksSnapshot | un
   // What a pasted line will become, said before it is saved: the address in it, and the words around it as the note.
   const found = useMemo(() => findUrl(draft), [draft]);
   const kind = found ? classify(found.url) : null;
-  const save = (event: FormEvent) => {
-    event.preventDefault();
+  const save = () => {
     if (!found || busy) return;
     void run("link.save", { url: found.url, ...(found.rest ? { note: found.rest } : {}), ...("topic" in pick ? { topic: pick.topic } : pick.topicId ? { topicId: pick.topicId } : {}) },
       () => { setDraft(""); setPick({ topicId: "" }); });
@@ -249,11 +279,12 @@ export function Links({ snapshot, fresh, areas }: { snapshot: LinksSnapshot | un
       <div className="lk-scroll">
       <Places places={places} onError={setError} />
 
-      <form className="lk-save" onSubmit={save}>
-        <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={t("links.paste")} aria-label={t("links.paste")} maxLength={2400} spellCheck={false} />
-        <TopicPick topics={topics} areas={areas} value={"topicId" in pick ? pick.topicId : "+"} label={t("links.topic.pick")} onPick={setPick} />
-        <button type="submit" disabled={!found || busy}>{t("links.save")}</button>
-      </form>
+      <div className="lk-save">
+        <AddBar value={draft} onChange={setDraft} onSubmit={save} ready={!!found} busy={busy} maxLength={2400} spellCheck={false}
+          placeholder={t("links.paste")} label={t("links.paste")} submitLabel={t("links.save")}>
+          <TopicPill topics={topics} areas={areas} pick={pick} onPick={setPick} />
+        </AddBar>
+      </div>
       {found && kind && (
         <p className="lk-will">
           <span className="tag" data-k="gray">{t(`links.type.${kind.type}` as Key)}</span>
