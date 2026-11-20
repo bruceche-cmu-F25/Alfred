@@ -39,6 +39,9 @@ test("the skills routes list, show, switch and remove Alfred's skills, and add o
     assert.match(readFileSync(join(dataDir, "skills", "notes", "SKILL.md"), "utf8"), /disable-model-invocation: true/);
     assert.equal((await post("/api/skills/enable", { id: "nope" })).status, 404);
     assert.equal((await post("/api/skills/enable", {})).status, 400);
+    // A body is read here as at every other address: JSON, sent as JSON.
+    assert.equal((await fetch(`${at}/api/skills/enable`, { method: "POST", headers: { "Content-Type": "text/plain" }, body: "notes" })).status, 415);
+    assert.equal((await fetch(`${at}/api/skills/enable`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" })).status, 400);
 
     const added = await post("/api/skills/add", { path: listed.found[0].path });
     assert.equal(((await added.json()) as SkillInfo).id, "tdd");

@@ -22,7 +22,7 @@
 - **引擎只有一种工作目录。** `pool.ts` 启动子进程时传一个 `--cwd`（数据目录下的 `engine/`），所有对话的 Pi 会话共用它（`worker.ts` 的 `open()`）。
 - **引擎关掉了写和 shell。** `excludeTools: ["bash", "edit", "write", "powershell"]`，只留 `read` 给技能用；读技能目录以外的文件要先问。
 - **不读项目的上下文文件。** `DefaultResourceLoader` 用了 `noContextFiles: true`，所以 AGENTS.md、CLAUDE.md 都不会进提示。
-- **能力档已经是一张表。** `home.ts` 的 `profiles()` 返回 `assistant` 和 `automation` 两档，任务提交时带上档名。加一档不用改任务的状态机。
+- **能力档已经是一张表。** `profiles.ts` 的 `profiles()` 返回 `assistant` 和 `automation` 两档，任务提交时带上档名。加一档不用改任务的状态机。
 - **对话只有模型和思考强度两个设置**，存在 `core_conversations` 上。对话在第一次提交时隐式创建。
 - **设备有类别，没有范围。** `core_devices` 记了 `desktop / phone / browser`，配对过的设备能做的事都一样。架构草案 5.7 写过"手机不能开终端"，但代码里还没有这条。
 - **对话框已经有用量**（写方案时）：顶部是模型下拉、思考下拉和一个用量条（↑输入 ↓输出 $ 上下文圆环），每轮回复下面有一行（模型 · 耗时 · ↑↓ · $）。输入框只有文本框和发送键。D1 之后见第 6 节。

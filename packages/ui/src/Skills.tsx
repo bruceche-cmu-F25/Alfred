@@ -8,15 +8,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { FoundSkill, SkillContent, SkillInfo, SkillSearchResponse, SkillSearchResult, SkillsResponse, SkillUpdatesResponse } from "@alfred/protocol";
+import { request as call } from "./api.ts";
 import { getLocale, t } from "./i18n/index.ts";
 import { Markdown } from "./Markdown.tsx";
-
-async function call<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((value as { error?: string }).error ?? t("settings.requestFailed", { status: response.status }));
-  return value as T;
-}
 
 /** How many of the Mac's skills are listed before "show all". */
 const FEW = 6;

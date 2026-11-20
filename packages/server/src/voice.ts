@@ -47,6 +47,8 @@ export class Transcriber {
   private child: ChildProcessWithoutNullStreams | null = null;
   private ready: Promise<void> | null = null;
   private readonly pending = new Map<string, Pending>();
+  /** Recordings that have arrived and are not answered yet, counting one still waiting for the model to load. */
+  private working = 0;
   private idle: NodeJS.Timeout | null = null;
   private dir: Promise<string> | null = null;
   private seq = 0;
@@ -83,22 +85,27 @@ export class Transcriber {
     const why = await this.unavailable();
     if (why) throw new VoiceError("unavailable", why);
     if (this.pending.size >= 4) throw new VoiceError("busy", "Still working on earlier recordings");
-    this.dir ??= mkdtemp(join(tmpdir(), "alfred-voice-"));
-    const id = String(++this.seq);
-    const file = join(await this.dir, `${id}.wav`);
-    await writeFile(file, wav);
+    this.working++;
     try {
-      await this.start();
-      return await new Promise<Transcript>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.pending.delete(id);
-          reject(new VoiceError("failed", "Transcribing took too long"));
-        }, this.timeoutMs);
-        this.pending.set(id, { resolve, reject, timer });
-        this.child!.stdin.write(JSON.stringify({ id, wav: file, context }) + "\n");
-      });
+      this.dir ??= mkdtemp(join(tmpdir(), "alfred-voice-"));
+      const id = String(++this.seq);
+      const file = join(await this.dir, `${id}.wav`);
+      await writeFile(file, wav);
+      try {
+        await this.start();
+        return await new Promise<Transcript>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.pending.delete(id);
+            reject(new VoiceError("failed", "Transcribing took too long"));
+          }, this.timeoutMs);
+          this.pending.set(id, { resolve, reject, timer });
+          this.child!.stdin.write(JSON.stringify({ id, wav: file, context }) + "\n");
+        });
+      } finally {
+        await rm(file, { force: true });
+      }
     } finally {
-      await rm(file, { force: true });
+      this.working--;
       this.touch();
     }
   }
@@ -168,7 +175,8 @@ export class Transcriber {
   /** Each use pushes the unload back. */
   private touch(): void {
     if (this.idle) clearTimeout(this.idle);
-    this.idle = setTimeout(() => { if (!this.pending.size) this.stop("idle"); }, this.idleMs);
+    // Not while a recording is being worked on, even one the model has not been given yet (it is still loading).
+    this.idle = setTimeout(() => { if (!this.working) this.stop("idle"); }, this.idleMs);
     this.idle.unref();
   }
 }

@@ -17,7 +17,8 @@ import {
   updateAutomation, updateConversation, updateSettings, userLocale, withCoreContext, type SessionMode, type ThinkingLevel, type World,
 } from "@alfred/core";
 import { applyStep, OpInputError, opInput, runOp, Type, UnknownOpError, type Static, type TSchema } from "@alfred/module-kit";
-import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE, type Home } from "./home.ts";
+import type { Home } from "./home.ts";
+import { ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE } from "./profiles.ts";
 import { snapshot } from "./workspace.ts";
 
 interface Extra<X> {

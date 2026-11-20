@@ -120,6 +120,19 @@ export function latestEventSeq(world: World): number {
   return (world.db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM core_events").get()!.seq as number);
 }
 
+/** For whoever acts on what happened (a module's mirror, the todo list following the calendar): calls `listener`
+ * after each commit that recorded events, with the kinds recorded since it was last called (or since it began to
+ * listen). It keeps its own place in the log, so nothing is told twice. Returns an unsubscribe function. */
+export function onEvents(world: World, listener: (kinds: ReadonlySet<string>) => void): () => void {
+  let seen = latestEventSeq(world);
+  return world.onCommit(() => {
+    const rows = world.db.prepare("SELECT kind, MAX(seq) AS seq FROM core_events WHERE seq > ? GROUP BY kind").all(seen);
+    if (!rows.length) return;
+    seen = Math.max(...rows.map((row) => row.seq as number));
+    listener(new Set(rows.map((row) => row.kind as string)));
+  });
+}
+
 /** The work events (not lifecycle) written under each run, by run id. */
 export function listRunReceipts(world: World, runIds: readonly string[]): Record<string, CoreEvent[]> {
   const receipts: Record<string, CoreEvent[]> = {};

@@ -1,4 +1,5 @@
-export { openHome, profiles, ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE, type Home, type HomeOptions } from "./home.ts";
+export { openHome, type Home, type HomeOptions } from "./home.ts";
+export { profiles, ASSISTANT_PROFILE, AUTOMATION_PROFILE, DEVELOPER_PROFILE } from "./profiles.ts";
 export { createHttpServer, createIngressServer, type ServeOptions } from "./http.ts";
 export { DEFAULT_PORT, defaultDataDir, defaultUiDir } from "./config.ts";
 export { Desk, DeskError, isLocalPage, type BrowserPage, type DeskRequest } from "./desk.ts";

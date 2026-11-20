@@ -4,7 +4,7 @@
  * the conversation stays.
  */
 import type { DatabaseSync } from "node:sqlite";
-import { appendEvent } from "./events.ts";
+import { appendEvent, type CoreEvent } from "./events.ts";
 import { iso, newId } from "./ids.ts";
 import { getProject, ProjectError, SESSION_MODES, type SessionMode } from "./projects.ts";
 import type { World } from "./world.ts";
@@ -108,6 +108,27 @@ export function getConversation(world: World, id: string): Conversation {
   const row = world.db.prepare(`${SELECT} WHERE c.id = ?`).get(id);
   if (!row) throw new ConversationError("missing");
   return toConversation(row);
+}
+
+/** Whether a conversation is a development session (it belongs to a project). */
+export function isSession(world: World, conversationId: string | null | undefined): boolean {
+  return !!conversationId && !!world.db.prepare("SELECT 1 FROM core_conversations WHERE id = ? AND project_id IS NOT NULL").get(conversationId);
+}
+
+/** Whether a run is one of a development session's. */
+export function runInSession(world: World, runId: string): boolean {
+  return !!world.db.prepare("SELECT 1 FROM core_runs r JOIN core_conversations c ON c.id = r.conversation_id WHERE r.id = ? AND c.project_id IS NOT NULL").get(runId);
+}
+
+/** The conversations that are development sessions. */
+export function sessionIds(world: World): Set<string> {
+  return new Set(world.db.prepare("SELECT id FROM core_conversations WHERE project_id IS NOT NULL").all().map((row) => row.id as string));
+}
+
+/** Whether an event came out of a development session: recorded under one of its runs, or about the session itself. */
+export function sessionEvent(world: World, event: Pick<CoreEvent, "runId" | "subject">): boolean {
+  if (event.runId) return runInSession(world, event.runId);
+  return !!event.subject?.startsWith("conversation:") && isSession(world, event.subject.slice("conversation:".length));
 }
 
 /** Most recently active first. */

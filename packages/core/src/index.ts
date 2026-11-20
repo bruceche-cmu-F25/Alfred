@@ -8,7 +8,7 @@ export { withCoreContext, withDefaultActor, coreContext, type Actor, type CoreCo
 export { newId } from "./ids.ts";
 export { AREAS, AREA_IDS, isArea, areaName, type Area } from "./areas.ts";
 export {
-  recordDomainEvent, changedFields, listEvents, latestEventSeq, lastChanges, listRunReceipts, listRunActivity, RunLeaseLostError,
+  recordDomainEvent, changedFields, listEvents, latestEventSeq, onEvents, lastChanges, listRunReceipts, listRunActivity, RunLeaseLostError,
   type CoreEvent, type EventInput, type EventQuery,
 } from "./events.ts";
 export {
@@ -17,7 +17,7 @@ export {
   type Run, type RunOutcome, type RunRequest, type RunState, type SubmitRunInput, type ViewContext, viewContext,
 } from "./runs.ts";
 export {
-  getConversation, listConversations, updateConversation, startSession, titleFrom, ConversationError, CONVERSATION_ID, THINKING_LEVELS,
+  getConversation, listConversations, updateConversation, startSession, isSession, runInSession, sessionIds, sessionEvent, titleFrom, ConversationError, CONVERSATION_ID, THINKING_LEVELS,
   type Conversation, type ThinkingLevel,
 } from "./conversations.ts";
 export {

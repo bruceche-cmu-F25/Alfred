@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EngineModel, ModelAccountsResponse, ModelAuthMethod, ModelProvider, ModelSignIn, ModelUsage, ModelUsageResponse, ModelUsageWindow, StateResponse, ThinkingLevel } from "@alfred/protocol";
-import { api } from "./api.ts";
+import { api, request as call } from "./api.ts";
 import { Logo, providerMark } from "./brand/Logo.tsx";
 import { t } from "./i18n/index.ts";
 
@@ -15,12 +15,6 @@ const COMMON = ["anthropic", "openai", "google", "openrouter", "deepseek", "xai"
 const THINKING: Array<ThinkingLevel | null> = [null, "off", "low", "medium", "high", "xhigh"];
 const PI_DISMISSED = "alfred.models.piDismissed";
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((value as { error?: string }).error ?? t("settings.requestFailed", { status: response.status }));
-  return value as T;
-}
 const host = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 const dismissedPi = () => { try { return localStorage.getItem(PI_DISMISSED) === "1"; } catch { return false; } };
 

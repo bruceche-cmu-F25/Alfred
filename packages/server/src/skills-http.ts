@@ -1,36 +1,17 @@
 /** `/api/skills/*`: Alfred's skills (see @alfred/protocol). The host and origin checks of http.ts have already run,
- * and only this machine reaches these routes. Errors are thrown; http.ts turns a SkillError into its status.
+ * and only this machine reaches these routes. Errors are thrown; the listener says a SkillError as its status (wire.ts).
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Skills } from "@alfred/engine-pi";
 import type { SkillSearchResponse } from "@alfred/protocol";
+import { HttpError, readJson, send } from "./wire.ts";
 
-const MAX_BODY = 16 * 1024;
-const refuse = (status: number, message: string) => Object.assign(new Error(message), { name: "SkillError", code: status === 404 ? "not_found" : "invalid" });
+/** What was sent does not say which skill, or what to look for. */
+const invalid = (message: string) => new HttpError(400, message, "skill_invalid");
 
-function send(res: ServerResponse, status: number, body: unknown): void {
-  const text = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Length": Buffer.byteLength(text) });
-  res.end(text);
-}
-
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) throw refuse(400, "Send JSON");
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw refuse(400, "Request too large");
-    chunks.push(chunk as Buffer);
-  }
-  let value: unknown;
-  try { value = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { throw refuse(400, "Invalid JSON"); }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw refuse(400, "Invalid JSON");
-  return value as Record<string, unknown>;
-}
 const text = (body: Record<string, unknown>, key: string): string => {
   const value = body[key];
-  if (typeof value !== "string" || !value || value.length > 2000) throw refuse(400, `${key} is required`);
+  if (typeof value !== "string" || !value || value.length > 2000) throw invalid(`${key} is required`);
   return value;
 };
 
@@ -41,7 +22,7 @@ export async function handleSkills(skills: Skills, req: IncomingMessage, res: Se
   if (method === "GET" && path === "/api/skills") return send(res, 200, skills.list()), true;
   if (method === "GET" && path === "/api/skills/content") {
     const id = url.searchParams.get("id");
-    if (!id) throw refuse(400, "id is required");
+    if (!id) throw invalid("id is required");
     return send(res, 200, skills.content(id)), true;
   }
   if (method !== "POST") return false;

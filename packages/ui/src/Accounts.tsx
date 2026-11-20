@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnectFlow, ConnectStart, ConnectionsResponse, GoogleAccount, GoogleCapability, GoogleCheck as Check } from "@alfred/protocol";
+import { request as call } from "./api.ts";
 import { Logo } from "./brand/Logo.tsx";
 import { t, useLocale, type Key } from "./i18n/index.ts";
 
@@ -14,12 +15,6 @@ const capName = (id: GoogleCapability) => t(`settings.cap.${id}` as Key);
 const capNote = (id: GoogleCapability) => t(`settings.cap.${id}.note` as Key);
 type CheckState = { reading: true } | { error: string } | { result: Check };
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((value as { error?: string }).error ?? t("settings.requestFailed", { status: response.status }));
-  return value as T;
-}
 const account = (email: string, action: string) => `/api/connections/google/${encodeURIComponent(email)}/${action}`;
 
 /** What happened, kept as data so it is said again in the right language after a switch. */

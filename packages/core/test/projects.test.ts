@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  addProject, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, listEvents, listProjects, openWorld, ProjectError,
-  removeProject, startSession, submitRun, trustProject, updateConversation,
+  addProject, CORE_MIGRATIONS, createRunDrain, getConversation, getRun, isSession, listEvents, listProjects, openWorld, ProjectError,
+  removeProject, runInSession, sessionEvent, sessionIds, startSession, submitRun, trustProject, updateConversation,
   type EngineRequest, type EnginePort, type RunProfile, type World,
 } from "../src/index.ts";
 
@@ -72,4 +72,25 @@ test("a session's runs get the project's folder; a wrong profile or a removed pr
   await drain.kick();
   assert.equal(getRun(w, gone.id).run.outcome?.error, "project_unavailable");
   assert.equal(seen.length, 1);
+});
+
+test("what belongs to a development session can be told from what does not", () => {
+  const w = world();
+  const project = trustProject(w, addProject(w, { path: folder() }).id);
+  const session = startSession(w, { projectId: project.id, title: "Fix the build" });
+  const inside = submitRun(w, { requestId: "r1", goal: "look", profile: "developer", conversationId: session.id }).run;
+  const everyday = submitRun(w, { requestId: "r2", goal: "what is on today", profile: "assistant" }).run;
+  assert.deepEqual([...sessionIds(w)], [session.id]);
+  assert.equal(isSession(w, session.id), true);
+  assert.equal(isSession(w, everyday.conversationId), false);
+  assert.equal(isSession(w, undefined), false);
+  assert.equal(isSession(w, "nope"), false);
+  assert.equal(runInSession(w, inside.id), true);
+  assert.equal(runInSession(w, everyday.id), false);
+  // An event is a session's when it was recorded under one of its runs, or is about the session itself.
+  assert.equal(sessionEvent(w, { runId: inside.id, subject: null }), true);
+  assert.equal(sessionEvent(w, { runId: everyday.id, subject: `conversation:${session.id}` }), false);
+  assert.equal(sessionEvent(w, { runId: null, subject: `conversation:${session.id}` }), true);
+  assert.equal(sessionEvent(w, { runId: null, subject: `conversation:${everyday.conversationId}` }), false);
+  assert.equal(sessionEvent(w, { runId: null, subject: "todo:1" }), false);
 });

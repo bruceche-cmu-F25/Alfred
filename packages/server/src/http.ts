@@ -19,15 +19,16 @@ import {
   acknowledgeNotice, answerRequest, claimNotice, getConversation, getRun, latestEventSeq, listConversations, listEvents, listNotices,
   listRunActivity, listRunReceipts, listRuns, presentNotice, reportPresence, submitRun,
   deviceForToken, DEVICE_KINDS, DEVICE_SCOPES, type Device, type DeviceKind, type DeviceScope, type LiveUpdate,
-  getProject, listProjects, getFile, listRunFiles,
+  getProject, listProjects, getFile, listRunFiles, isSession, runInSession, sessionEvent, sessionIds,
 } from "@alfred/core";
 import { invokeOp, runQuery } from "@alfred/module-kit";
 import type {
-  ConversationDetail, CoreEvent, ErrorResponse, ModelsResponse, NoticeRequest, OpRequest, OutletReport, OutletsResponse, PairRequest, PresenceRequest, ProposalResponse, PushInfo, PushResult,
+  ConversationDetail, CoreEvent, ModelsResponse, NoticeRequest, OpRequest, OutletReport, OutletsResponse, PairRequest, PresenceRequest, ProposalResponse, PushInfo, PushResult,
   RemoteResponse, RespondRequest, StateResponse, SteerRequest, SubmitRunRequest, SessionChanges,
 } from "@alfred/protocol";
 import { PROTOCOL_VERSION } from "@alfred/protocol";
-import { DEVELOPER_PROFILE, type Home } from "./home.ts";
+import type { Home } from "./home.ts";
+import { DEVELOPER_PROFILE } from "./profiles.ts";
 import { command, profileFor } from "./commands.ts";
 import { handleConnections } from "./connections-http.ts";
 import { handleSkills } from "./skills-http.ts";
@@ -38,8 +39,8 @@ import { DEVICE_COOKIE, type RemoteAccess } from "./remote.ts";
 import type { PushService } from "./push.ts";
 import { MAX_VOICE_BYTES, type Transcriber } from "./voice.ts";
 import { MAX_FILE_BYTES } from "./files.ts";
+import { HttpError, parseObject, readBytes, readJson, send, statusOf } from "./wire.ts";
 
-const MAX_BODY = 64 * 1024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -51,18 +52,6 @@ const COOKIE_MAX_AGE = 400 * 24 * 3600;
 
 /** Who is asking: this machine, or another device (paired or not) that came through Tailscale Serve. */
 type Peer = { local: true } | { local: false; device: Device | null; login: string | null };
-
-class HttpError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  constructor(status: number, message: string, code?: string) { super(message); this.status = status; this.code = code; }
-}
-
-function send(res: ServerResponse, status: number, body: unknown): void {
-  const text = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Length": Buffer.byteLength(text) });
-  res.end(text);
-}
 
 function hostAllowed(req: IncomingMessage, port: number): boolean {
   const host = req.headers.host ?? "";
@@ -97,83 +86,12 @@ function originAllowed(req: IncomingMessage): boolean {
   }
 }
 
-async function readJson<T>(req: IncomingMessage): Promise<T> {
-  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) throw new HttpError(415, "Send JSON");
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new HttpError(413, "Request too large");
-    chunks.push(chunk as Buffer);
-  }
-  try {
-    const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
-    return value as T;
-  } catch {
-    throw new HttpError(400, "Invalid JSON");
-  }
-}
-
-/** A request's body as bytes (an uploaded file), refused past `max`. */
-async function readBytes(req: IncomingMessage, max: number): Promise<Buffer> {
-  if (Number(req.headers["content-length"] ?? 0) > max) throw new HttpError(413, "A file can be 20 MB at most", "file_too_big");
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > max) throw new HttpError(413, "A file can be 20 MB at most", "file_too_big");
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks);
-}
-
-function statusOf(error: unknown): { status: number; body: ErrorResponse } {
-  if (error instanceof HttpError) return { status: error.status, body: { error: error.message, ...(error.code ? { code: error.code } : {}) } };
-  const name = error instanceof Error ? error.name : "";
-  const message = error instanceof Error ? error.message : "Request failed";
-  const code = (error as { code?: unknown }).code;
-  if (name === "SettingsError") return { status: 400, body: { error: message } };
-  if (name === "SkillError") return { status: code === "not_found" ? 404 : code === "exists" ? 409 : code === "too_large" ? 413 : code === "unreachable" ? 502 : 400, body: { error: message, code: `skill_${String(code)}` } };
-  if (name === "TerminalError") return { status: code === "missing" ? 404 : code === "unavailable" ? 503 : code === "too_many" ? 409 : 400, body: { error: message, code: `terminal_${String(code)}` } };
-  if (name === "UploadError") return { status: code === "too_big" ? 413 : code === "unsupported" ? 415 : 400, body: { error: message, code: `file_${String(code)}` } };
-  if (name === "FileError") return { status: code === "missing" ? 404 : code === "taken" ? 409 : 400, body: { error: message, code: `file_${String(code)}` } };
-  if (name === "AutomationError") return { status: code === "missing" ? 404 : 400, body: { error: message } };
-  if (name === "DeviceError") return { status: code === "missing" ? 404 : 400, body: { error: message, code: String(code) } };
-  if (name === "PairingError") return { status: 400, body: { error: message, code: String(code) } };
-  if (name === "VoiceError") return { status: code === "unavailable" ? 503 : code === "busy" ? 429 : 502, body: { error: message, code: `voice_${String(code)}` } };
-  if (name === "RemoteError") return { status: 409, body: { error: message } };
-  if (name === "PushError") return { status: 400, body: { error: message } };
-  if (name === "ProjectError") return { status: code === "missing" ? 404 : code === "untrusted" ? 409 : 400, body: { error: message, code: String(code) } };
-  if (name === "ProposalStateError") {
-    const state = (error as { state?: string }).state;
-    return { status: state === "missing" ? 404 : 409, body: { error: message, code: state ?? "state" } };
-  }
-  if (name === "RunError" || name === "NoticeStateError" || name === "ConversationError") {
-    if (code === "invalid") return { status: 400, body: { error: message, code: "invalid" } };
-    return { status: code === "missing" ? 404 : 409, body: { error: message, code: String(code) } };
-  }
-  if (name === "UnknownOpError") return { status: 404, body: { error: message } };
-  if (name.endsWith("ConflictError")) return { status: 409, body: { error: message, code: "conflict" } };
-  if (name === "OpInputError" || name === "Error") return { status: 400, body: { error: message } };
-  return { status: 500, body: { error: "Internal error" } };
-}
-
 /** An automation as devices see it (with its next time and last run). */
 const automationView = (world: World, id: string) => listAutomations(world).find((candidate) => candidate.id === id);
 
 /** Whether whoever asks may go into development sessions: this machine, or a device the user gave `dev`. */
 const mayDev = (peer: Peer) => peer.local || !!peer.device?.scopes.includes("dev");
 const NEEDS_DEV = "This device may not go into development sessions. Turn that on for it on the Mac: Settings → Devices.";
-
-/** The conversations that are development sessions (they belong to a project). */
-function sessionIds(world: World): Set<string> {
-  return new Set(world.db.prepare("SELECT id FROM core_conversations WHERE project_id IS NOT NULL").all().map((row) => row.id as string));
-}
-const inSession = (world: World, conversationId: string | undefined | null) =>
-  !!conversationId && !!world.db.prepare("SELECT 1 FROM core_conversations WHERE id = ? AND project_id IS NOT NULL").get(conversationId);
-const runInSession = (world: World, runId: string) =>
-  !!world.db.prepare("SELECT 1 FROM core_runs r JOIN core_conversations c ON c.id = r.conversation_id WHERE r.id = ? AND c.project_id IS NOT NULL").get(runId);
 
 function state(home: Home, peer: Peer): StateResponse {
   // One synchronous read: no commit can land between these statements.
@@ -226,7 +144,6 @@ function events(home: Home, peer: Peer, req: IncomingMessage, res: ServerRespons
   // A device without `dev` still hears that something happened in a development session (so its lists stay right),
   // but not what: such an event goes out with an empty payload, and what a session is writing does not go out.
   const open = mayDev(peer);
-  const sessionEvent = (event: CoreEvent) => (event.runId ? runInSession(home.world, event.runId) : !!event.subject?.startsWith("conversation:") && inSession(home.world, event.subject.slice(13)));
   const fromHeader = Number(req.headers["last-event-id"]);
   const fromQuery = Number(url.searchParams.get("after"));
   let cursor = Number.isInteger(fromHeader) && fromHeader >= 0 ? fromHeader : Number.isInteger(fromQuery) && fromQuery >= 0 ? fromQuery : latestEventSeq(home.world);
@@ -236,7 +153,7 @@ function events(home: Home, peer: Peer, req: IncomingMessage, res: ServerRespons
     for (;;) {
       const page = listEvents(home.world, { after: cursor, limit: 500 });
       for (const event of page.events as CoreEvent[]) {
-        const sent = open || !sessionEvent(event) ? event : { ...event, payload: {} };
+        const sent = open || !sessionEvent(home.world, event) ? event : { ...event, payload: {} };
         res.write(`id: ${event.seq}\nevent: core\ndata: ${JSON.stringify(sent)}\n\n`);
       }
       cursor = page.cursor;
@@ -246,7 +163,7 @@ function events(home: Home, peer: Peer, req: IncomingMessage, res: ServerRespons
   flush();
   const unsubscribe = home.world.onCommit(() => setImmediate(() => { if (!res.writableEnded) flush(); }));
   const onLive = (update: LiveUpdate) => {
-    if (res.writableEnded || (!open && inSession(home.world, update.conversationId))) return;
+    if (res.writableEnded || (!open && isSession(home.world, update.conversationId))) return;
     res.write(`event: live\ndata: ${JSON.stringify(update)}\n\n`);
   };
   home.live.on("update", onLive);
@@ -380,7 +297,7 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     const body = await readJson<SubmitRunRequest>(req);
     if (typeof body.requestId !== "string" || typeof body.goal !== "string") throw new HttpError(400, "requestId and goal are required");
     if (body.attachments !== undefined && !(Array.isArray(body.attachments) && body.attachments.every((id) => typeof id === "string"))) throw new HttpError(400, "attachments is a list of file ids");
-    needDev(inSession(home.world, body.conversationId));
+    needDev(isSession(home.world, body.conversationId));
     const profile = profileFor(home.world, body.conversationId);
     // A session is its own page: what page the user had open is not its context.
     const context = profile === DEVELOPER_PROFILE ? undefined : body.context;
@@ -390,13 +307,13 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   }
   // A file for the next message: its bytes are the body. What it is, is made out from them (files.ts).
   if (method === "POST" && path === "/api/files") {
-    const bytes = await readBytes(req, MAX_FILE_BYTES);
+    const bytes = await readBytes(req, MAX_FILE_BYTES, () => new HttpError(413, "A file can be 20 MB at most", "file_too_big"));
     return send(res, 201, await home.files.save({ name: url.searchParams.get("name") ?? "file", bytes }));
   }
   const kept = /^\/api\/files\/([A-Za-z0-9_-]{1,64})$/.exec(path);
   if (kept && method === "GET") {
     const found = getFile(home.world, kept[1]);
-    needDev(inSession(home.world, found.conversationId));
+    needDev(isSession(home.world, found.conversationId));
     const bytes = home.files.read(found.id);
     // The user's own file, but still only bytes to a browser: an image is shown as an image, anything else is
     // handed over as a download; neither may load or run anything.
@@ -415,7 +332,7 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
   const project = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/(trust|remove)$/.exec(path);
   if (project && method === "POST") return send(res, 200, (await ask(`project.${project[2]}`, { id: project[1] })).result);
   const conversation = /^\/api\/conversations\/([A-Za-z0-9_-]{1,64})$/.exec(path);
-  if (conversation) needDev(inSession(home.world, conversation[1]));
+  if (conversation) needDev(isSession(home.world, conversation[1]));
   if (conversation && method === "GET") return send(res, 200, conversationDetail(home, conversation[1]));
   if (conversation && method === "POST") return send(res, 200, (await ask("conversation.update", { id: conversation[1] })).result);
   // The Mac app comes for what only it can do (desk.ts): it waits here for a request and posts back its answer.
@@ -431,8 +348,7 @@ async function route(home: Home, peer: Peer, req: IncomingMessage, res: ServerRe
     const taken = /^\/api\/desktop\/requests\/([A-Za-z0-9_-]{1,32})$/.exec(path);
     if (taken && method === "POST") {
       // A page's text is longer than a command's body may be.
-      let body: { ok?: unknown; result?: unknown; error?: unknown };
-      try { body = JSON.parse((await readBytes(req, 512 * 1024)).toString("utf8")) as typeof body; } catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, "Invalid JSON"); }
+      const body = parseObject<{ ok?: unknown; result?: unknown; error?: unknown }>((await readBytes(req, 512 * 1024)).toString("utf8"));
       const known = home.desk.answer(taken[1], body.ok === true ? { ok: true, result: body.result } : { ok: false, error: typeof body.error === "string" ? body.error : "failed" });
       return send(res, known ? 200 : 404, known ? {} : { error: "That request is no longer waited for" });
     }
@@ -630,14 +546,7 @@ export interface ServeOptions {
 
 async function readAudio(req: IncomingMessage): Promise<Buffer> {
   if (!/^audio\/(wav|wave|x-wav)\b/i.test(req.headers["content-type"] ?? "")) throw new HttpError(415, "Send 16-bit PCM WAV");
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_VOICE_BYTES) throw new HttpError(413, "Recording too long");
-    chunks.push(chunk as Buffer);
-  }
-  const wav = Buffer.concat(chunks);
+  const wav = await readBytes(req, MAX_VOICE_BYTES, () => new HttpError(413, "Recording too long"));
   if (wav.length < 44 || wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE") throw new HttpError(400, "Not a WAV file");
   return wav;
 }
@@ -682,7 +591,7 @@ function dispatch(home: Home, options: ServeOptions, peer: Peer, req: IncomingMe
     }
     if (path === "/api/voice" || path.startsWith("/api/voice/")) return voiceRoute(options.voice, req, res, path);
     if (path.startsWith("/api/connections") && (options.google || options.models || options.mcp)
-      && await handleConnections({ google: options.google, models: options.models, mcp: options.mcp }, req, res, url, options.log)) return;
+      && await handleConnections({ google: options.google, models: options.models, mcp: options.mcp }, req, res, url)) return;
     if (options.skills && (path === "/api/skills" || path.startsWith("/api/skills/")) && await handleSkills(options.skills, req, res, url)) return;
     if (path === "/api/outlets") return outletRoute(home, peer, req, res);
     await route(home, peer, req, res, url);

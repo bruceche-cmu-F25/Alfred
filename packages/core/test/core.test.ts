@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   acknowledgeNotice, claimNotice, CommandConflictError, CORE_MIGRATIONS, createNotice, createRunDrain, executeNextRun, getRun,
-  interruptOrphanedRuns, listEvents, listNotices, NoticeStateError, openWorld, presentNotice, recordDomainEvent,
+  interruptOrphanedRuns, listEvents, listNotices, NoticeStateError, onEvents, openWorld, presentNotice, recordDomainEvent,
   requestCancel, resumeRun, runCommand, RunError, RunLeaseLostError, submitRun, withCoreContext,
   type EnginePort, type RunProfile, type World,
 } from "../src/index.ts";
@@ -214,4 +214,25 @@ test("transactions are synchronous, nest as savepoints and signal commits", () =
   assert.throws(() => w.tx(async () => {}), /synchronous/);
   assert.throws(() => recordDomainEvent(w, { kind: "toy.added", payload: {} }), /inside the domain's own transaction/);
   assert.equal(listEvents(w).events.length, 1);
+});
+
+test("a listener hears the kinds of events each commit recorded, each once, and nothing from before it listened", () => {
+  const w = world();
+  addToy(w, "before");
+  const heard: string[][] = [];
+  const off = onEvents(w, (kinds) => heard.push([...kinds].sort()));
+  // A commit that recorded nothing is not news.
+  w.tx((db) => db.prepare("UPDATE toys SET name = name").run());
+  w.tx(() => {
+    addToy(w, "a");
+    addToy(w, "b");
+    recordDomainEvent(w, { kind: "toy.counted", payload: {} });
+  });
+  addToy(w, "c");
+  // What was rolled back never happened.
+  assert.throws(() => w.tx(() => { addToy(w, "d"); throw new Error("no"); }));
+  assert.deepEqual(heard, [["toy.added", "toy.counted"], ["toy.added"]]);
+  off();
+  addToy(w, "e");
+  assert.equal(heard.length, 2);
 });

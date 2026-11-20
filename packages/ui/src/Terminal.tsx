@@ -5,16 +5,9 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { TerminalInfo } from "@alfred/protocol";
-import { ApiError } from "./api.ts";
+import { ApiError, request as post } from "./api.ts";
 import { t } from "./i18n/index.ts";
 import "@xterm/xterm/css/xterm.css";
-
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new ApiError(response.status, (value as { error?: string }).error ?? `HTTP ${response.status}`, (value as { code?: string }).code);
-  return value as T;
-}
 
 /** The page's own colours, for the terminal's background, text and cursor. */
 function theme() {

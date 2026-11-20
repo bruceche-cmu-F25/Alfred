@@ -42,6 +42,18 @@ export class ApiError extends Error {
 /** This device is not paired with the home node (it came in through Tailscale without a device token). */
 export const isUnpaired = (error: unknown) => error instanceof ApiError && error.status === 401 && error.code === "unpaired";
 
+/** The home node's answer: its JSON, or an ApiError with what it refused and why. */
+async function answer<T>(response: Response): Promise<T> {
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const { error, code } = body as { error?: string; code?: string };
+    throw new ApiError(response.status, error ?? t("api.failed", { status: response.status }), code);
+  }
+  return body as T;
+}
+
+const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   // Network failures are retried with the same body (and so the same request id).
   for (let attempt = 0; ; attempt++) {
@@ -53,17 +65,24 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
       await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
       continue;
     }
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const { error, code } = body as { error?: string; code?: string };
-      throw new ApiError(response.status, error ?? t("api.failed", { status: response.status }), code);
-    }
-    return body as T;
+    return answer<T>(response);
   }
 }
 
-const post = <T>(path: string, body: unknown) =>
-  call<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const post = <T>(path: string, body: unknown) => call<T>(path, json(body));
+
+/** One request to the home node from outside the commands below (the settings pages, the terminal): a GET, or a POST
+ * when there is a body. Sent once, never again by itself: these carry no request id, so a second sending could be a
+ * second doing. Fails with an ApiError, as the commands do. */
+export async function request<T>(path: string, body?: unknown): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, body === undefined ? undefined : json(body));
+  } catch {
+    throw new ApiError(0, t("api.unreachable"));
+  }
+  return answer<T>(response);
+}
 
 export const api = {
   state: () => call<StateResponse>("/api/state"),

@@ -405,7 +405,6 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.connected": "Connected {email}.",
   "settings.notGranted": "You didn't tick {caps} on Google's page, so {n|it stays|they stay} off.",
   "settings.failed": "Couldn't connect: {error}",
-  "settings.requestFailed": "Request failed ({status})",
   "settings.flow.waiting": "Choose your account on Google's page and click Allow; this updates by itself.",
   "settings.flow.open": "Open Google sign-in",
   "settings.check.reading": "Reading…",

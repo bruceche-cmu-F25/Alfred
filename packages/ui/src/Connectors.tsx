@@ -7,15 +7,10 @@
  */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { McpCatalogItem, McpConnector, McpConnectorsResponse, McpSignIn } from "@alfred/protocol";
+import { request as call } from "./api.ts";
 import { connectorMark, Logo } from "./brand/Logo.tsx";
 import { getLocale, t } from "./i18n/index.ts";
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((value as { error?: string }).error ?? t("settings.requestFailed", { status: response.status }));
-  return value as T;
-}
 const at = (name: string, action: string) => `/api/connections/mcp/${encodeURIComponent(name)}/${action}`;
 const open = (url: string) => { const page = window.open(url, "_blank"); if (page) page.opener = null; };
 

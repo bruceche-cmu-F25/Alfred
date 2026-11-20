@@ -404,7 +404,6 @@ export const zh = {
   "settings.connected": "连上了 {email}。",
   "settings.notGranted": "{caps}你在 Google 那边没勾，所以没打开。",
   "settings.failed": "没连上：{error}",
-  "settings.requestFailed": "请求失败（{status}）",
   "settings.flow.waiting": "在 Google 的页面上选账号、点「允许」，这里会自己更新。",
   "settings.flow.open": "打开 Google 登录页",
   "settings.check.reading": "正在读…",
