@@ -790,6 +790,7 @@ export const zh = {
   "attach.label": "附件",
   "attach.remove": "移除 {name}",
   "attach.uploading": "上传中…",
+  "attach.reselect": "上传中断，请重新选择文件",
   "attach.pasted": "粘贴的图片",
   "attach.look": "看看这个",
   "attach.unsupported": "只能发图片、PDF 和文本文件",

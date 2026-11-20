@@ -2,25 +2,17 @@
  * the home node at once, and shown as chips until the message goes. A file the home node does not take (not an
  * image, a PDF or text; past 20 MB) is said so on its chip and never sent.
  */
-import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import { useMemo, useRef, useSyncExternalStore, type ClipboardEvent, type DragEvent } from "react";
 import type { FileInfo } from "@alfred/protocol";
 import { ApiError, api } from "./api.ts";
 import { t, type Key } from "./i18n/index.ts";
 import { Icon } from "./shell/icons.tsx";
+import { composerDraft, type Pending } from "./composerDraft.ts";
 
 export const MAX_ATTACHMENTS = 10;
 /** What the file picker offers. The home node decides by the bytes; this only keeps the picker useful, and on a
  * phone `image/*` is what brings up the camera and the photo library. */
 const ACCEPT = "image/*,application/pdf,text/*,.md,.markdown,.txt,.json,.jsonl,.csv,.tsv,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.sh,.sql,.toml,.ini,.log,.tex";
-
-export interface Pending {
-  key: string;
-  name: string;
-  size: number;
-  state: "uploading" | "ready" | "failed";
-  file?: FileInfo;
-  error?: string;
-}
 
 const WHY: Record<string, Key> = { file_unsupported: "attach.unsupported", file_too_big: "attach.tooBig", file_empty: "attach.empty" };
 export const fileSize = (bytes: number) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
@@ -40,13 +32,13 @@ export interface Attachments {
   onDragOver(event: DragEvent): void;
 }
 
-export function useAttachments(): Attachments {
-  const [items, setItems] = useState<Pending[]>([]);
-  const count = useRef(0);
-  const add = useCallback((files: Iterable<File>) => {
+export function useComposer(sessionId?: string) {
+  const store = useMemo(() => composerDraft(sessionId), [sessionId]);
+  const { items, text, sending } = useSyncExternalStore(store.subscribe, store.snapshot);
+  const setItems = store.setItems;
+  const add = (files: Iterable<File>) => {
     for (const file of files) {
-      if (count.current >= MAX_ATTACHMENTS) break;
-      count.current++;
+      if (store.snapshot().items.length >= MAX_ATTACHMENTS) break;
       const key = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       // A pasted screenshot has no name of its own.
       const name = file.name || `${t("attach.pasted")}.${file.type.split("/")[1] ?? "png"}`;
@@ -59,11 +51,11 @@ export function useAttachments(): Attachments {
         },
       );
     }
-  }, []);
-  const remove = useCallback((key: string) => setItems((now) => { const next = now.filter((item) => item.key !== key); count.current = next.length; return next; }), []);
-  const clear = useCallback(() => { count.current = 0; setItems([]); }, []);
-  return {
-    items, add, remove, clear,
+  };
+  const attachments: Attachments = {
+    items, add,
+    remove: (key) => setItems((now) => now.filter((item) => item.key !== key)),
+    clear: () => setItems(() => []),
     ids: items.flatMap((item) => (item.state === "ready" && item.file ? [item.file.id] : [])),
     busy: items.some((item) => item.state === "uploading"),
     onPaste(event) {
@@ -79,7 +71,10 @@ export function useAttachments(): Attachments {
     },
     onDragOver(event) { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); },
   };
+  return { store, text, sending, attachments };
 }
+
+export function useAttachments(): Attachments { return useComposer().attachments; }
 
 /** The paperclip: opens the file picker (on a phone, the camera and the photo library too). */
 export function AttachButton({ attachments, disabled }: { attachments: Attachments; disabled?: boolean }) {
@@ -104,7 +99,7 @@ export function AttachChips({ attachments }: { attachments: Attachments }) {
           {/* The picture comes back from the home node once it is there (the page may only load images from it). */}
           {item.file?.kind === "image" ? <img src={`/api/files/${item.file.id}`} alt="" /> : <span className="attach-kind">{item.name.split(".").at(-1)?.slice(0, 4).toUpperCase()}</span>}
           <span className="attach-name">{item.name}</span>
-          <span className="attach-note">{item.state === "uploading" ? t("attach.uploading") : item.state === "failed" ? item.error : fileSize(item.size)}</span>
+          <span className="attach-note">{item.state === "uploading" ? t("attach.uploading") : item.state === "failed" ? item.error ?? t("attach.reselect") : fileSize(item.size)}</span>
           <button type="button" onClick={() => attachments.remove(item.key)} aria-label={t("attach.remove", { name: item.name })}><Icon name="close" /></button>
         </li>
       ))}

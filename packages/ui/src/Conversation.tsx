@@ -12,7 +12,7 @@ import { ChoicePicker } from "./shell/ChoicePicker.tsx";
 import { Icon } from "./shell/icons.tsx";
 import { MicButton } from "./voice/MicButton.tsx";
 import { appendDictation } from "./voice/wav.ts";
-import { AttachButton, AttachChips, SentFiles, useAttachments } from "./attach.tsx";
+import { AttachButton, AttachChips, SentFiles, useComposer } from "./attach.tsx";
 import { sends } from "./prefs.ts";
 
 const BUSY = new Set<Run["state"]>(["queued", "running", "cancelling"]);
@@ -420,8 +420,8 @@ export interface ConversationProps {
 
 export function Conversation({ id, live, highlighted, context, suggestions, pageTitle, automationTitle, onEvent, onView, onStarted, slim, sessionToolbar }: ConversationProps) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
+  const { store, text: draft, sending, attachments } = useComposer(sessionToolbar && id ? id : undefined);
+  const setDraft = store.setText;
   const [error, setError] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -430,7 +430,6 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
   // reloading for it emptied the list on every streamed word.
   const view = useRef(onView);
   view.current = onView;
-  const attachments = useAttachments();
 
   useEffect(() => {
     setDetail(null);
@@ -478,10 +477,9 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
     // Files alone are a message too: they go with a few words of their own.
     const files = attachments.ids;
     const goal = text.trim() || (files.length ? t("attach.look") : "");
-    if (!goal || sending || attachments.busy) return;
-    setSending(true);
+    if (!goal || attachments.busy || !store.beginSend()) return;
     setError(null);
-    const submit = () => api.submit(goal, id ?? undefined, context, files).then(({ run }) => { attachments.clear(); if (!id) onStarted(run.conversationId); });
+    const submit = () => api.submit(goal, id ?? undefined, context, files).then(({ run }) => { if (!id) onStarted(run.conversationId); });
     // Words can join the turn that is working; files cannot, so with files it is the next message.
     const attempt = working && !files.length
       // It may have just finished: then it goes as a new message.
@@ -491,9 +489,9 @@ export function Conversation({ id, live, highlighted, context, suggestions, page
       })
       : submit();
     attempt
-      .then(() => { if (text === draft) setDraft(""); })
+      .then(() => store.sent(text, files))
       .catch((reason: Error) => setError(reason.message))
-      .finally(() => setSending(false));
+      .finally(() => store.endSend());
   };
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter sends and Shift+Enter breaks the line, or ⌘Enter sends (Settings → General); never while an IME is composing.

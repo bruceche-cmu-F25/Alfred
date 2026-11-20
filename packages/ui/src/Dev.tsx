@@ -51,7 +51,7 @@ export function Dev(props: DevProps) {
     <div className="dev-stage" data-in={session ? "session" : "new"}>
       <AsciiField />
       {!session && <div className="dev-drag" aria-hidden="true" />}
-      {session ? <Session {...props} id={session} conversation={open} /> : <NewSession state={state} onSession={props.onSession} />}
+      {session ? <Session key={session} {...props} id={session} conversation={open} /> : <NewSession state={state} onSession={props.onSession} />}
     </div>
   );
 }

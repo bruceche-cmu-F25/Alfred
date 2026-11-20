@@ -791,6 +791,7 @@ export const en: Record<keyof typeof zh, string> = {
   "attach.label": "Attached files",
   "attach.remove": "Remove {name}",
   "attach.uploading": "Uploading…",
+  "attach.reselect": "Upload interrupted. Select the file again.",
   "attach.pasted": "Pasted image",
   "attach.look": "Take a look at this",
   "attach.unsupported": "Only images, PDFs and text files",
